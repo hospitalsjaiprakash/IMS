@@ -310,7 +310,7 @@ exports.getAllUsers = async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, employee_id, full_name, email, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin, last_sync
+      `SELECT id, employee_id, full_name, email, phone, whatsapp, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin, last_sync, is_active
        FROM users WHERE ${where} ORDER BY full_name LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, limit, offset]
     );
@@ -327,6 +327,30 @@ exports.getAllUsers = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+};
+
+exports.toggleUserActiveStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'User ID is required' });
+
+    const userRes = await query('SELECT is_active FROM users WHERE id = $1', [id]);
+    if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    const newStatus = !userRes.rows[0].is_active;
+
+    await query(
+      'UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2',
+      [newStatus, id]
+    );
+
+    await auditLog(req.user.id, newStatus ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', null, { targetUserId: id }, req.ip);
+
+    res.json({ success: true, is_active: newStatus, message: newStatus ? 'Account activated.' : 'Account deactivated.' });
+  } catch (error) {
+    console.error('Error toggling user status:', error);
+    res.status(500).json({ error: 'Failed to toggle user status' });
   }
 };
 
@@ -512,3 +536,59 @@ exports.getMasterData = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch master data' });
   }
 };
+
+exports.searchEmployeeProfile = async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) {
+      return res.status(400).json({ error: 'Search query (q) is required' });
+    }
+
+    const userResult = await query(
+      `SELECT id, employee_id, full_name, email, phone, whatsapp, department, designation, role 
+       FROM users 
+       WHERE employee_id ILIKE $1 OR full_name ILIKE $2
+       LIMIT 10`,
+      [`%${q}%`, `%${q}%`]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    // Support returning just the first match deeply, or a list. Let's return the first match for deep details, 
+    // but if the UI needs to pick from a list we should return the list.
+    // The requirement says "single employee search ... through imc ... can see the incident details".
+    // Let's assume the first match is the target if multiple, but returning the exact match is best.
+    // We will return the first user's full details and their incidents.
+    const user = userResult.rows[0];
+
+    // Fetch reported incidents
+    const incidentsResult = await query(
+      `SELECT id, reference_id, incident_date, incident_type, severity, status, created_at 
+       FROM incidents 
+       WHERE reporter_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [user.id]
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) FROM incidents WHERE reporter_id = $1`,
+      [user.id]
+    );
+
+    res.json({
+      employees: userResult.rows, // Send all matches so UI can let user pick if needed
+      selectedEmployee: {
+        ...user,
+        totalIncidentsReported: parseInt(countResult.rows[0].count),
+        recentIncidents: incidentsResult.rows
+      }
+    });
+  } catch (error) {
+    console.error('Error searching employee:', error);
+    res.status(500).json({ error: 'Failed to search employee' });
+  }
+};
+

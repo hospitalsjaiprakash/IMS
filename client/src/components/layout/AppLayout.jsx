@@ -27,12 +27,14 @@ const getNavItems = (role) => {
   if (role === 'imc') {
     base.push(
       { to: '/imc/dashboard?tab=analytics', icon: BarChart3, label: 'Dept. Analytics', matchSearch: '?tab=analytics' },
-      { to: '/imc/dashboard?tab=members', icon: Users, label: 'IMC MEMBERS', matchSearch: '?tab=members' }
+      { to: '/imc/dashboard?tab=members', icon: Users, label: 'IMC Members', matchSearch: '?tab=members' },
+      { to: '/employees', icon: Users, label: 'Employee Directory' }
     );
   }
   if (role === 'head_management') {
     base.push(
-      { to: '/management/dashboard?tab=analytics', icon: BarChart3, label: 'Dept. Analytics', matchSearch: '?tab=analytics' }
+      { to: '/management/dashboard?tab=analytics', icon: BarChart3, label: 'Dept. Analytics', matchSearch: '?tab=analytics' },
+      { to: '/employees', icon: Users, label: 'Employee Directory' }
     );
   }
   if (role === 'system_admin') {
@@ -111,9 +113,9 @@ export default function AppLayout() {
 
   const renderSidebarContent = () => {
     const isHod = user?.role === 'hod' ||
-                  (user?.designation || '').toUpperCase() === 'HOD' ||
-                  (user?.designation || '').toUpperCase().includes('HEAD OF DEPT') ||
-                  (user?.designation || '').toUpperCase().includes('HEAD OF DEPARTMENT');
+      (user?.designation || '').toUpperCase() === 'HOD' ||
+      (user?.designation || '').toUpperCase().includes('HEAD OF DEPT') ||
+      (user?.designation || '').toUpperCase().includes('HEAD OF DEPARTMENT');
 
     return (
       <div className="flex flex-col h-full">
@@ -214,17 +216,17 @@ export default function AppLayout() {
               <span>{isHod ? 'Switch to HOD Dashboard' : 'Switch to Employee View'}</span>
             </button>
           )}
-        <NavLink to="/settings" className="nav-item-inactive">
-          <Settings size={17} />
-          <span>Settings</span>
-        </NavLink>
-        <button onClick={handleLogout} className="nav-item-inactive w-full text-left text-red-600 hover:bg-red-50 hover:text-red-700">
-          <LogOut size={17} />
-          <span>Sign Out</span>
-        </button>
+          <NavLink to="/settings" className="nav-item-inactive">
+            <Settings size={17} />
+            <span>Settings</span>
+          </NavLink>
+          <button onClick={handleLogout} className="nav-item-inactive w-full text-left text-red-600 hover:bg-red-50 hover:text-red-700">
+            <LogOut size={17} />
+            <span>Sign Out</span>
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
   };
 
   return (
@@ -329,10 +331,10 @@ export default function AppLayout() {
         </main>
       </div>
 
-      <CommitteeLoginModal 
-        open={adminModalOpen} 
-        onClose={() => setAdminModalOpen(false)} 
-        targetRole={adminTargetRole} 
+      <CommitteeLoginModal
+        open={adminModalOpen}
+        onClose={() => setAdminModalOpen(false)}
+        targetRole={adminTargetRole}
       />
     </div>
   );

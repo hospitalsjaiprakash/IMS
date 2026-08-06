@@ -47,41 +47,29 @@ export default function AdminAuditPage() {
 
   return (
     <div className="space-y-6 pb-12 w-full">
-      {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 p-6 sm:p-8 text-white shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 text-xs font-semibold mb-3">
-              <ShieldCheck size={14} className="text-amber-300" />
-              <span>Enterprise Compliance & Security Audit</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">System Audit & Governance Logs</h1>
-            <p className="text-sm text-slate-300 mt-1 leading-relaxed">
-              Complete historical ledger of all user logins, incident operations, administrative role assignments, and permission changes.
-            </p>
-          </div>
-          <div className="flex bg-slate-800/80 p-1 rounded-xl border border-slate-700 self-start sm:self-center">
-            <button
-              onClick={() => { setActiveTab('system'); setPage(1); }}
-              className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-2 ${
-                activeTab === 'system'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Activity size={14} /> System Activity Ledger
-            </button>
-            <button
-              onClick={() => setActiveTab('role_audit')}
-              className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-2 ${
-                activeTab === 'role_audit'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Lock size={14} /> Role Governance History
-            </button>
-          </div>
+      {/* Header Tabs */}
+      <div className="flex mb-4">
+        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <button
+            onClick={() => { setActiveTab('system'); setPage(1); }}
+            className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-2 ${
+              activeTab === 'system'
+                ? 'bg-white text-blue-600 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+            }`}
+          >
+            <Activity size={14} /> System Activity Ledger
+          </button>
+          <button
+            onClick={() => setActiveTab('role_audit')}
+            className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-2 ${
+              activeTab === 'role_audit'
+                ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+            }`}
+          >
+            <Lock size={14} /> Role Governance History
+          </button>
         </div>
       </div>
 

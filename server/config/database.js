@@ -19,6 +19,10 @@ if (process.env.DATABASE_URL) {
   poolConfig.database = process.env.DB_NAME;
   poolConfig.user = process.env.DB_USER;
   poolConfig.password = process.env.DB_PASSWORD;
+  
+  if (process.env.DB_HOST && process.env.DB_HOST.includes('supabase.co')) {
+    poolConfig.ssl = { rejectUnauthorized: false };
+  }
 }
 
 const pool = new Pool(poolConfig);

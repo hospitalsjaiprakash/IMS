@@ -6,6 +6,7 @@ import { mockDepartments } from '../../api/mockData';
 import { INCIDENT_CATEGORIES } from '../../utils/helpers';
 import { useAuthStore } from '../../store/authStore';
 import { StatCard, Spinner, EmptyState } from '../../components/ui';
+
 import {
   ClipboardList, AlertTriangle, CheckCircle, Clock, TrendingUp, Activity,
   BarChart3, AlertOctagon, Timer, ChevronRight,
@@ -105,6 +106,8 @@ export default function ImcDashboard() {
 
   // Analytics config
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [leavingRole, setLeavingRole] = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: 'total', direction: 'desc' });
 
   // Members tab config
@@ -337,7 +340,7 @@ export default function ImcDashboard() {
 
   const filteredMembers = useMemo(() => {
     return imcOnlyList.filter(m => {
-      const matchesSearch = !memberSearch || 
+      const matchesSearch = !memberSearch ||
         m.full_name?.toLowerCase().includes(memberSearch.toLowerCase()) ||
         m.employee_id?.toLowerCase().includes(memberSearch.toLowerCase()) ||
         m.department?.toLowerCase().includes(memberSearch.toLowerCase());
@@ -369,7 +372,7 @@ export default function ImcDashboard() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div className="page-header">
+      <div className="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="page-title">
             {activeTab === 'analytics' ? 'Department Analytics & Feedback Tracker' : activeTab === 'members' ? 'IMC MEMBERS' : 'IMC Dashboard'}
@@ -378,13 +381,31 @@ export default function ImcDashboard() {
             Welcome back, Incident Management Committee
           </p>
         </div>
-
+        
+        <form 
+          onSubmit={(e) => {
+            e.preventDefault();
+            const query = new FormData(e.target).get('q');
+            if (query) navigate(`/employees?q=${encodeURIComponent(query)}`);
+          }}
+          className="relative w-full sm:w-72 flex-shrink-0"
+        >
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-slate-400" />
+          </div>
+          <input
+            name="q"
+            type="text"
+            className="input pl-9 w-full bg-white shadow-sm text-sm"
+            placeholder="Search employee..."
+          />
+        </form>
       </div>
 
       {/* OVERVIEW TAB */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          
+
           {/* SLA Breach Alerts Panel */}
           {(totals.overdueCount > 0 || totals.activeGraveCount > 0) && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
@@ -418,10 +439,10 @@ export default function ImcDashboard() {
                 <LayoutDashboard size={16} className="text-indigo-600" />
                 Incident Overview
               </h3>
-              
+
               {/* Primary Metrics */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div 
+                <div
                   onClick={() => navigate('/incidents')}
                   className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 hover:shadow-md transition-shadow cursor-pointer group"
                 >
@@ -436,7 +457,7 @@ export default function ImcDashboard() {
                   </div>
                 </div>
 
-                <div 
+                <div
                   onClick={() => navigate('/incidents', { state: { status: 'active' } })}
                   className="card p-5 bg-gradient-to-br from-red-50 to-orange-50 border-red-100 hover:shadow-md transition-shadow cursor-pointer group"
                 >
@@ -451,7 +472,7 @@ export default function ImcDashboard() {
                   </div>
                 </div>
 
-                <div 
+                <div
                   onClick={() => navigate('/incidents', { state: { status: 'resolved' } })}
                   className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 hover:shadow-md transition-shadow cursor-pointer group"
                 >
@@ -488,27 +509,27 @@ export default function ImcDashboard() {
             <div>
               <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
                 <ShieldCheck size={16} className="text-teal-600" />
-                Review & Accountability Pipeline
+                Review & Accountability
               </h3>
-              
+
               <div className="bg-white rounded-xl border border-slate-200 p-1.5 shadow-sm overflow-x-auto">
                 <div className="flex items-center min-w-[700px]">
-                  
+
                   {/* HOD Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">1. HOD Review</span>
+                      <span className="font-bold text-sm text-slate-700">1. HOD Feedback</span>
                       <CheckCircle size={16} className={totals.hodPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'hodPending' } })}
                         className="flex-1 bg-white hover:bg-amber-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-amber-300 shadow-sm"
                       >
                         <span className="block text-2xl font-extrabold text-amber-600 leading-none">{totals.hodPending}</span>
                         <span className="text-[10px] uppercase font-bold text-slate-500 mt-1 block">Pending</span>
                       </div>
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'hodGiven' } })}
                         className="flex-1 bg-white hover:bg-green-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-green-300 shadow-sm"
                       >
@@ -523,18 +544,18 @@ export default function ImcDashboard() {
                   {/* IMC Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">2. IMC Review</span>
+                      <span className="font-bold text-sm text-slate-700">2. IMC Feedback</span>
                       <CheckCircle size={16} className={totals.imcPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'imcPending' } })}
                         className="flex-1 bg-white hover:bg-indigo-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-indigo-300 shadow-sm"
                       >
                         <span className="block text-2xl font-extrabold text-indigo-600 leading-none">{totals.imcPending}</span>
                         <span className="text-[10px] uppercase font-bold text-slate-500 mt-1 block">Pending</span>
                       </div>
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'imcGiven' } })}
                         className="flex-1 bg-white hover:bg-green-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-green-300 shadow-sm"
                       >
@@ -549,18 +570,18 @@ export default function ImcDashboard() {
                   {/* Mgmt Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">3. Mgmt Review</span>
+                      <span className="font-bold text-sm text-slate-700">3. Mgmt Feedback</span>
                       <CheckCircle size={16} className={totals.mgmtPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'mgmtPending' } })}
                         className="flex-1 bg-white hover:bg-cyan-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-cyan-300 shadow-sm"
                       >
                         <span className="block text-2xl font-extrabold text-cyan-600 leading-none">{totals.mgmtPending}</span>
                         <span className="text-[10px] uppercase font-bold text-slate-500 mt-1 block">Pending</span>
                       </div>
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'mgmtGiven' } })}
                         className="flex-1 bg-white hover:bg-green-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-green-300 shadow-sm"
                       >
@@ -593,10 +614,9 @@ export default function ImcDashboard() {
                   onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
                   className="flex items-center gap-4 px-5 py-3.5 hover:bg-slate-50 cursor-pointer transition-colors group"
                 >
-                  <div className={`w-1.5 h-10 rounded-full flex-shrink-0 ${
-                    inc.severity === 'Grave' ? 'bg-purple-400' :
+                  <div className={`w-1.5 h-10 rounded-full flex-shrink-0 ${inc.severity === 'Grave' ? 'bg-purple-400' :
                     inc.severity === 'Major' ? 'bg-amber-400' : 'bg-green-400'
-                  }`} />
+                    }`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-mono text-xs font-bold text-green-700">{inc.reference_id}</span>
@@ -680,7 +700,7 @@ export default function ImcDashboard() {
               value={globalAverages.avgImc ? `${(globalAverages.avgImc).toFixed(1)} hrs` : 'N/A'}
               color="bg-indigo-50"
               iconColor="text-indigo-700"
-              sub="Avg time from HOD review to IMC action"
+              sub="Avg time from HOD feedback to IMC action"
             />
             <StatCard
               icon={CheckCircle}
@@ -690,32 +710,6 @@ export default function ImcDashboard() {
               iconColor="text-green-700"
               sub="Avg overall resolution SLA"
             />
-          </div>
-
-          {/* Top/Bottom Leaderboard */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="card p-4 border-l-4 border-l-green-500">
-              <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2"><TrendingUp size={16} className="text-green-500" /> Top Performing Departments</h3>
-              <div className="space-y-2">
-                {departmentLeaderboard.slice(0, 3).map((d, i) => (
-                  <div key={d.dept} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg border border-slate-100">
-                     <span className="font-semibold text-slate-700">{i+1}. {d.dept}</span>
-                     <span className="text-xs text-slate-500">{d.avgHod ? d.avgHod.toFixed(1)+'h avg' : 'N/A'} · {d.activeCount} active</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="card p-4 border-l-4 border-l-red-500">
-              <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2"><AlertTriangle size={16} className="text-red-500" /> Action Required Departments</h3>
-              <div className="space-y-2">
-                {departmentLeaderboard.slice().reverse().slice(0, 3).map((d) => (
-                  <div key={d.dept} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg border border-slate-100">
-                     <span className="font-semibold text-slate-700">{d.dept}</span>
-                     <span className="text-xs text-slate-500">{d.avgHod ? d.avgHod.toFixed(1)+'h avg' : 'N/A'} · <span className="font-bold text-red-600">{d.activeCount} active</span></span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* Tables and Controls Card */}
@@ -959,9 +953,8 @@ export default function ImcDashboard() {
                       const isMe = m.id === user?.id || m.employee_id === user?.employeeId;
 
                       return (
-                        <tr key={m.id} className={`hover:bg-slate-50/75 transition-colors ${
-                          isMe ? 'bg-indigo-50/30' : ''
-                        }`}>
+                        <tr key={m.id} className={`hover:bg-slate-50/75 transition-colors ${isMe ? 'bg-indigo-50/30' : ''
+                          }`}>
                           <td className="py-3.5 px-4">
                             <div className="flex items-center gap-2.5">
                               <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-700 font-bold text-xs">

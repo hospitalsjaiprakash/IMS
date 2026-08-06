@@ -130,6 +130,13 @@ export const adminApi = {
   removeManagement: (id) => api.delete(`/admin/management-members/${id}`),
   mapDepartmentLeader: (data) => api.post('/admin/map-department-leader', data),
   getSystemAdmins: () => api.get('/admin/system-admins'),
+  toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
+};
+
+// ── Employee Search ─────────────────────────────────
+export const employeeApi = {
+  search: (q) => api.get('/employee/search', { params: { q } }),
+  getDirectory: (params) => api.get('/employees/directory', { params }),
 };
 
 export default api;

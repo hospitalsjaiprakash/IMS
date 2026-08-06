@@ -6,6 +6,7 @@ import { mockDepartments } from '../../api/mockData';
 import { INCIDENT_CATEGORIES } from '../../utils/helpers';
 import { useAuthStore } from '../../store/authStore';
 import { StatCard, Spinner, Alert, Tabs, Modal } from '../../components/ui';
+
 import {
   FileText, Activity, AlertTriangle, CheckCircle, Clock,
   ChevronDown, Search, Filter, MessageSquare, Download, Users, ShieldAlert, FileDown, Paperclip, Flame, XOctagon,
@@ -108,6 +109,7 @@ export default function ManagementDashboard() {
 
   // Analytics sub-view config
   const [searchQuery, setSearchQuery] = useState('');
+
   const [sortConfig, setSortConfig] = useState({ key: 'total', direction: 'desc' });
 
   // Feedback tracker state
@@ -335,7 +337,7 @@ export default function ManagementDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="page-title">
             {activeTab === 'analytics' ? 'Department Analytics & Feedback Tracker' : 'Management Dashboard'}
@@ -344,6 +346,25 @@ export default function ManagementDashboard() {
             Welcome back, {user?.fullName?.split(' ')[0]} · {user?.department || 'MD Office'}
           </p>
         </div>
+        
+        <form 
+          onSubmit={(e) => {
+            e.preventDefault();
+            const query = new FormData(e.target).get('q');
+            if (query) navigate(`/employees?q=${encodeURIComponent(query)}`);
+          }}
+          className="relative w-full sm:w-72 flex-shrink-0"
+        >
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-slate-400" />
+          </div>
+          <input
+            name="q"
+            type="text"
+            className="input pl-9 w-full bg-white shadow-sm text-sm"
+            placeholder="Search employee..."
+          />
+        </form>
       </div>
 
       {/* OVERVIEW TAB */}
@@ -471,7 +492,7 @@ export default function ManagementDashboard() {
                   {/* HOD Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">1. HOD Review</span>
+                      <span className="font-bold text-sm text-slate-700">1. HOD Feedback</span>
                       <CheckCircle size={16} className={totals.hodPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
@@ -497,7 +518,7 @@ export default function ManagementDashboard() {
                   {/* IMC Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">2. IMC Review</span>
+                      <span className="font-bold text-sm text-slate-700">2. IMC Feedback</span>
                       <CheckCircle size={16} className={totals.imcPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
@@ -523,7 +544,7 @@ export default function ManagementDashboard() {
                   {/* Mgmt Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">3. Mgmt Review</span>
+                      <span className="font-bold text-sm text-slate-700">3. Mgmt Feedback</span>
                       <CheckCircle size={16} className={totals.mgmtPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
@@ -681,7 +702,7 @@ export default function ManagementDashboard() {
                 value={globalAverages.avgImc ? `${(globalAverages.avgImc).toFixed(1)} hrs` : 'N/A'}
                 color="bg-indigo-50"
                 iconColor="text-indigo-700"
-                sub="Avg time from HOD review to IMC action"
+                sub="Avg time from HOD feedback to IMC action"
               />
               <StatCard
                 icon={CheckCircle}
@@ -693,31 +714,6 @@ export default function ManagementDashboard() {
               />
             </div>
 
-            {/* Top/Bottom Leaderboard */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="card p-4 border-l-4 border-l-green-500">
-                <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2"><TrendingUp size={16} className="text-green-500" /> Top Performing Departments</h3>
-                <div className="space-y-2">
-                  {departmentLeaderboard.slice(0, 3).map((d, i) => (
-                    <div key={d.dept} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg border border-slate-100">
-                      <span className="font-semibold text-slate-700">{i + 1}. {d.dept}</span>
-                      <span className="text-xs text-slate-500">{d.avgHod ? d.avgHod.toFixed(1) + 'h avg' : 'N/A'} · {d.activeCount} active</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="card p-4 border-l-4 border-l-red-500">
-                <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2"><AlertTriangle size={16} className="text-red-500" /> Action Required Departments</h3>
-                <div className="space-y-2">
-                  {departmentLeaderboard.slice().reverse().slice(0, 3).map((d, i) => (
-                    <div key={d.dept} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg border border-slate-100">
-                      <span className="font-semibold text-slate-700">{d.dept}</span>
-                      <span className="text-xs text-slate-500">{d.avgHod ? d.avgHod.toFixed(1) + 'h avg' : 'N/A'} · <span className="font-bold text-red-600">{d.activeCount} active</span></span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
 
             {/* IMC Feedback Summary Section */}
             <div className="card p-5 space-y-4">

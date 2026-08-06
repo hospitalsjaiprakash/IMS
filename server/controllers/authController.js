@@ -286,6 +286,14 @@ exports.login = async (req, res) => {
 
     const user = result.rows[0];
 
+    // Check if account is active
+    if (user.is_active === false) {
+      return res.status(401).json({
+        error: 'Account deactivated. Please contact Digital Communications department.',
+        code: 'ACCOUNT_DEACTIVATED'
+      });
+    }
+
     // Must have a password set (registered)
     if (!user.password_hash) {
       return res.status(401).json({
@@ -571,6 +579,10 @@ exports.switchRole = async (req, res) => {
     }
 
     const user = userRes.rows[0];
+
+    if (user.is_active === false) {
+      return res.status(401).json({ error: 'Account deactivated.' });
+    }
 
     const passwordValid = await bcrypt.compare(password, user.password_hash);
     if (!passwordValid) {

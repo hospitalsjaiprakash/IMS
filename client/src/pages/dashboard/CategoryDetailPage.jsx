@@ -16,9 +16,9 @@ const getIncidentMetrics = (inc) => {
   const tReported = reportedEntry ? new Date(reportedEntry.timestamp) : new Date(inc.created_at);
 
   let hodTime = null;
-  const hodEntry = history.find(h => 
-    h.action === 'HOD Reviewed' || 
-    h.action === 'Redirect Requested' || 
+  const hodEntry = history.find(h =>
+    h.action === 'HOD Reviewed' ||
+    h.action === 'Redirect Requested' ||
     h.action.startsWith('Redirected')
   );
   if (hodEntry) {
@@ -28,8 +28,8 @@ const getIncidentMetrics = (inc) => {
   }
 
   let imcTime = null;
-  const imcEntry = history.find(h => 
-    h.action === 'IMC Processed' || 
+  const imcEntry = history.find(h =>
+    h.action === 'IMC Processed' ||
     h.action === 'Under Investigation'
   );
   if (imcEntry) {
@@ -40,8 +40,8 @@ const getIncidentMetrics = (inc) => {
   }
 
   let resolutionTime = null;
-  const resolvedEntry = history.find(h => 
-    h.action === 'Resolved' || 
+  const resolvedEntry = history.find(h =>
+    h.action === 'Resolved' ||
     h.action.startsWith('Resolved')
   );
   if (resolvedEntry) {
@@ -119,8 +119,8 @@ export default function CategoryDetailPage() {
 
   // Compute metrics
   const solved = incidents.filter(inc => inc.status === 'resolved');
-  const feedbackGiven = incidents.filter(inc => 
-    inc.hod_feedback || 
+  const feedbackGiven = incidents.filter(inc =>
+    inc.hod_feedback ||
     ['with_imc', 'with_head_management', 'resolved'].includes(inc.status)
   ).length;
 
@@ -200,9 +200,8 @@ export default function CategoryDetailPage() {
             {incidents.length > 0 && (
               <div className="w-full h-1.5 bg-slate-100 border border-slate-200/50 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    pctFeedback === 100 ? 'bg-green-500' : 'bg-indigo-500'
-                  }`}
+                  className={`h-full rounded-full transition-all duration-300 ${pctFeedback === 100 ? 'bg-green-500' : 'bg-indigo-500'
+                    }`}
                   style={{ width: `${pctFeedback}%` }}
                 />
               </div>
@@ -260,7 +259,7 @@ export default function CategoryDetailPage() {
                           Reported: {formatDate(inc.incident_date)}
                         </span>
                       </div>
-                      
+
                       <div className="space-y-1">
                         <h3 className="text-sm font-bold text-slate-800">{inc.incident_type}</h3>
                         <p className="text-xs text-slate-550 leading-relaxed italic">"{inc.description}"</p>
@@ -273,7 +272,7 @@ export default function CategoryDetailPage() {
                           <div>
                             <div className="flex items-center gap-1.5 font-bold mb-1">
                               <span className={`w-1.5 h-1.5 rounded-full ${hasHod ? 'bg-green-500' : 'bg-red-500'}`} />
-                              <span className={hasHod ? 'text-green-700' : 'text-red-750'}>HOD Review</span>
+                              <span className={hasHod ? 'text-green-700' : 'text-red-750'}>HOD Feedback</span>
                             </div>
                             <p className={`leading-relaxed italic ${hasHod ? 'text-slate-650' : 'text-slate-400'}`}>
                               {hasHod ? `"${inc.hod_feedback}"` : 'Awaiting feedback from HOD'}
@@ -289,7 +288,7 @@ export default function CategoryDetailPage() {
                           <div>
                             <div className="flex items-center gap-1.5 font-bold mb-1">
                               <span className={`w-1.5 h-1.5 rounded-full ${hasImc ? 'bg-indigo-500' : 'bg-red-500'}`} />
-                              <span className={hasImc ? 'text-indigo-700' : 'text-red-750'}>IMC Review</span>
+                              <span className={hasImc ? 'text-indigo-700' : 'text-red-750'}>IMC Feedback</span>
                             </div>
                             <p className={`leading-relaxed italic ${hasImc ? 'text-slate-655' : 'text-slate-400'}`}>
                               {hasImc ? `"${inc.imc_feedback}"` : 'Awaiting feedback from IMC'}
@@ -305,7 +304,7 @@ export default function CategoryDetailPage() {
                           <div>
                             <div className="flex items-center gap-1.5 font-bold mb-1">
                               <span className={`w-1.5 h-1.5 rounded-full ${hasMgmt ? 'bg-purple-500' : 'bg-red-500'}`} />
-                              <span className={hasMgmt ? 'text-purple-750' : 'text-red-750'}>Management Review</span>
+                              <span className={hasMgmt ? 'text-purple-750' : 'text-red-750'}>Management Feedback</span>
                             </div>
                             <p className={`leading-relaxed italic ${hasMgmt ? 'text-slate-650' : 'text-slate-400'}`}>
                               {hasMgmt ? `"${inc.management_feedback}"` : 'Awaiting resolution'}

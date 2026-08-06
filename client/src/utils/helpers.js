@@ -41,11 +41,11 @@ export const getStatusClass = (s) => {
 export const getStatusLabel = (s) => {
   const map = {
     submitted: 'Submitted',
-    with_hod: 'HOD Review',
-    with_hod_and_imc: 'HOD & IMC Review',
-    with_imc: 'IMC Review',
+    with_hod: 'HOD Feedback',
+    with_hod_and_imc: 'HOD & IMC Feedback',
+    with_imc: 'IMC Feedback',
     redirect_requested: 'Redirect Requested',
-    with_head_management: 'Management Review',
+    with_head_management: 'Management Feedback',
     pending_training: 'Pending Training (IMC)',
     resolved: 'Resolved',
     withdrawn: 'Withdrawn',

@@ -245,6 +245,7 @@ router.post('/admin/stop-imc', authenticate, authorize('system_admin'), adminCon
 router.get('/admin/audit-logs', authenticate, authorize('system_admin'), adminController.getAuditLogs);
 router.get('/admin/analytics', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
 router.get('/admin/users', authenticate, authorize('system_admin'), adminController.getAllUsers);
+router.post('/admin/users/:id/toggle-status', authenticate, authorize('system_admin'), adminController.toggleUserActiveStatus);
 router.get('/admin/role-audit', authenticate, authorize('system_admin'), adminController.getRoleAudit);
 router.get('/admin/management-members', authenticate, authorize('system_admin'), adminController.getManagementMembers);
 router.delete('/admin/management-members/:id', authenticate, authorize('system_admin'), adminController.removeManagementRole);
@@ -252,6 +253,10 @@ router.post('/admin/map-department-leader', authenticate, authorize('system_admi
 router.get('/admin/system-admins', authenticate, authorize('system_admin'), adminController.getSystemAdmins);
 router.get('/admin/system-health', authenticate, authorize('system_admin'), adminController.getSystemHealth);
 router.get('/admin/master-data', authenticate, authorize('system_admin'), adminController.getMasterData);
+// ─── EMPLOYEE SEARCH & DIRECTORY ───────────────────
+router.get('/employee/search', authenticate, authorize('imc', 'head_management', 'system_admin'), adminController.searchEmployeeProfile);
+router.get('/employees/directory', authenticate, authorize('imc', 'head_management', 'system_admin'), adminController.getAllUsers);
+
 
 // ─── IMC QUEUE ────────────────────────────────────
 router.get('/imc/queue', authenticate, authorize('imc'), async (req, res) => {

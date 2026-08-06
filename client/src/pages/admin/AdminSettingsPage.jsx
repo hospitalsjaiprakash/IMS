@@ -15,8 +15,8 @@ const CONFIG_FIELDS = [
   },
   {
     key: 'parallel_grave_review',
-    label: 'Parallel HOD+IMC Review for Grave Incidents',
-    description: 'When enabled, Grave severity incidents skip straight to simultaneous HOD and IMC review.',
+    label: 'Parallel HOD+IMC Feedback for Grave Incidents',
+    description: 'When enabled, Grave severity incidents skip straight to simultaneous HOD and IMC feedback.',
     type: 'boolean',
   },
   {

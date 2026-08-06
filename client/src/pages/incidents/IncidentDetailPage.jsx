@@ -20,9 +20,9 @@ import logo from '../../assets/logo.webp';
 
 const TIMELINE_STAGES = [
   { key: 'submitted', label: 'Submitted' },
-  { key: 'with_hod', label: 'HOD Review' },
-  { key: 'with_imc', label: 'IMC Review' },
-  { key: 'with_head_management', label: 'Management Review' },
+  { key: 'with_hod', label: 'HOD Feedback' },
+  { key: 'with_imc', label: 'IMC Feedback' },
+  { key: 'with_head_management', label: 'Management Feedback' },
   { key: 'resolved', label: 'Resolved' },
 ];
 
@@ -959,7 +959,7 @@ export default function IncidentDetailPage() {
           </button>
         </>}
       >
-        <Alert type="info" message="Re-opening will return this incident to IMC review. This action is logged." className="mb-4" />
+        <Alert type="info" message="Re-opening will return this incident to IMC feedback. This action is logged." className="mb-4" />
         <label className="field-label field-required">Reason for re-opening</label>
         <textarea value={reopenReason} onChange={e => setReopenReason(e.target.value)} className="textarea" rows={3} placeholder="Why is this incident being re-opened?" />
       </Modal>
@@ -1155,9 +1155,9 @@ function DetailRow({ icon: Icon, label, value }) {
 
 function StatusMessage({ status }) {
   const msgs = {
-    submitted: { type: 'info', msg: 'Your incident has been submitted successfully and is awaiting HOD review.' },
+    submitted: { type: 'info', msg: 'Your incident has been submitted successfully and is awaiting HOD feedback.' },
     with_hod: { type: 'info', msg: 'Your incident has been reviewed by the Head of Department and is being processed.' },
-    with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is under simultaneous HOD and IMC review.' },
+    with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is under simultaneous HOD and IMC feedback.' },
     with_imc: { type: 'info', msg: 'Your incident is currently under review by the Incident Management Committee.' },
     with_head_management: { type: 'info', msg: 'Your incident is under consideration by Hospital Management.' },
     resolved: { type: 'success', msg: 'Your incident has been resolved. View the final report below.' },

@@ -151,13 +151,19 @@ async function main() {
   // ── Step 2: Run migrations as app user ────────────────────────────────────
   console.log('Step 2: Running migrations as app user...\n');
 
-  const appPool = new Pool({
+  const poolConfig = {
     host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'jaiprakash_ims',
     user: process.env.DB_USER || 'ims_app_user',
     password: process.env.DB_PASSWORD,
-  });
+  };
+  
+  if (process.env.DB_HOST && process.env.DB_HOST.includes('supabase.co')) {
+    poolConfig.ssl = { rejectUnauthorized: false };
+  }
+
+  const appPool = new Pool(poolConfig);
 
   try {
     const conn = await appPool.query('SELECT current_user');

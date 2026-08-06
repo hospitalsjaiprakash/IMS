@@ -120,7 +120,7 @@ export default function SystemAdminDashboard() {
             {/* HOD Step */}
             <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
               <div className="flex items-center justify-between mb-3 px-1">
-                <span className="font-bold text-sm text-slate-700">1. HOD Review</span>
+                <span className="font-bold text-sm text-slate-700">1. HOD Feedback</span>
                 <CheckCircle size={16} className={totals.hodPending === 0 ? "text-green-500" : "text-slate-300"} />
               </div>
               <div className="flex items-center gap-2">
@@ -146,7 +146,7 @@ export default function SystemAdminDashboard() {
             {/* IMC Step */}
             <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
               <div className="flex items-center justify-between mb-3 px-1">
-                <span className="font-bold text-sm text-slate-700">2. IMC Review</span>
+                <span className="font-bold text-sm text-slate-700">2. IMC Feedback</span>
                 <CheckCircle size={16} className={totals.imcPending === 0 ? "text-green-500" : "text-slate-300"} />
               </div>
               <div className="flex items-center gap-2">
@@ -172,7 +172,7 @@ export default function SystemAdminDashboard() {
             {/* Mgmt Step */}
             <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
               <div className="flex items-center justify-between mb-3 px-1">
-                <span className="font-bold text-sm text-slate-700">3. Mgmt Review</span>
+                <span className="font-bold text-sm text-slate-700">3. Mgmt Feedback</span>
                 <CheckCircle size={16} className={totals.mgmtPending === 0 ? "text-green-500" : "text-slate-300"} />
               </div>
               <div className="flex items-center gap-2">

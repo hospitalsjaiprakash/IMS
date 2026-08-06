@@ -21,6 +21,7 @@ import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminAuditPage from './pages/admin/AdminAuditPage';
 import CategoryDetailPage from './pages/dashboard/CategoryDetailPage';
 import NotificationsPage from './pages/dashboard/NotificationsPage';
+import EmployeeDirectory from './pages/employees/EmployeeDirectory';
 
 // Returns the home URL for a given role
 const getRoleDashboard = (role) => {
@@ -93,6 +94,7 @@ export default function App() {
             <Route path="admin/dashboard" element={<ProtectedRoute roles={['system_admin']}><SystemAdminDashboard /></ProtectedRoute>} />
 
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="employees" element={<ProtectedRoute roles={['imc', 'head_management', 'system_admin']}><EmployeeDirectory /></ProtectedRoute>} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="incidents" element={<IncidentsListPage />} />
             <Route path="incidents/new" element={<NewIncidentPage />} />

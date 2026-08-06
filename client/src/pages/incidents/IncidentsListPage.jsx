@@ -167,9 +167,9 @@ export default function IncidentsListPage() {
   const STATUS_OPTIONS = [
     { value: 'active', label: 'Active (Unresolved)' },
     { value: 'submitted', label: 'Submitted' },
-    { value: 'with_hod', label: 'HOD Review' },
-    { value: 'with_imc', label: 'IMC Review' },
-    { value: 'with_head_management', label: 'Management Review' },
+    { value: 'with_hod', label: 'HOD Feedback' },
+    { value: 'with_imc', label: 'IMC Feedback' },
+    { value: 'with_head_management', label: 'Management Feedback' },
     { value: 'resolved', label: 'Resolved' },
     { value: 'withdrawn', label: 'Withdrawn' },
   ];
@@ -246,7 +246,7 @@ export default function IncidentsListPage() {
               {filters.reviewStage === 'hodPending' && 'HOD Feedback Pending'}
               {filters.reviewStage === 'imcGiven' && 'IMC Feedback Given'}
               {filters.reviewStage === 'imcPending' && 'IMC Feedback Pending'}
-              {filters.reviewStage === 'mgmtGiven' && 'Management Reviewed'}
+              {filters.reviewStage === 'mgmtGiven' && 'Management Feedback Given'}
               {filters.reviewStage === 'mgmtPending' && 'Management Pending'}
               {filters.reviewStage === 'trainingPending' && 'Training Pending'}
               <button onClick={() => setFilter('reviewStage', '')} className="hover:text-red-500 ml-1"><X size={12} /></button>
