@@ -49,6 +49,10 @@ exports.createIncident = async (req, res) => {
       hasResponsiblePerson, responsiblePersonName, incidentCategories
     } = req.body;
 
+    // Convert empty strings or 'null' from FormData to actual null for integer columns
+    const mLoc = mainLocationId && mainLocationId !== 'null' && mainLocationId !== 'Select a location' ? parseInt(mainLocationId, 10) : null;
+    const sLoc = subLocationId && subLocationId !== 'null' ? parseInt(subLocationId, 10) : null;
+
     if (typeof departmentIds === 'string') departmentIds = JSON.parse(departmentIds);
     if (typeof incidentCategories === 'string') incidentCategories = JSON.parse(incidentCategories);
     hasResponsiblePerson = hasResponsiblePerson === 'true' || hasResponsiblePerson === true;
@@ -105,8 +109,8 @@ exports.createIncident = async (req, res) => {
        RETURNING *`,
       [
         refId.referenceId, refId.year, refId.seqNumber, req.user.id,
-        incidentDate, incidentTime, mainLocationId, subLocationId,
-        occurredTo, severity, incidentCategory || 'Others', incidentType, description,
+        incidentDate, incidentTime, mLoc, sLoc,
+        occurredTo, severity, incidentCategory || 'Others', incidentType || 'Others', description,
         hasResponsiblePerson, responsiblePersonName || null, status
       ]
     );

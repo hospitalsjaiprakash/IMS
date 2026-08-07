@@ -1,10 +1,8 @@
-import React from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Paperclip, Flame } from 'lucide-react';
 import { getStatusClass, getStatusLabel, timeAgo } from '../../utils/helpers';
-import { motion } from 'framer-motion';
 
 function SortableItem({ id, incident, onClick }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
