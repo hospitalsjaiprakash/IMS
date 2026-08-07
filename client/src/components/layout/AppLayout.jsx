@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, FileText, Bell, Settings, LogOut,
   Users, BarChart3, ClipboardList,
-  ChevronRight, Menu, X, Shield
+  ChevronRight, Menu, X, Shield, Search, Paperclip
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { notificationsApi, authApi } from '../../api';
@@ -42,6 +43,7 @@ const getNavItems = (role) => {
       { to: '/admin/users', icon: Users, label: 'Users & Roles' },
       { to: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
       { to: '/admin/audit', icon: Shield, label: 'Audit Logs' },
+      { to: '/admin/attachments', icon: Paperclip, label: 'Attachments' },
       { to: '/admin/settings', icon: Settings, label: 'System Settings' },
     );
   }
@@ -120,7 +122,7 @@ export default function AppLayout() {
     return (
       <div className="flex flex-col h-full">
         {/* Logo */}
-        <div className="px-4 py-5 border-b border-slate-200">
+        <div className="px-4 py-5 border-b border-white/20 bg-white/40 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-green-600 flex items-center justify-center flex-shrink-0">
               <span className="text-white font-bold text-sm font-display">JP</span>
@@ -232,7 +234,7 @@ export default function AppLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 print:h-auto print:block print:overflow-visible">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex lg:flex-col w-60 bg-white border-r border-slate-200 flex-shrink-0 print:hidden">
+      <aside className="hidden lg:flex w-64 bg-white/80 backdrop-blur-xl border-r border-white/40 h-full flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)] print:hidden">
         {renderSidebarContent()}
       </aside>
 
@@ -259,10 +261,11 @@ export default function AppLayout() {
             <Menu size={20} />
           </button>
 
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-slate-500 hidden sm:block">
+          <div className="flex-1 min-w-0 flex items-center justify-between pr-4">
+            <p className="text-xs text-slate-500 hidden lg:block">
               Jaiprakash Hospital & Research Centre · Quality Health Care at Affordable Price
             </p>
+            <div className="flex-1" />
           </div>
 
           {/* Notification bell */}
@@ -323,11 +326,20 @@ export default function AppLayout() {
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto print:block print:overflow-visible">
-          <div className="w-full px-4 sm:px-6 lg:px-8 py-6 print:p-0 print:m-0">
-            <Outlet />
-          </div>
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-auto bg-slate-50/50 p-4 md:p-6 lg:p-8">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="w-full max-w-[1600px] mx-auto"
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
 

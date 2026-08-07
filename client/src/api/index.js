@@ -115,6 +115,7 @@ export const trainingApi = {
 export const adminApi = {
   getConfig: () => api.get('/admin/config'),
   updateConfig: (data) => api.put('/admin/config', data),
+  getAllAttachments: () => api.get('/admin/attachments'),
   requestRolePasswordOtp: () => api.post('/admin/role-credentials/otp'),
   updateRoleCredentials: (data) => api.put('/admin/role-credentials', data),
   getImcMembers: () => api.get('/admin/imc-members'),

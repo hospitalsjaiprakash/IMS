@@ -178,6 +178,16 @@ exports.createIncident = async (req, res) => {
       referenceId: refId.referenceId, severity, incidentType
     }, req.ip);
 
+    // Emit socket event for real-time updates
+    if (req.io) {
+      req.io.emit('incident_created', {
+        id: incident.id,
+        referenceId: incident.reference_id,
+        status: incident.status,
+        departmentIds
+      });
+    }
+
     res.status(201).json({
       success: true,
       incident: {
@@ -211,10 +221,10 @@ exports.getIncidents = async (req, res) => {
     let paramIdx = 1;
 
     // Role-based filtering
-    if (role === 'employee' || (role === 'hod' && viewMode === 'my_incidents')) {
+    if (role === 'employee' || (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_incidents')) {
       whereClause += ` AND i.reporter_id = $${paramIdx++}`;
       params.push(userId);
-    } else if (role === 'hod') {
+    } else if (['hod', 'asst_coo', 'coo'].includes(role)) {
       const userDept = department || '';
       whereClause += ` AND EXISTS (
         SELECT 1 FROM incident_departments id2
@@ -258,8 +268,8 @@ exports.getIncidents = async (req, res) => {
       whereClause += ` AND (i.status = 'pending_training' OR (i.has_responsible_person = TRUE AND i.training_completed = FALSE AND i.status != 'withdrawn'))`;
     }
 
-    // Exclude withdrawn for non-admin/non-MD/non-IMC/non-HOD unless they are the reporter
-    if (role !== 'system_admin' && role !== 'head_management' && role !== 'imc' && role !== 'hod') {
+    // Exclude withdrawn for non-admin/non-MD/non-IMC/non-HOD/non-exec unless they are the reporter
+    if (!['system_admin', 'head_management', 'imc', 'hod', 'asst_coo', 'coo'].includes(role)) {
       whereClause += ` AND (i.status != 'withdrawn' OR i.reporter_id = $${paramIdx++})`;
       params.push(userId);
     }
@@ -292,12 +302,6 @@ exports.getIncidents = async (req, res) => {
     );
 
     let incidentsList = incidentsResult.rows;
-    if (role === 'system_admin') {
-      incidentsList = incidentsList.map(i => ({
-        ...i,
-        description: '[Protected Content — System Admin has metadata view only]'
-      }));
-    }
 
     res.json({
       incidents: incidentsList,
@@ -415,12 +419,6 @@ exports.exportIncidents = async (req, res) => {
     const result = await query(exportQuery, params);
 
     let incidentsList = result.rows;
-    if (role === 'system_admin') {
-      incidentsList = incidentsList.map(item => ({
-        ...item,
-        description: '[Protected Content — System Admin has metadata view only]'
-      }));
-    }
 
     res.json({
       success: true,
@@ -473,30 +471,7 @@ exports.getIncident = async (req, res) => {
       [incident.id]
     );
 
-    if (role === 'system_admin') {
-      return res.json({
-        incident: {
-          id: incident.id,
-          reference_id: incident.reference_id,
-          reporter_id: incident.reporter_id,
-          reporter_name: incident.reporter_name,
-          reporter_employee_id: incident.reporter_employee_id,
-          reporter_department: incident.reporter_department,
-          departments: depts.rows,
-          incident_type: incident.incident_type,
-          incident_category: incident.incident_category,
-          severity: incident.severity,
-          status: incident.status,
-          incident_date: incident.incident_date,
-          incident_time: incident.incident_time,
-          created_at: incident.created_at,
-          description: '[Protected Content — System Admin has metadata view only]'
-        },
-        feedbacks: [],
-        attachments: [],
-        finalReport: null
-      });
-    }
+
 
     // Get feedbacks (role-based visibility)
     let feedbackQuery = `SELECT f.*, u.full_name, u.role, u.designation, d.name as dept_name
@@ -577,6 +552,10 @@ exports.withdrawIncident = async (req, res) => {
     );
 
     await auditLog(req.user.id, 'INCIDENT_WITHDRAWN', id, { reason }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
 
     res.json({ success: true, message: 'Incident withdrawn successfully.' });
 

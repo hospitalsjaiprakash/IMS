@@ -8,6 +8,7 @@ import {
   UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { motion } from 'framer-motion';
 
 export default function AdminUsersPage() {
   const qc = useQueryClient();
@@ -512,8 +513,14 @@ export default function AdminUsersPage() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {filteredImcMembers.map(m => (
-                      <div key={m.id} className="rounded-2xl p-5 bg-gradient-to-br from-indigo-50/60 to-white border border-indigo-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-4 group">
+                    {filteredImcMembers.map((m, idx) => (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 15 }} 
+                        animate={{ opacity: 1, y: 0 }} 
+                        transition={{ duration: 0.3, delay: idx * 0.05 }}
+                        key={m.id} 
+                        className="rounded-2xl p-5 bg-gradient-to-br from-indigo-50/60 to-white border border-indigo-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-4 group"
+                      >
                         <div className="flex items-start gap-4">
                           <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center flex-shrink-0 font-black text-lg shadow-md shadow-indigo-500/25">
                             {m.full_name?.charAt(0)}
@@ -540,7 +547,7 @@ export default function AdminUsersPage() {
                             <UserMinus size={13} /> Revoke
                           </button>
                         </div>
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 )}

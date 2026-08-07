@@ -196,7 +196,12 @@ exports.approveRedirect = async (req, res) => {
     }
 
     await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartment }, req.ip);
-    res.json({ success: true });
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
+    res.json({ success: true, message: 'Redirect approved successfully.' });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to approve redirect.' });
@@ -244,7 +249,12 @@ exports.rejectRedirect = async (req, res) => {
     }
 
     await auditLog(req.user.id, 'REDIRECT_REJECTED', id, { reason }, req.ip);
-    res.json({ success: true });
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
+    res.json({ success: true, message: 'Redirect rejected successfully.' });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to reject redirect.' });

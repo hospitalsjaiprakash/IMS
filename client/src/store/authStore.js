@@ -122,4 +122,6 @@ export const isAdmin = (user) => user?.role === 'system_admin';
 export const isImc = (user) => user?.role === 'imc';
 export const isHod = (user) => user?.role === 'hod';
 export const isMd = (user) => user?.role === 'head_management';
+export const isAsstCoo = (user) => user?.role === 'asst_coo';
+export const isCoo = (user) => user?.role === 'coo';
 export const isEmployee = (user) => user?.role === 'employee';

@@ -8,25 +8,56 @@ const notificationsController = require('../controllers/notificationsController'
 const adminController = require('../controllers/adminController');
 const { query } = require('../config/database');
 const multer = require('multer');
+const multerS3 = require('multer-s3');
 const path = require('path');
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
+const { s3Client } = require('../config/s3');
+
+// Rate limiting for auth routes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+});
 
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
-const upload = multer({ storage: storage });
+let upload;
+
+if (s3Client && process.env.S3_BUCKET_NAME) {
+  upload = multer({
+    storage: multerS3({
+      s3: s3Client,
+      bucket: process.env.S3_BUCKET_NAME,
+      metadata: function (req, file, cb) {
+        cb(null, { fieldName: file.fieldname });
+      },
+      key: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + '-' + file.originalname);
+      }
+    })
+  });
+  console.log('Using S3 for file uploads');
+} else {
+  const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, uniqueSuffix + '-' + file.originalname);
+    }
+  });
+  upload = multer({ storage: storage });
+  console.log('Using local disk for file uploads');
+}
 // ─── AUTH ─────────────────────────────────────────
+router.use('/auth', authLimiter); // Apply rate limiter to all auth routes
 router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
 router.post('/auth/committee-login', authController.committeeLogin);
@@ -232,6 +263,7 @@ router.post('/knowledge-base', authenticate, authorize('imc'), async (req, res) 
 });
 
 // ─── ADMIN ────────────────────────────────────────
+router.get('/admin/attachments', authenticate, authorize('system_admin'), adminController.getAllAttachments);
 router.get('/admin/dashboard', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
 router.get('/admin/config', authenticate, authorize('system_admin'), adminController.getSystemConfig);
 router.put('/admin/config', authenticate, authorize('system_admin'), adminController.updateSystemConfig);

@@ -4,6 +4,8 @@ import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persist
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './store/authStore';
 import { queryClient } from './utils/queryClient';
+import { useSocket } from './hooks/useSocket';
+import { useEffect } from 'react';
 
 import AppLayout from './components/layout/AppLayout';
 import LoginPage from './pages/auth/LoginPage';
@@ -12,6 +14,7 @@ import DashboardPage from './pages/dashboard/DashboardPage';
 import ImcDashboard from './pages/dashboard/ImcDashboard';
 import ManagementDashboard from './pages/dashboard/ManagementDashboard';
 import SystemAdminDashboard from './pages/dashboard/SystemAdminDashboard';
+import AssistantCooDashboard from './pages/dashboard/AssistantCooDashboard';
 import IncidentsListPage from './pages/incidents/IncidentsListPage';
 import IncidentDetailPage from './pages/incidents/IncidentDetailPage';
 import NewIncidentPage from './pages/incidents/NewIncidentPage';
@@ -19,15 +22,16 @@ import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminAuditPage from './pages/admin/AdminAuditPage';
+import AdminAttachmentsPage from './pages/admin/AdminAttachmentsPage';
 import CategoryDetailPage from './pages/dashboard/CategoryDetailPage';
 import NotificationsPage from './pages/dashboard/NotificationsPage';
 import EmployeeDirectory from './pages/employees/EmployeeDirectory';
 
-// Returns the home URL for a given role
 const getRoleDashboard = (role) => {
   if (role === 'imc') return '/imc/dashboard';
   if (role === 'head_management') return '/management/dashboard';
   if (role === 'system_admin') return '/admin/dashboard';
+  if (role === 'asst_coo' || role === 'coo') return '/executive/dashboard';
   return '/dashboard';
 };
 
@@ -93,6 +97,9 @@ export default function App() {
             {/* System Office Portal */}
             <Route path="admin/dashboard" element={<ProtectedRoute roles={['system_admin']}><SystemAdminDashboard /></ProtectedRoute>} />
 
+            {/* Executive Portal (COO, Asst COO) */}
+            <Route path="executive/dashboard" element={<ProtectedRoute roles={['asst_coo', 'coo']}><AssistantCooDashboard /></ProtectedRoute>} />
+
             <Route path="settings" element={<SettingsPage />} />
             <Route path="employees" element={<ProtectedRoute roles={['imc', 'head_management', 'system_admin']}><EmployeeDirectory /></ProtectedRoute>} />
             <Route path="notifications" element={<NotificationsPage />} />
@@ -101,6 +108,7 @@ export default function App() {
             <Route path="incidents/:id" element={<IncidentDetailPage />} />
             <Route path="admin/analytics" element={<ProtectedRoute roles={['system_admin','head_management']}><AdminAnalyticsPage /></ProtectedRoute>} />
             <Route path="admin/users" element={<ProtectedRoute roles={['system_admin']}><AdminUsersPage /></ProtectedRoute>} />
+            <Route path="admin/attachments" element={<ProtectedRoute roles={['system_admin']}><AdminAttachmentsPage /></ProtectedRoute>} />
             <Route path="admin/settings" element={<ProtectedRoute roles={['system_admin']}><AdminSettingsPage /></ProtectedRoute>} />
             <Route path="admin/audit" element={<ProtectedRoute roles={['system_admin']}><AdminAuditPage /></ProtectedRoute>} />
             <Route path="*" element={<div className="flex flex-col items-center justify-center h-64 text-center"><p className="text-4xl font-bold text-slate-200 font-display mb-3">404</p><p className="text-slate-500 mb-4">Page not found</p><a href="/dashboard" className="btn-primary">Go to Dashboard</a></div>} />

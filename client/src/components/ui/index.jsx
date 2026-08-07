@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, AlertCircle, CheckCircle, Info, AlertTriangle, Loader2, Search, ChevronDown, Check } from 'lucide-react';
 
+export function Skeleton({ className = '' }) {
+  return <div className={`animate-pulse bg-slate-200 rounded ${className}`} />;
+}
+
 // ── Searchable Multi-Select ───────────────────────
 // Props: options: string[], value: string[], onChange: (string[]) => void
 //        placeholder, label, error
@@ -310,14 +314,12 @@ export function Badge({ children, variant = 'gray' }) {
 // ── Empty State ───────────────────────────────────
 export function EmptyState({ icon: Icon, title, message, action }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-      {Icon && (
-        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
-          <Icon size={28} className="text-slate-400" />
-        </div>
-      )}
-      <h3 className="text-base font-semibold text-slate-700 mb-1">{title}</h3>
-      {message && <p className="text-sm text-slate-500 max-w-xs mb-4">{message}</p>}
+    <div className="flex flex-col items-center justify-center py-12 px-4 w-full h-full min-h-[160px] bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+      <div className="w-14 h-14 rounded-full bg-white shadow-sm flex items-center justify-center mb-4 border border-slate-100">
+        {Icon ? <Icon size={24} className="text-indigo-400" /> : <div className="text-slate-300">∅</div>}
+      </div>
+      <h3 className="text-sm font-semibold text-slate-700 mb-1">{title}</h3>
+      {message && <p className="text-xs text-slate-500 max-w-xs text-center mb-4 leading-relaxed">{message}</p>}
       {action}
     </div>
   );
@@ -422,3 +424,10 @@ export function Tabs({ tabs, active, onChange }) {
     </div>
   );
 }
+
+export * from './Skeleton';
+
+export * from './KanbanBoard';
+export * from './CommandPalette';
+
+export * from './InsightSummary';

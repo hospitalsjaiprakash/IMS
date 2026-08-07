@@ -592,3 +592,21 @@ exports.searchEmployeeProfile = async (req, res) => {
   }
 };
 
+
+exports.getAllAttachments = async (req, res) => {
+  try {
+    const queryStr = `
+      SELECT a.id, a.incident_id, a.uploader_id, a.stage, a.original_filename, a.stored_filename, a.file_size, a.mime_type, a.created_at, 
+             i.reference_id, i.incident_date, u.full_name as uploader_name
+      FROM attachments a
+      JOIN incidents i ON a.incident_id = i.id
+      LEFT JOIN users u ON a.uploader_id = u.id
+      ORDER BY a.created_at DESC
+    `;
+    const result = await query(queryStr);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching attachments:', error);
+    res.status(500).json({ error: 'Failed to fetch attachments' });
+  }
+};

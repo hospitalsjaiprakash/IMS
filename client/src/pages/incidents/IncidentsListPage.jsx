@@ -3,8 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
 import { getSeverityClass, getStatusClass, getStatusLabel, formatDate, INCIDENT_CATEGORIES, SEVERITY_OPTIONS } from '../../utils/helpers';
-import { EmptyState, Pagination, Spinner, Tabs } from '../../components/ui';
-import { FileText, Search, Filter, X, FilePlus, ChevronRight, Layers, User, Paperclip, Download, Calendar, Check } from 'lucide-react';
+import { EmptyState, Pagination, Spinner, Tabs, KanbanBoard } from '../../components/ui';
+import { FileText, Search, Filter, X, FilePlus, ChevronRight, Layers, User, Paperclip, Download, Calendar, Check, Columns, List } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
@@ -47,6 +47,8 @@ export default function IncidentsListPage() {
   const [exportRange, setExportRange] = useState('last_30');
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
+  
+  const [isKanban, setIsKanban] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const formatDurationBetween = (startStr, endStr) => {
@@ -187,6 +189,24 @@ export default function IncidentsListPage() {
           </p>
         </div>
         <div className="flex items-center gap-2.5">
+          {(user?.role === 'hod' || user?.role === 'imc' || user?.role === 'system_admin') && (
+            <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button
+                onClick={() => setIsKanban(false)}
+                className={`p-1.5 rounded-md flex items-center justify-center transition-all ${!isKanban ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                title="List View"
+              >
+                <List size={16} />
+              </button>
+              <button
+                onClick={() => setIsKanban(true)}
+                className={`p-1.5 rounded-md flex items-center justify-center transition-all ${isKanban ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                title="Kanban Board"
+              >
+                <Columns size={16} />
+              </button>
+            </div>
+          )}
           <button onClick={() => setShowExportModal(true)} className="btn-secondary">
             <Download size={16} />
             <span>Export Report</span>
@@ -289,7 +309,7 @@ export default function IncidentsListPage() {
         )}
       </div>
 
-      {/* Table */}
+      {/* Table/Kanban */}
       <div className="card overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center py-16">
@@ -306,6 +326,17 @@ export default function IncidentsListPage() {
                 Report First Incident
               </button>
             )}
+          />
+        ) : isKanban ? (
+          <KanbanBoard
+            columns={[
+              { id: 'submitted', title: 'Submitted', statusIds: ['submitted', 'active'] },
+              { id: 'reviewing', title: 'Under Review', statusIds: ['with_hod', 'with_imc', 'with_head_management'] },
+              { id: 'resolved', title: 'Resolved', statusIds: ['resolved'] },
+              { id: 'withdrawn', title: 'Withdrawn', statusIds: ['withdrawn'] }
+            ]}
+            incidents={incidents}
+            onIncidentClick={(inc) => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
           />
         ) : (
           <>

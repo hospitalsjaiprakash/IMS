@@ -3,7 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
-import { StatCard, Spinner, EmptyState, Modal, Tabs } from '../../components/ui';
+import { StatCard, EmptyState, Modal, Tabs, SkeletonCard, InsightSummary } from '../../components/ui';
+import { GlassTooltip } from '../../components/ui/GlassTooltip';
+import { motion } from 'framer-motion';
 import {
   FileText, AlertTriangle, CheckCircle, Clock, TrendingUp,
   FilePlus, ClipboardList, BarChart3, Eye, Inbox, UserCheck, Timer, XOctagon, LayoutDashboard,
@@ -48,8 +50,8 @@ export default function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Spinner size={32} />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {[1,2,3,4].map(i => <SkeletonCard key={i} />)}
       </div>
     );
   }
@@ -66,17 +68,21 @@ export default function DashboardPage() {
         <div className="card p-5 lg:col-span-2">
           <h3 className="text-sm font-semibold text-slate-800 mb-4">Monthly Trend</h3>
           {monthly.length === 0 ? (
-            <div className="h-48 flex items-center justify-center text-slate-400 text-sm">No data yet</div>
+            <EmptyState icon={BarChart3} title="No Data Available" message="There are no incidents recorded for the monthly trend." />
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={monthly} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ borderRadius: 12, border: '1px solid #e8edf4', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                />
-                <Bar dataKey="count" fill="#0e95ea" radius={[4, 4, 0, 0]} name="Incidents" />
+                <defs>
+                  <linearGradient id="colorMonthly" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.1}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} axisLine={false} tickLine={false} />
+                <Tooltip content={<GlassTooltip />} cursor={{fill: 'transparent'}} />
+                <Bar dataKey="count" fill="url(#colorMonthly)" radius={[6, 6, 0, 0]} name="Incidents" />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -86,7 +92,7 @@ export default function DashboardPage() {
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-slate-800 mb-4">By Severity</h3>
           {bySeverity.length === 0 ? (
-            <div className="h-48 flex items-center justify-center text-slate-400 text-sm">No data yet</div>
+            <EmptyState icon={Activity} title="No Data Available" message="There are no incidents to categorize by severity." />
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
@@ -107,9 +113,7 @@ export default function DashboardPage() {
                   iconSize={8}
                   formatter={(val) => <span style={{ fontSize: 11, color: '#64748b' }}>{val}</span>}
                 />
-                <Tooltip
-                  contentStyle={{ borderRadius: 12, border: '1px solid #e8edf4', fontSize: 12 }}
-                />
+                <Tooltip content={<GlassTooltip />} />
               </PieChart>
             </ResponsiveContainer>
           )}
@@ -126,20 +130,26 @@ export default function DashboardPage() {
               layout="vertical"
               margin={{ top: 0, right: 20, left: 100, bottom: 0 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
+              <defs>
+                <linearGradient id="colorType" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} vertical={true} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} axisLine={false} tickLine={false} />
               <YAxis
                 type="category"
                 dataKey="incident_type"
                 tick={{ fontSize: 11, fill: '#64748b' }}
                 width={95}
+                axisLine={false}
+                tickLine={false}
               />
-              <Tooltip
-                contentStyle={{ borderRadius: 12, border: '1px solid #e8edf4', fontSize: 12 }}
-              />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Count">
+              <Tooltip content={<GlassTooltip />} cursor={{fill: 'transparent'}} />
+              <Bar dataKey="count" radius={[0, 6, 6, 0]} name="Count">
                 {byType.map((_, i) => (
-                  <Cell key={i} fill={COLORS_PIE[i % COLORS_PIE.length]} />
+                  <Cell key={i} fill={`url(#colorType)`} />
                 ))}
               </Bar>
             </BarChart>
@@ -153,19 +163,25 @@ export default function DashboardPage() {
     <div className="space-y-6">
       {/* Page header */}
       <div className="page-header">
-        <div>
-          <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">
-            Welcome back, {user?.role === 'imc' ? 'Incident Management Committee' : `${user?.fullName?.split(' ')[0]} · ${user?.department || 'JPHRC'}`}
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 font-display">Dashboard</h1>
+            <p className="text-sm text-sm text-slate-500 mt-1">
+              Welcome back, {user?.fullName} · {user?.department || 'Quality Management'}
+            </p>
+          </div>
+          {user?.role !== 'employee' && (
+            <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
+              <FilePlus size={16} />
+              <span>Report Incident</span>
+            </button>
+          )}
         </div>
-        {(user?.role === 'employee' || user?.role === 'hod') && (
-          <button onClick={() => navigate('/incidents/new')} className="btn-primary">
-            <FilePlus size={16} />
-            Report Incident
-          </button>
-        )}
       </div>
+
+      {(user?.role === 'hod' || user?.role === 'imc' || user?.role === 'system_admin') && (
+        <InsightSummary incidents={recentData} role={user?.role} />
+      )}
 
       {/* OVERVIEW SECTION */}
       <div className="space-y-6">
@@ -417,8 +433,14 @@ export default function DashboardPage() {
                     No incidents yet
                   </td>
                 </tr>
-              ) : recentData.slice(0, 5).map(inc => (
-                <tr key={inc.id}>
+              ) : recentData.slice(0, 5).map((inc, i) => (
+                <motion.tr 
+                  key={inc.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="hover:bg-slate-50/50 transition-colors"
+                >
                   <td>
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono text-xs font-medium text-green-700">{inc.reference_id}</span>
@@ -474,7 +496,7 @@ export default function DashboardPage() {
                       <Eye size={14} /> View
                     </button>
                   </td>
-                </tr>
+                </motion.tr>
               ))}
             </tbody>
           </table>

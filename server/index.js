@@ -5,8 +5,25 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
 const fs = require('fs');
+const { Server } = require('socket.io');
+const http = require('http');
+const AppError = require('./utils/AppError');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', process.env.CLIENT_URL].filter(Boolean),
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
+  }
+});
+
+// Attach socket io to req object
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
 const PORT = process.env.PORT || 5000;
 
 // ─── MIDDLEWARE ───────────────────────────────────
@@ -44,22 +61,48 @@ app.get('/health', (req, res) => {
 });
 
 // ─── ERROR HANDLER ────────────────────────────────
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(err.status || 500).json({
-    error: process.env.NODE_ENV === 'production'
-      ? 'Internal server error'
-      : err.message
-  });
+app.all('*', (req, res, next) => {
+  next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
 });
 
-// ─── 404 ──────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+app.use((err, req, res, next) => {
+  err.statusCode = err.statusCode || 500;
+  err.status = err.status || 'error';
+
+  if (process.env.NODE_ENV === 'development') {
+    console.error('Unhandled error:', err);
+    res.status(err.statusCode).json({
+      status: err.status,
+      error: err,
+      message: err.message,
+      stack: err.stack
+    });
+  } else {
+    // Production
+    if (err.isOperational) {
+      res.status(err.statusCode).json({
+        status: err.status,
+        error: err.message
+      });
+    } else {
+      console.error('ERROR 💥', err);
+      res.status(500).json({
+        status: 'error',
+        error: 'Something went very wrong!'
+      });
+    }
+  }
 });
 
 // ─── START ────────────────────────────────────────
-app.listen(PORT, () => {
+io.on('connection', (socket) => {
+  console.log('Client connected to socket:', socket.id);
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`
   ╔══════════════════════════════════════════════════╗
   ║   JPHRC Incident Management System - API         ║
@@ -69,4 +112,4 @@ app.listen(PORT, () => {
   `);
 });
 
-module.exports = app;
+module.exports = { app, server, io };
