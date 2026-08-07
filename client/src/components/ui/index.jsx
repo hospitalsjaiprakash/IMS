@@ -5,6 +5,16 @@ export function Skeleton({ className = '' }) {
   return <div className={`animate-pulse bg-slate-200 rounded ${className}`} />;
 }
 
+export function SkeletonCard() {
+  return (
+    <div className="card p-5 animate-pulse">
+      <div className="h-4 bg-slate-200 rounded w-1/3 mb-4"></div>
+      <div className="h-8 bg-slate-200 rounded w-1/2 mb-2"></div>
+      <div className="h-3 bg-slate-100 rounded w-1/4"></div>
+    </div>
+  );
+}
+
 // ── Searchable Multi-Select ───────────────────────
 // Props: options: string[], value: string[], onChange: (string[]) => void
 //        placeholder, label, error
@@ -425,9 +435,5 @@ export function Tabs({ tabs, active, onChange }) {
   );
 }
 
-export * from './Skeleton';
-
 export * from './KanbanBoard';
-export * from './CommandPalette';
-
 export * from './InsightSummary';
