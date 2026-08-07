@@ -93,7 +93,8 @@ export default function LoginPage() {
       setSuccessMsg(res.data.message || 'OTP sent to your email address.');
       setMode('forgot_otp');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to send OTP. Please check your credentials.');
+      const errData = err.response?.data?.error;
+      setError(typeof errData === 'string' ? errData : (errData?.message || 'Failed to send OTP. Please check your credentials.'));
     } finally {
       setLocalLoading(false);
     }
@@ -121,7 +122,8 @@ export default function LoginPage() {
       setMode('login');
       setLoginForm({ employeeId: forgotForm.employeeId, password: '' });
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to reset password. Please check OTP.');
+      const errData = err.response?.data?.error;
+      setError(typeof errData === 'string' ? errData : (errData?.message || 'Failed to reset password. Please check OTP.'));
     } finally {
       setLocalLoading(false);
     }

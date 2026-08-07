@@ -22,7 +22,8 @@ export const useAuthStore = create((set) => ({
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
-      const error = err.response?.data?.error || 'Login failed. Please try again.';
+      const errData = err.response?.data?.error;
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Login failed. Please try again.');
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -35,7 +36,8 @@ export const useAuthStore = create((set) => ({
       set({ loading: false });
       return { success: true, message: response.data.message, employeeId: response.data.employeeId };
     } catch (err) {
-      const error = err.response?.data?.error || 'Registration failed. Please try again.';
+      const errData = err.response?.data?.error;
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Registration failed. Please try again.');
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -52,7 +54,8 @@ export const useAuthStore = create((set) => ({
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
-      const error = err.response?.data?.error || 'Login failed. Please try again.';
+      const errData = err.response?.data?.error;
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Login failed. Please try again.');
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -69,7 +72,8 @@ export const useAuthStore = create((set) => ({
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
-      const error = err.response?.data?.error || 'Role switch failed. Incorrect password.';
+      const errData = err.response?.data?.error;
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Role switch failed. Incorrect password.');
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -86,7 +90,8 @@ export const useAuthStore = create((set) => ({
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
-      const error = err.response?.data?.error || 'Failed to leave role.';
+      const errData = err.response?.data?.error;
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Failed to leave role.');
       set({ error, loading: false });
       return { success: false, error };
     }
