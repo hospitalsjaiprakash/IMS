@@ -50,6 +50,11 @@ app.use('/uploads', express.static(path.resolve(uploadDir)));
 // ─── ROUTES ───────────────────────────────────────
 app.use('/api', require('./routes/index'));
 
+// Root route for Render health checks
+app.get('/', (req, res) => {
+  res.status(200).send('IMS API is running!');
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
