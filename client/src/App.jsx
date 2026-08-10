@@ -8,6 +8,7 @@ import { useSocket } from './hooks/useSocket';
 import { useEffect } from 'react';
 
 import AppLayout from './components/layout/AppLayout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import LoginPage from './pages/auth/LoginPage';
 import SettingsPage from './pages/auth/SettingsPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
@@ -79,42 +80,44 @@ export default function App() {
             error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
           }}
         />
-        <Routes>
-          <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-          <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+            <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+              <Route index element={<Navigate to="/dashboard" replace />} />
 
-            {/* Employee & HOD dashboard */}
-            <Route path="dashboard" element={<ProtectedRoute roles={['employee','hod']}><DashboardPage /></ProtectedRoute>} />
+              {/* Employee & HOD dashboard */}
+              <Route path="dashboard" element={<ProtectedRoute roles={['employee','hod']}><DashboardPage /></ProtectedRoute>} />
 
-            {/* IMC Portal */}
-            <Route path="imc/dashboard" element={<ProtectedRoute roles={['imc']}><ImcDashboard /></ProtectedRoute>} />
+              {/* IMC Portal */}
+              <Route path="imc/dashboard" element={<ProtectedRoute roles={['imc']}><ImcDashboard /></ProtectedRoute>} />
 
-            {/* Management Portal */}
-            <Route path="management/dashboard" element={<ProtectedRoute roles={['head_management']}><ManagementDashboard /></ProtectedRoute>} />
-            <Route path="management/dashboard/category/:categoryName" element={<ProtectedRoute roles={['head_management', 'system_admin', 'imc']}><CategoryDetailPage /></ProtectedRoute>} />
+              {/* Management Portal */}
+              <Route path="management/dashboard" element={<ProtectedRoute roles={['head_management']}><ManagementDashboard /></ProtectedRoute>} />
+              <Route path="management/dashboard/category/:categoryName" element={<ProtectedRoute roles={['head_management', 'system_admin', 'imc']}><CategoryDetailPage /></ProtectedRoute>} />
 
-            {/* System Office Portal */}
-            <Route path="admin/dashboard" element={<ProtectedRoute roles={['system_admin']}><SystemAdminDashboard /></ProtectedRoute>} />
+              {/* System Office Portal */}
+              <Route path="admin/dashboard" element={<ProtectedRoute roles={['system_admin']}><SystemAdminDashboard /></ProtectedRoute>} />
 
-            {/* Executive Portal (COO, Asst COO) */}
-            <Route path="executive/dashboard" element={<ProtectedRoute roles={['asst_coo', 'coo']}><AssistantCooDashboard /></ProtectedRoute>} />
+              {/* Executive Portal (COO, Asst COO) */}
+              <Route path="executive/dashboard" element={<ProtectedRoute roles={['asst_coo', 'coo']}><AssistantCooDashboard /></ProtectedRoute>} />
 
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="employees" element={<ProtectedRoute roles={['imc', 'head_management', 'system_admin']}><EmployeeDirectory /></ProtectedRoute>} />
-            <Route path="notifications" element={<NotificationsPage />} />
-            <Route path="incidents" element={<IncidentsListPage />} />
-            <Route path="incidents/new" element={<NewIncidentPage />} />
-            <Route path="incidents/:id" element={<IncidentDetailPage />} />
-            <Route path="admin/analytics" element={<ProtectedRoute roles={['system_admin','head_management']}><AdminAnalyticsPage /></ProtectedRoute>} />
-            <Route path="admin/users" element={<ProtectedRoute roles={['system_admin']}><AdminUsersPage /></ProtectedRoute>} />
-            <Route path="admin/attachments" element={<ProtectedRoute roles={['system_admin']}><AdminAttachmentsPage /></ProtectedRoute>} />
-            <Route path="admin/settings" element={<ProtectedRoute roles={['system_admin']}><AdminSettingsPage /></ProtectedRoute>} />
-            <Route path="admin/audit" element={<ProtectedRoute roles={['system_admin']}><AdminAuditPage /></ProtectedRoute>} />
-            <Route path="*" element={<div className="flex flex-col items-center justify-center h-64 text-center"><p className="text-4xl font-bold text-slate-200 font-display mb-3">404</p><p className="text-slate-500 mb-4">Page not found</p><a href="/dashboard" className="btn-primary">Go to Dashboard</a></div>} />
-          </Route>
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="employees" element={<ProtectedRoute roles={['imc', 'head_management', 'system_admin']}><EmployeeDirectory /></ProtectedRoute>} />
+              <Route path="notifications" element={<NotificationsPage />} />
+              <Route path="incidents" element={<IncidentsListPage />} />
+              <Route path="incidents/new" element={<NewIncidentPage />} />
+              <Route path="incidents/:id" element={<IncidentDetailPage />} />
+              <Route path="admin/analytics" element={<ProtectedRoute roles={['system_admin','head_management']}><AdminAnalyticsPage /></ProtectedRoute>} />
+              <Route path="admin/users" element={<ProtectedRoute roles={['system_admin']}><AdminUsersPage /></ProtectedRoute>} />
+              <Route path="admin/attachments" element={<ProtectedRoute roles={['system_admin']}><AdminAttachmentsPage /></ProtectedRoute>} />
+              <Route path="admin/settings" element={<ProtectedRoute roles={['system_admin']}><AdminSettingsPage /></ProtectedRoute>} />
+              <Route path="admin/audit" element={<ProtectedRoute roles={['system_admin']}><AdminAuditPage /></ProtectedRoute>} />
+              <Route path="*" element={<div className="flex flex-col items-center justify-center h-64 text-center"><p className="text-4xl font-bold text-slate-200 font-display mb-3">404</p><p className="text-slate-500 mb-4">Page not found</p><a href="/dashboard" className="btn-primary">Go to Dashboard</a></div>} />
+            </Route>
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
     </PersistQueryClientProvider>
   );

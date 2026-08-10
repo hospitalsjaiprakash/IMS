@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
-import { StatCard, EmptyState, Modal, Tabs, SkeletonCard, InsightSummary } from '../../components/ui';
+import { StatCard, EmptyState, Modal, Tabs, SkeletonCard, InsightSummary, StatusBadge, SLABadge } from '../../components/ui';
 import { GlassTooltip } from '../../components/ui/GlassTooltip';
 import { motion } from 'framer-motion';
 import {
@@ -454,6 +454,7 @@ export default function DashboardPage() {
                           <span>ESCALATED</span>
                         </span>
                       )}
+                      <SLABadge createdAt={inc.created_at} status={inc.status} />
                     </div>
                   </td>
                   {user?.role === 'hod' ? (
@@ -469,7 +470,7 @@ export default function DashboardPage() {
                       </td>
                       <td className="text-slate-600 text-xs font-medium">{(inc.departments || []).join(', ') || 'N/A'}</td>
                       <td>
-                        <span className={getStatusClass(inc.status)}>{getStatusLabel(inc.status)}</span>
+                        <StatusBadge status={inc.status} />
                       </td>
                     </>
                   ) : (
@@ -482,7 +483,7 @@ export default function DashboardPage() {
                         {inc.sub_location_name ? ` - ${inc.sub_location_name}` : ''}
                       </td>
                       <td>
-                        <span className={getStatusClass(inc.status)}>{getStatusLabel(inc.status)}</span>
+                        <StatusBadge status={inc.status} />
                       </td>
                     </>
                   )}
@@ -562,7 +563,7 @@ export default function DashboardPage() {
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
                 <span className="text-slate-600 font-medium">IMC Status</span>
-                <span className={getStatusClass(selectedInc.status)}>{getStatusLabel(selectedInc.status)}</span>
+                <StatusBadge status={selectedInc.status} />
               </div>
               {selectedInc.priority_escalated_by && (
                 <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-xl animate-pulse">

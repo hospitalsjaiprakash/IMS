@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, AlertCircle, CheckCircle, Info, AlertTriangle, Loader2, Search, ChevronDown, Check } from 'lucide-react';
+import { X, AlertCircle, CheckCircle, Info, AlertTriangle, Loader2, Search, ChevronDown, Check, ChevronRight, Home, Clock } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { getSLABadgeInfo, getSeverityClass, getStatusClass, getStatusLabel } from '../../utils/helpers';
 
 export function Skeleton({ className = '' }) {
   return <div className={`animate-pulse bg-slate-200 rounded ${className}`} />;
@@ -431,6 +433,108 @@ export function Tabs({ tabs, active, onChange }) {
           )}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ── Status & Severity Badges ──────────────────────
+export function StatusBadge({ status, className = '' }) {
+  return (
+    <span className={`${getStatusClass(status)} ${className}`}>
+      {getStatusLabel(status)}
+    </span>
+  );
+}
+
+export function SeverityBadge({ severity, className = '' }) {
+  return (
+    <span className={`badge ${getSeverityClass(severity)} ${className}`}>
+      {severity}
+    </span>
+  );
+}
+
+// ── SLA Badge ─────────────────────────────────────
+export function SLABadge({ createdAt, status, className = '' }) {
+  const info = getSLABadgeInfo(createdAt, status);
+  if (!info) return null;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+      info.isOverdue 
+        ? 'bg-red-50 text-red-700 border-red-200' 
+        : 'bg-amber-50 text-amber-700 border-amber-200'
+    } ${className}`}>
+      <Clock size={10} />
+      {info.text}
+    </span>
+  );
+}
+
+// ── Breadcrumbs ───────────────────────────────────
+export function Breadcrumbs({ items, className = '' }) {
+  return (
+    <nav className={`flex items-center text-sm font-medium text-slate-500 mb-4 ${className}`} aria-label="Breadcrumb">
+      <Link to="/dashboard" className="hover:text-slate-800 flex items-center transition-colors">
+        <Home size={14} />
+      </Link>
+      {items.map((item, i) => (
+        <div key={i} className="flex items-center">
+          <ChevronRight size={14} className="mx-2 text-slate-400" />
+          {item.to ? (
+            <Link to={item.to} className="hover:text-slate-800 transition-colors">
+              {item.label}
+            </Link>
+          ) : (
+            <span className="text-slate-800">{item.label}</span>
+          )}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+// ── Complex Skeletons ─────────────────────────────
+export function SkeletonTable({ rows = 5 }) {
+  return (
+    <div className="card w-full">
+      <div className="px-5 py-4 border-b border-slate-200">
+        <div className="h-4 bg-slate-200 rounded w-1/4 animate-pulse"></div>
+      </div>
+      <div className="p-0">
+        {[...Array(rows)].map((_, i) => (
+          <div key={i} className="flex items-center gap-4 px-5 py-4 border-b border-slate-100 animate-pulse">
+            <div className="h-4 bg-slate-200 rounded w-1/6"></div>
+            <div className="h-4 bg-slate-200 rounded w-1/4"></div>
+            <div className="h-4 bg-slate-200 rounded w-1/4"></div>
+            <div className="h-4 bg-slate-200 rounded w-1/6"></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function SkeletonDetail() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="h-4 bg-slate-200 rounded w-1/4"></div>
+      <div className="card p-6">
+        <div className="h-6 bg-slate-200 rounded w-1/3 mb-6"></div>
+        <div className="grid grid-cols-2 gap-6">
+          <div>
+            <div className="h-3 bg-slate-200 rounded w-1/4 mb-2"></div>
+            <div className="h-4 bg-slate-200 rounded w-3/4"></div>
+          </div>
+          <div>
+            <div className="h-3 bg-slate-200 rounded w-1/4 mb-2"></div>
+            <div className="h-4 bg-slate-200 rounded w-3/4"></div>
+          </div>
+        </div>
+        <div className="mt-6">
+          <div className="h-3 bg-slate-200 rounded w-1/4 mb-2"></div>
+          <div className="h-20 bg-slate-200 rounded w-full"></div>
+        </div>
+      </div>
     </div>
   );
 }

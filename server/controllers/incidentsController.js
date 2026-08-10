@@ -139,7 +139,7 @@ exports.createIncident = async (req, res) => {
         await client.query(
           `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [incident.id, req.user.id, 'submission', file.originalname, file.filename, file.size, file.mimetype]
+          [incident.id, req.user.id, 'submission', file.originalname, (file.filename || file.key), file.size, file.mimetype]
         );
       }
     }
@@ -631,7 +631,7 @@ exports.submitHodFeedback = async (req, res) => {
         await client.query(
           `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [id, req.user.id, 'hod_feedback', file.originalname, file.filename, file.size, file.mimetype]
+          [id, req.user.id, 'hod_feedback', file.originalname, (file.filename || file.key), file.size, file.mimetype]
         );
       }
     }
@@ -776,7 +776,7 @@ exports.submitImcFeedback = async (req, res) => {
         await client.query(
           `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [id, req.user.id, 'imc_feedback', file.originalname, file.filename, file.size, file.mimetype]
+          [id, req.user.id, 'imc_feedback', file.originalname, (file.filename || file.key), file.size, file.mimetype]
         );
       }
     }
@@ -851,7 +851,7 @@ exports.submitMdDecision = async (req, res) => {
         await client.query(
           `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [id, req.user.id, 'md_decision', file.originalname, file.filename, file.size, file.mimetype]
+          [id, req.user.id, 'md_decision', file.originalname, (file.filename || file.key), file.size, file.mimetype]
         );
       }
     }

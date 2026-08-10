@@ -1,4 +1,9 @@
 require('dotenv').config();
+
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required.");
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -102,9 +107,11 @@ app.use((err, req, res, next) => {
 
 // ─── START ────────────────────────────────────────
 io.on('connection', (socket) => {
-  console.log('Client connected to socket:', socket.id);
+  const userId = socket.handshake.query.userId;
+  if (userId) {
+    socket.join(`user_${userId}`);
+  }
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
   });
 });
 

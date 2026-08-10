@@ -328,7 +328,7 @@ exports.login = async (req, res) => {
     // Generate JWT
     const token = jwt.sign(
       { userId: user.id, employeeId: user.employee_id, role: activeRole },
-      process.env.JWT_SECRET || 'dev-secret-key',
+      process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
@@ -533,7 +533,7 @@ exports.committeeLogin = async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, employeeId: user.employee_id, role: targetRole },
-      process.env.JWT_SECRET || 'dev-secret-key',
+      process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
@@ -603,7 +603,7 @@ exports.switchRole = async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, employeeId: user.employee_id, role: finalTargetRole },
-      process.env.JWT_SECRET || 'dev-secret-key',
+      process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
@@ -840,7 +840,7 @@ exports.leaveRole = async (req, res) => {
     // Generate new token reflecting updated role
     const token = jwt.sign(
       { id: updatedUser.id, role: updatedUser.role, employeeId: updatedUser.employee_id },
-      process.env.JWT_SECRET || 'secret',
+      process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 

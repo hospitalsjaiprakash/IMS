@@ -78,8 +78,18 @@ export default function AppLayout() {
         setNotifOpen(false);
       }
     };
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        setNotifOpen(false);
+        setAdminModalOpen(false);
+      }
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', handleKey);
+    };
   }, []);
 
   const handleLogout = () => {

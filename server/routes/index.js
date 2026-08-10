@@ -17,8 +17,14 @@ const { s3Client } = require('../config/s3');
 // Rate limiting for auth routes
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 10, // Limit each IP to 10 requests per windowMs
   message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes' }
 });
 
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || 'uploads');
@@ -42,7 +48,6 @@ if (s3Client && process.env.S3_BUCKET_NAME) {
       }
     })
   });
-  console.log('Using S3 for file uploads');
 } else {
   const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -54,13 +59,12 @@ if (s3Client && process.env.S3_BUCKET_NAME) {
     }
   });
   upload = multer({ storage: storage });
-  console.log('Using local disk for file uploads');
 }
 // ─── AUTH ─────────────────────────────────────────
 router.use('/auth', authLimiter); // Apply rate limiter to all auth routes
 router.post('/auth/register', authController.register);
-router.post('/auth/login', authController.login);
-router.post('/auth/committee-login', authController.committeeLogin);
+router.post('/auth/login', loginLimiter, authController.login);
+router.post('/auth/committee-login', loginLimiter, authController.committeeLogin);
 router.post('/auth/switch-role', authenticate, authController.switchRole);
 router.post('/auth/forgot-password', authController.forgotPasswordRequest);
 router.post('/auth/reset-password', authController.resetPassword);
@@ -138,8 +142,11 @@ router.post('/incidents/:id/reopen', authenticate, authorize('head_management', 
     const { auditLog } = require('../middleware/auth');
     await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason }, req.ip);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Failed to reopen' }); }
+  } catch (e) { console.error('[POST /incidents/:id/reopen] error:', e); res.status(500).json({ error: 'Failed to reopen' }); }
 });
+
+// Bulk Update Status
+
 
 // HOD/IMC/Management: edit own feedback
 router.put('/incidents/:id/feedback', authenticate, authorize('hod', 'imc', 'head_management'), incidentActionsController.editFeedback);
@@ -175,7 +182,7 @@ router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc')
       [id, investigatorId, req.user.id]
     );
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Failed to assign investigator' }); }
+  } catch (e) { console.error('[POST /incidents/:id/assign-investigator] error:', e); res.status(500).json({ error: 'Failed to assign investigator' }); }
 });
 
 // ─── NOTIFICATIONS ────────────────────────────────
@@ -183,17 +190,17 @@ router.get('/notifications', authenticate, notificationsController.getNotificati
 router.put('/notifications/:id/read', authenticate, notificationsController.markAsRead);
 
 // ─── LOCATIONS & DEPARTMENTS ──────────────────────
-router.get('/locations', async (req, res) => {
+router.get('/locations', authenticate, async (req, res) => {
   try {
     const [main, sub] = await Promise.all([
       query('SELECT * FROM main_locations ORDER BY name'),
       query('SELECT * FROM sub_locations ORDER BY name')
     ]);
     res.json({ mainLocations: main.rows, subLocations: sub.rows });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[GET /locations] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
-router.get('/departments', async (req, res) => {
+router.get('/departments', authenticate, async (req, res) => {
   try {
     const result = await query(
       `SELECT d.*, 
@@ -207,7 +214,7 @@ router.get('/departments', async (req, res) => {
        ORDER BY d.name`
     );
     res.json(result.rows);
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[GET /departments] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
 // ─── KNOWLEDGE BASE ───────────────────────────────
@@ -247,7 +254,7 @@ router.get('/knowledge-base', authenticate, authorize('hod', 'imc', 'head_manage
       total: parseInt(countResult.rows[0].count),
       totalPages: Math.ceil(parseInt(countResult.rows[0].count) / limit)
     });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[GET /knowledge-base] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
 router.post('/knowledge-base', authenticate, authorize('imc'), async (req, res) => {
@@ -259,7 +266,7 @@ router.post('/knowledge-base', authenticate, authorize('imc'), async (req, res) 
       [incidentId || null, req.user.id, title, incidentType, departmentId || null, rootCause, preventiveActions, tags]
     );
     res.status(201).json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[POST /knowledge-base] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
 // ─── ADMIN ────────────────────────────────────────
@@ -274,6 +281,7 @@ router.post('/admin/assign-imc', authenticate, authorize('system_admin'), adminC
 router.post('/admin/assign-role', authenticate, authorize('system_admin'), adminController.assignUserRole);
 router.delete('/admin/imc-members/:id', authenticate, authorize('system_admin'), adminController.removeImcRole);
 router.post('/admin/stop-imc', authenticate, authorize('system_admin'), adminController.stopImcAccess);
+router.get('/admin/audit-logs/export', authenticate, authorize('system_admin'), adminController.exportAuditLogs);
 router.get('/admin/audit-logs', authenticate, authorize('system_admin'), adminController.getAuditLogs);
 router.get('/admin/analytics', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
 router.get('/admin/users', authenticate, authorize('system_admin'), adminController.getAllUsers);
@@ -317,7 +325,7 @@ router.get('/imc/queue', authenticate, authorize('imc'), async (req, res) => {
        ORDER BY i.created_at ASC`
     );
     res.json(result.rows);
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[GET /imc/queue] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
 // ─── TRAINING ─────────────────────────────────────
@@ -347,7 +355,7 @@ router.get('/training', authenticate, async (req, res) => {
       params
     );
     res.json(result.rows);
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[GET /training] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
 router.post('/training/:id/complete', authenticate, authorize('hod', 'imc'), async (req, res) => {
@@ -357,7 +365,7 @@ router.post('/training/:id/complete', authenticate, authorize('hod', 'imc'), asy
       [req.user.id, req.params.id]
     );
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+  } catch (e) { console.error('[POST /training/:id/complete] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
 module.exports = router;

@@ -1,19 +1,30 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
 import { getSeverityClass, getStatusClass, getStatusLabel, formatDate, INCIDENT_CATEGORIES, SEVERITY_OPTIONS } from '../../utils/helpers';
-import { EmptyState, Pagination, Spinner, Tabs, KanbanBoard } from '../../components/ui';
-import { FileText, Search, Filter, X, FilePlus, ChevronRight, Layers, User, Paperclip, Download, Calendar, Check, Columns, List } from 'lucide-react';
+import { EmptyState, Pagination, Spinner, Tabs, KanbanBoard, Breadcrumbs, StatusBadge, SeverityBadge, SLABadge, SkeletonTable } from '../../components/ui';
+import { FileText, Search, Filter, X, FilePlus, ChevronRight, Layers, User, Paperclip, Download, Calendar, Check, Columns, List, LayoutGrid, CheckSquare, Save, Settings, MoreHorizontal } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import * as XLSX from 'xlsx';
 import toast from 'react-hot-toast';
 
+const ALL_COLUMNS = [
+  { id: 'ref', label: 'Reference ID' },
+  { id: 'reporter', label: 'Reporter(ID)' },
+  { id: 'type', label: 'Type' },
+  { id: 'dept', label: 'Department(s)' },
+  { id: 'severity', label: 'Severity' },
+  { id: 'status', label: 'Status' },
+  { id: 'date', label: 'Date' }
+];
+
 export default function IncidentsListPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-
   const location = useLocation();
+  const queryClient = useQueryClient();
+
   const [filters, setFilters] = useState({ 
     status: location.state?.status || '', 
     severity: location.state?.severity || '', 
@@ -25,31 +36,66 @@ export default function IncidentsListPage() {
     reviewStage: location.state?.reviewStage || ''
   });
 
-  // Sync state if it changes during navigation (e.g., clicking dashboard cards again)
-  useEffect(() => {
-    if (location.state) {
-      if (location.state.openExport) {
-        setShowExportModal(true);
-      }
-      setFilters(f => ({
-        ...f,
-        status: location.state.status || '',
-        severity: location.state.severity || '',
-        reviewStage: location.state.reviewStage || '',
-        viewMode: location.state.viewMode || f.viewMode,
-        page: 1
-      }));
-    }
-  }, [location.state]);
   const [showFilters, setShowFilters] = useState(false);
   const [search, setSearch] = useState('');
+  
+  // Tasks 3, 7, 8 states
+  const [viewStyle, setViewStyle] = useState('table'); // 'table' | 'cards' | 'kanban'
+  const [savedFilters, setSavedFilters] = useState(() => JSON.parse(localStorage.getItem('savedFilters') || '[]'));
+  const [visibleColumns, setVisibleColumns] = useState(() => JSON.parse(localStorage.getItem('visibleColumns') || JSON.stringify(ALL_COLUMNS.map(c => c.id))));
+  const [showColDropdown, setShowColDropdown] = useState(false);
+
+
+  // Export states
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportRange, setExportRange] = useState('last_30');
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
-  
-  const [isKanban, setIsKanban] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns));
+  }, [visibleColumns]);
+
+  const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val, page: 1 }));
+  const clearFilters = () => {
+    setFilters(f => ({ status: '', severity: '', incidentCategory: '', dateFrom: '', dateTo: '', reviewStage: '', page: 1, viewMode: f.viewMode }));
+    if (location.state) navigate(location.pathname, { replace: true, state: {} });
+  };
+  const hasFilters = filters.status || filters.severity || filters.incidentCategory || filters.dateFrom || filters.dateTo || filters.reviewStage;
+
+  const saveCurrentFilter = () => {
+    const name = prompt('Name for this filter view:');
+    if (!name) return;
+    const newFilters = [...savedFilters, { name, filterState: { ...filters, page: 1 } }];
+    setSavedFilters(newFilters);
+    localStorage.setItem('savedFilters', JSON.stringify(newFilters));
+    toast.success('Filter view saved');
+  };
+
+  const applySavedFilter = (f) => setFilters(f.filterState);
+  const deleteSavedFilter = (idx) => {
+    const newFilters = savedFilters.filter((_, i) => i !== idx);
+    setSavedFilters(newFilters);
+    localStorage.setItem('savedFilters', JSON.stringify(newFilters));
+  };
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['incidents', filters],
+    queryFn: () => incidentsApi.list(filters).then(r => r.data),
+    keepPreviousData: true,
+  });
+
+  const incidents = useMemo(() => {
+    let list = data?.incidents || [];
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(inc => inc.reference_id?.toLowerCase().includes(s));
+    }
+    return list;
+  }, [data, search]);
+
+
 
   const formatDurationBetween = (startStr, endStr) => {
     if (!startStr || !endStr) return 'Pending / No Feedback';
@@ -152,35 +198,20 @@ export default function IncidentsListPage() {
     }
   };
 
-  const queryKey = ['incidents', filters];
-  const { data, isLoading } = useQuery({
-    queryKey,
-    queryFn: () => incidentsApi.list(filters).then(r => r.data),
-    keepPreviousData: true,
-  });
-
-  const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val, page: 1 }));
-  const clearFilters = () => {
-    setFilters(f => ({ status: '', severity: '', incidentCategory: '', dateFrom: '', dateTo: '', reviewStage: '', page: 1, viewMode: f.viewMode }));
-    if (location.state) navigate(location.pathname, { replace: true, state: {} });
-  };
-  const hasFilters = filters.status || filters.severity || filters.incidentCategory || filters.dateFrom || filters.dateTo || filters.reviewStage;
-
   const STATUS_OPTIONS = [
     { value: 'active', label: 'Active (Unresolved)' },
     { value: 'submitted', label: 'Submitted' },
-    { value: 'with_hod', label: 'HOD Feedback' },
-    { value: 'with_imc', label: 'IMC Feedback' },
-    { value: 'with_head_management', label: 'Management Feedback' },
+    { value: 'with_hod', label: 'Awaiting HOD Feedback' },
+    { value: 'with_imc', label: 'HOD Reviewed - Awaiting IMC' },
+    { value: 'with_head_management', label: 'IMC Reviewed - Awaiting Mgmt' },
     { value: 'resolved', label: 'Resolved' },
     { value: 'withdrawn', label: 'Withdrawn' },
   ];
 
-  const incidents = data?.incidents || [];
-
   return (
     <div className="space-y-5">
-      {/* Header */}
+      <Breadcrumbs items={[{ label: 'Incidents' }]} />
+      
       <div className="page-header pb-2">
         <div>
           <h1 className="page-title">Incidents</h1>
@@ -191,20 +222,9 @@ export default function IncidentsListPage() {
         <div className="flex items-center gap-2.5">
           {(user?.role === 'hod' || user?.role === 'imc' || user?.role === 'system_admin') && (
             <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-              <button
-                onClick={() => setIsKanban(false)}
-                className={`p-1.5 rounded-md flex items-center justify-center transition-all ${!isKanban ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                title="List View"
-              >
-                <List size={16} />
-              </button>
-              <button
-                onClick={() => setIsKanban(true)}
-                className={`p-1.5 rounded-md flex items-center justify-center transition-all ${isKanban ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                title="Kanban Board"
-              >
-                <Columns size={16} />
-              </button>
+              <button onClick={() => setViewStyle('table')} className={`p-1.5 rounded-md flex items-center justify-center transition-all ${viewStyle === 'table' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`} title="Table View"><List size={16} /></button>
+              <button onClick={() => setViewStyle('cards')} className={`p-1.5 rounded-md flex items-center justify-center transition-all ${viewStyle === 'cards' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`} title="Card View"><LayoutGrid size={16} /></button>
+              <button onClick={() => setViewStyle('kanban')} className={`p-1.5 rounded-md flex items-center justify-center transition-all ${viewStyle === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`} title="Kanban Board"><Columns size={16} /></button>
             </div>
           )}
           <button onClick={() => setShowExportModal(true)} className="btn-secondary">
@@ -221,56 +241,57 @@ export default function IncidentsListPage() {
       </div>
 
       {user?.role === 'hod' && (
-        <Tabs
-          tabs={[
-            { id: 'department', label: 'Received Incidents', icon: Layers },
-            { id: 'my_incidents', label: 'My Incidents', icon: User }
-          ]}
-          active={filters.viewMode}
-          onChange={(id) => setFilter('viewMode', id)}
-        />
+        <Tabs tabs={[{ id: 'department', label: 'Received Incidents', icon: Layers }, { id: 'my_incidents', label: 'My Incidents', icon: User }]} active={filters.viewMode} onChange={(id) => setFilter('viewMode', id)} />
       )}
 
-      {/* Search and filter bar */}
-      <div className="card p-3">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
+      {/* Filters Area */}
+      <div className="card p-3 overflow-visible">
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search by reference ID…"
-              className="input pl-9"
-            />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by reference ID…" className="input pl-9 w-full" />
           </div>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`btn-secondary flex-shrink-0 ${hasFilters ? 'border-blue-500 text-blue-600 bg-blue-50' : ''}`}
-          >
-            <Filter size={15} />
-            Filters
-            {hasFilters && <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">!</span>}
+          <button onClick={() => setShowFilters(!showFilters)} className={`btn-secondary flex-shrink-0 ${hasFilters ? 'border-blue-500 text-blue-600 bg-blue-50' : ''}`}>
+            <Filter size={15} /> Filters {hasFilters && <span className="w-2 h-2 rounded-full bg-blue-600 ml-1"></span>}
           </button>
           {hasFilters && (
-            <button onClick={clearFilters} className="btn-icon flex-shrink-0" title="Clear filters">
-              <X size={16} />
+            <button onClick={saveCurrentFilter} className="btn-secondary flex-shrink-0 text-slate-500" title="Save Filter">
+              <Save size={15} /> Save View
             </button>
+          )}
+          {hasFilters && <button onClick={clearFilters} className="btn-icon flex-shrink-0" title="Clear filters"><X size={16} /></button>}
+          
+          {viewStyle === 'table' && (
+            <div className="relative">
+              <button onClick={() => setShowColDropdown(!showColDropdown)} className="btn-secondary flex-shrink-0"><Settings size={15} /> Columns</button>
+              {showColDropdown && (
+                <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 shadow-lg rounded-xl p-2 z-50">
+                  <h4 className="text-xs font-bold text-slate-500 mb-2 px-2">Visible Columns</h4>
+                  {ALL_COLUMNS.map(c => (
+                    <label key={c.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer text-sm">
+                      <input type="checkbox" checked={visibleColumns.includes(c.id)} onChange={(e) => {
+                        if (e.target.checked) setVisibleColumns([...visibleColumns, c.id]);
+                        else setVisibleColumns(visibleColumns.filter(id => id !== c.id));
+                      }} className="rounded border-slate-300" />
+                      {c.label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
-        {filters.reviewStage && (
-          <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-100 text-xs">
-            <span className="text-slate-500 font-medium">Active Review Filter:</span>
-            <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-0.5 font-bold">
-              {filters.reviewStage === 'hodGiven' && 'HOD Feedback Given'}
-              {filters.reviewStage === 'hodPending' && 'HOD Feedback Pending'}
-              {filters.reviewStage === 'imcGiven' && 'IMC Feedback Given'}
-              {filters.reviewStage === 'imcPending' && 'IMC Feedback Pending'}
-              {filters.reviewStage === 'mgmtGiven' && 'Management Feedback Given'}
-              {filters.reviewStage === 'mgmtPending' && 'Management Pending'}
-              {filters.reviewStage === 'trainingPending' && 'Training Pending'}
-              <button onClick={() => setFilter('reviewStage', '')} className="hover:text-red-500 ml-1"><X size={12} /></button>
-            </span>
+        {/* Saved Filters */}
+        {savedFilters.length > 0 && (
+          <div className="flex gap-2 mt-3 overflow-x-auto pb-1">
+            <span className="text-xs font-bold text-slate-500 self-center">Saved Views:</span>
+            {savedFilters.map((sf, idx) => (
+              <div key={idx} className="flex items-center gap-1 bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-medium cursor-pointer hover:bg-indigo-100">
+                <span onClick={() => applySavedFilter(sf)}>{sf.name}</span>
+                <X size={12} className="ml-1 opacity-50 hover:opacity-100" onClick={() => deleteSavedFilter(idx)} />
+              </div>
+            ))}
           </div>
         )}
 
@@ -309,25 +330,14 @@ export default function IncidentsListPage() {
         )}
       </div>
 
-      {/* Table/Kanban */}
-      <div className="card overflow-hidden">
+
+      {/* View Content */}
+      <div className={`${viewStyle === 'table' ? 'card overflow-hidden' : ''}`}>
         {isLoading ? (
-          <div className="flex items-center justify-center py-16">
-            <Spinner size={28} />
-          </div>
+          viewStyle === 'table' ? <SkeletonTable /> : <div className="flex justify-center py-16"><Spinner size={28} /></div>
         ) : incidents.length === 0 ? (
-          <EmptyState
-            icon={FileText}
-            title="No incidents found"
-            message={hasFilters ? 'Try adjusting your filters to see more results.' : 'No incidents have been reported yet.'}
-            action={user?.role === 'employee' && (
-              <button onClick={() => navigate('/incidents/new')} className="btn-primary">
-                <FilePlus size={15} />
-                Report First Incident
-              </button>
-            )}
-          />
-        ) : isKanban ? (
+          <EmptyState icon={FileText} title="No incidents found" message={hasFilters ? 'Try adjusting your filters.' : 'No incidents reported.'} />
+        ) : viewStyle === 'kanban' ? (
           <KanbanBoard
             columns={[
               { id: 'submitted', title: 'Submitted', statusIds: ['submitted', 'active'] },
@@ -338,76 +348,85 @@ export default function IncidentsListPage() {
             incidents={incidents}
             onIncidentClick={(inc) => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
           />
+        ) : viewStyle === 'cards' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {incidents.map(inc => (
+              <div key={inc.id} onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)} className="card p-4 hover:shadow-md cursor-pointer transition-shadow relative">
+
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="font-mono text-sm font-bold text-slate-800">{inc.reference_id}</span>
+                  <SLABadge createdAt={inc.created_at} status={inc.status} />
+                </div>
+                <div className="space-y-2 text-sm text-slate-600 mb-4">
+                  <p><span className="font-medium text-slate-700">Type:</span> {inc.incident_type}</p>
+                  <p className="truncate"><span className="font-medium text-slate-700">Dept:</span> {(inc.departments || []).join(', ') || 'N/A'}</p>
+                  <p><span className="font-medium text-slate-700">Date:</span> {formatDate(inc.incident_date)}</p>
+                </div>
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <SeverityBadge severity={inc.severity} />
+                  <StatusBadge status={inc.status} />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Reference ID</th>
-                    {['imc', 'head_management', 'system_admin'].includes(user?.role) && <th>Reporter(ID)</th>}
-                    <th>Type</th>
-                    <th>Department(s)</th>
-                    <th>Severity</th>
-                    <th>Status</th>
-                    <th>Date</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {incidents.map(inc => (
-                    <tr
-                      key={inc.id}
-                      className="cursor-pointer"
-                      onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
-                    >
+          <div className="overflow-x-auto">
+            <table className="table w-full whitespace-nowrap">
+              <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                <tr>
+
+                  {visibleColumns.includes('ref') && <th>Reference ID</th>}
+                  {visibleColumns.includes('reporter') && ['imc', 'head_management', 'system_admin'].includes(user?.role) && <th>Reporter(ID)</th>}
+                  {visibleColumns.includes('type') && <th>Type</th>}
+                  {visibleColumns.includes('dept') && <th>Department(s)</th>}
+                  {visibleColumns.includes('severity') && <th>Severity</th>}
+                  {visibleColumns.includes('status') && <th>Status</th>}
+                  {visibleColumns.includes('date') && <th>Date</th>}
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {incidents.map(inc => (
+                  <tr key={inc.id} className="hover:bg-slate-50/60 transition-colors cursor-pointer" onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}>
+
+                    {visibleColumns.includes('ref') && (
                       <td>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-xs font-semibold text-green-700">{inc.reference_id}</span>
-                          {inc.attachments && inc.attachments.length > 0 && (
-                            <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded px-1 py-0.5" title={`${inc.attachments.length} attachment(s)`}>
-                              <Paperclip size={10} />
-                              <span>{inc.attachments.length}</span>
-                            </span>
-                          )}
+                        <div className="flex flex-col gap-1">
+                          <span className="font-mono text-xs font-bold text-slate-800">{inc.reference_id}</span>
+                          <SLABadge createdAt={inc.created_at} status={inc.status} className="w-fit" />
                         </div>
                       </td>
-                      {['imc', 'head_management', 'system_admin'].includes(user?.role) && (
-                        <td className="text-xs text-slate-700">
-                          <div className="font-semibold text-slate-800">{inc.reporter_name || 'N/A'}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">ID: {inc.reporter_employee_id || 'N/A'}</div>
-                        </td>
-                      )}
-                      <td className="text-slate-600 text-xs">{inc.incident_type}</td>
+                    )}
+                    {visibleColumns.includes('reporter') && ['imc', 'head_management', 'system_admin'].includes(user?.role) && (
+                      <td className="text-xs text-slate-700">
+                        <div className="font-semibold text-slate-800">{inc.reporter_name || 'N/A'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">ID: {inc.reporter_employee_id || 'N/A'}</div>
+                      </td>
+                    )}
+                    {visibleColumns.includes('type') && <td className="text-slate-600 text-xs truncate max-w-[150px]">{inc.incident_type}</td>}
+                    {visibleColumns.includes('dept') && (
                       <td>
                         <span className="text-xs text-slate-600">
                           {(inc.departments || []).slice(0, 2).filter(Boolean).join(', ')}
                           {(inc.departments || []).filter(Boolean).length > 2 && ` +${inc.departments.length - 2}`}
                         </span>
                       </td>
-                      <td>
-                        <span className={`badge ${getSeverityClass(inc.severity)}`}>{inc.severity}</span>
-                      </td>
-                      <td>
-                        <span className={getStatusClass(inc.status)}>{getStatusLabel(inc.status)}</span>
-                      </td>
-                      <td className="text-xs text-slate-500">{formatDate(inc.incident_date)}</td>
-                      <td>
-                        <ChevronRight size={16} className="text-slate-400" />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="p-4 border-t border-slate-200">
-              <Pagination
-                page={filters.page}
-                totalPages={data?.totalPages || 1}
-                onPageChange={(p) => setFilters(f => ({ ...f, page: p }))}
-              />
-            </div>
-          </>
+                    )}
+                    {visibleColumns.includes('severity') && <td><SeverityBadge severity={inc.severity} /></td>}
+                    {visibleColumns.includes('status') && <td><StatusBadge status={inc.status} /></td>}
+                    {visibleColumns.includes('date') && <td className="text-xs text-slate-500">{formatDate(inc.incident_date)}</td>}
+                    <td><ChevronRight size={16} className="text-slate-400" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        
+        {(!isLoading && incidents.length > 0) && (
+          <div className="p-4 border-t border-slate-200 mt-2 bg-white rounded-b-xl">
+            <Pagination page={filters.page} totalPages={data?.totalPages || 1} onPageChange={(p) => setFilters(f => ({ ...f, page: p }))} />
+          </div>
         )}
       </div>
 
@@ -420,50 +439,24 @@ export default function IncidentsListPage() {
                 <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
                   <Download size={18} />
                 </div>
-                <h3 className="font-bold text-slate-800 text-base">Export Incidents Report (.xlsx)</h3>
+                <h3 className="font-bold text-slate-800 text-base">Export Incidents Report</h3>
               </div>
               <button onClick={() => setShowExportModal(false)} className="btn-icon">
                 <X size={18} />
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Select a time period to download an executive Excel spreadsheet containing complete incident tracking, targeted departments, status, HOD/IMC/Management feedback, and exact feedback turnaround times.
-              </p>
-
               <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Select Date Range</label>
+                <label className="text-xs font-semibold text-slate-700">Select Date Range</label>
                 <div className="grid grid-cols-2 gap-2.5">
-                  {[
-                    { id: 'last_30', label: 'Last 30 Days' },
-                    { id: 'last_60', label: 'Last 60 Days' },
-                    { id: 'last_90', label: 'Last 90 Days' },
-                    { id: 'all', label: 'All Time' },
-                  ].map(opt => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setExportRange(opt.id)}
-                      className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between ${
-                        exportRange === opt.id
-                          ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 font-semibold shadow-sm'
-                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="text-xs">{opt.label}</span>
-                      {exportRange === opt.id && <Check size={14} className="text-emerald-600" />}
+                  {['last_30', 'last_60', 'last_90', 'all'].map(opt => (
+                    <button key={opt} type="button" onClick={() => setExportRange(opt)} className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between ${exportRange === opt ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 font-semibold shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+                      <span className="text-xs">{opt.replace('_', ' ').toUpperCase()}</span>
+                      {exportRange === opt && <Check size={14} className="text-emerald-600" />}
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setExportRange('custom')}
-                  className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between mt-2 ${
-                    exportRange === 'custom'
-                      ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 font-semibold shadow-sm'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
+                <button type="button" onClick={() => setExportRange('custom')} className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between mt-2 ${exportRange === 'custom' ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 font-semibold shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
                   <div className="flex items-center gap-2 text-xs">
                     <Calendar size={14} className={exportRange === 'custom' ? 'text-emerald-600' : 'text-slate-400'} />
                     <span>Custom Date Range</span>
@@ -476,50 +469,19 @@ export default function IncidentsListPage() {
                 <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Start Date</label>
-                    <input
-                      type="date"
-                      value={exportStartDate}
-                      onChange={e => setExportStartDate(e.target.value)}
-                      className="input py-1.5 text-xs w-full"
-                    />
+                    <input type="date" value={exportStartDate} onChange={e => setExportStartDate(e.target.value)} className="input py-1.5 text-xs w-full" />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">End Date</label>
-                    <input
-                      type="date"
-                      value={exportEndDate}
-                      onChange={e => setExportEndDate(e.target.value)}
-                      className="input py-1.5 text-xs w-full"
-                    />
+                    <input type="date" value={exportEndDate} onChange={e => setExportEndDate(e.target.value)} className="input py-1.5 text-xs w-full" />
                   </div>
                 </div>
               )}
 
               <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowExportModal(false)}
-                  className="btn-secondary text-xs"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExportReport}
-                  disabled={exporting}
-                  className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-xs px-4 flex items-center gap-1.5"
-                >
-                  {exporting ? (
-                    <>
-                      <Spinner size={14} />
-                      <span>Generating Excel...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download size={14} />
-                      <span>Download Excel (.xlsx)</span>
-                    </>
-                  )}
+                <button type="button" onClick={() => setShowExportModal(false)} className="btn-secondary text-xs">Cancel</button>
+                <button type="button" onClick={handleExportReport} disabled={exporting} className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-xs px-4 flex items-center gap-1.5">
+                  {exporting ? <><Spinner size={14} /><span>Generating...</span></> : <><Download size={14} /><span>Download Excel</span></>}
                 </button>
               </div>
             </div>

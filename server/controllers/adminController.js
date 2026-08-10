@@ -236,6 +236,55 @@ exports.getAuditLogs = async (req, res) => {
   }
 };
 
+exports.exportAuditLogs = async (req, res) => {
+  try {
+    const { action, dateFrom, dateTo } = req.query;
+
+    let where = '1=1';
+    const params = [];
+    let idx = 1;
+
+    if (action) { where += ` AND al.action = $${idx++}`; params.push(action); }
+    if (dateFrom) { where += ` AND al.created_at >= $${idx++}`; params.push(dateFrom); }
+    if (dateTo) { where += ` AND al.created_at <= $${idx++}`; params.push(dateTo); }
+
+    const result = await query(
+      `SELECT al.*, u.full_name, u.employee_id, i.reference_id
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       LEFT JOIN incidents i ON i.id = al.incident_id
+       WHERE ${where}
+       ORDER BY al.created_at DESC`
+      , params
+    );
+
+    const logs = result.rows;
+
+    let csvContent = 'Date,Time,User,Employee ID,Action,Incident Ref,IP Address,Details\n';
+    
+    logs.forEach(log => {
+      const dateObj = new Date(log.created_at);
+      const date = dateObj.toLocaleDateString();
+      const time = dateObj.toLocaleTimeString();
+      const user = log.full_name || 'System';
+      const empId = log.employee_id || 'N/A';
+      const actionStr = log.action || 'UNKNOWN';
+      const refId = log.reference_id || 'N/A';
+      const ip = log.ip_address || 'N/A';
+      const details = log.details ? JSON.stringify(log.details).replace(/"/g, '""') : '';
+      
+      csvContent += `"${date}","${time}","${user}","${empId}","${actionStr}","${refId}","${ip}","${details}"\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="audit_logs_${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csvContent);
+  } catch (error) {
+    console.error('Failed to export audit logs:', error);
+    res.status(500).json({ error: 'Failed to export audit logs' });
+  }
+};
+
 exports.getSystemAnalytics = async (req, res) => {
   try {
     const [

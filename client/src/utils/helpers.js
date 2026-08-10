@@ -41,17 +41,40 @@ export const getStatusClass = (s) => {
 export const getStatusLabel = (s) => {
   const map = {
     submitted: 'Submitted',
-    with_hod: 'HOD Feedback',
-    with_hod_and_imc: 'HOD & IMC Feedback',
-    with_imc: 'IMC Feedback',
+    with_hod: 'Awaiting HOD Feedback',
+    with_hod_and_imc: 'Awaiting HOD & IMC Feedback',
+    with_imc: 'HOD Reviewed - Awaiting IMC',
     redirect_requested: 'Redirect Requested',
-    with_head_management: 'Management Feedback',
+    with_head_management: 'IMC Reviewed - Awaiting Mgmt',
     pending_training: 'Pending Training (IMC)',
     resolved: 'Resolved',
     withdrawn: 'Withdrawn',
     locked: 'Locked',
   };
   return map[s] || s;
+};
+
+export const getSLABadgeInfo = (createdAt, status) => {
+  if (!createdAt) return null;
+  if (['resolved', 'withdrawn', 'locked'].includes(status)) return null;
+
+  const created = new Date(createdAt);
+  const now = new Date();
+  
+  // 7 days SLA
+  const slaDeadline = new Date(created.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const diffMs = slaDeadline - now;
+  
+  const diffDays = Math.floor(Math.abs(diffMs) / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor(Math.abs(diffMs) / (1000 * 60 * 60));
+  
+  if (diffMs < 0) {
+    if (diffDays > 0) return { text: `Overdue by ${diffDays}d`, isOverdue: true };
+    return { text: `Overdue by ${diffHours}h`, isOverdue: true };
+  } else {
+    if (diffDays > 0) return { text: `${diffDays}d left`, isOverdue: false };
+    return { text: `${diffHours}h left`, isOverdue: false };
+  }
 };
 
 export const INCIDENT_CATEGORY_MAPPING = {

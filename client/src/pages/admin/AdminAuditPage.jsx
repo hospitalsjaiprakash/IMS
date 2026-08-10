@@ -4,6 +4,7 @@ import { adminApi } from '../../api';
 import { Spinner, Pagination } from '../../components/ui';
 import { ShieldCheck, Activity, Users, Lock } from 'lucide-react';
 import { formatDateTime, formatDate } from '../../utils/helpers';
+import toast from 'react-hot-toast';
 
 const ACTION_COLORS = {
   LOGIN: 'badge-green',
@@ -44,6 +45,36 @@ export default function AdminAuditPage() {
     'HOD_FEEDBACK_SUBMITTED', 'IMC_FEEDBACK_SUBMITTED', 'IMC_CLAIM',
     'ROLE_ASSIGNED', 'ROLE_ASSIGNED_IMC', 'IMC_ACCESS_STOPPED', 'CONFIG_UPDATED',
   ];
+
+  const handleExport = async () => {
+    try {
+      const qs = new URLSearchParams();
+      if (action) qs.append('action', action);
+      if (dateFrom) qs.append('dateFrom', dateFrom);
+      if (dateTo) qs.append('dateTo', dateTo);
+      
+      const res = await fetch(`/api/admin/audit-logs/export?${qs.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('ims_token')}`
+        }
+      });
+      
+      if (!res.ok) throw new Error('Failed to export');
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Audit logs exported successfully');
+    } catch (e) {
+      toast.error('Failed to export audit logs');
+    }
+  };
 
   return (
     <div className="space-y-6 pb-12 w-full">
@@ -95,9 +126,17 @@ export default function AdminAuditPage() {
               <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="bg-transparent text-xs font-medium outline-none" />
             </div>
             {systemAuditData?.total && (
-              <span className="ml-auto text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                {systemAuditData.total.toLocaleString()} logged events
-              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                  {systemAuditData.total.toLocaleString()} logged events
+                </span>
+                <button 
+                  onClick={handleExport}
+                  className="btn-primary py-1.5 px-3 text-xs flex items-center gap-1 bg-slate-800 hover:bg-slate-700"
+                >
+                  <ShieldCheck size={14} /> CSV Export
+                </button>
+              </div>
             )}
           </div>
 

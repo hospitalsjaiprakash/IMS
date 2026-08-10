@@ -1,5 +1,11 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 require('dotenv').config();
+
+// Fix pg driver treating "timestamp without time zone" as local time
+// OID 1114 is for timestamp without time zone. We append 'Z' to force UTC parsing.
+types.setTypeParser(1114, function(stringValue) {
+  return new Date(stringValue + 'Z');
+});
 
 const poolConfig = {
   max: 20,

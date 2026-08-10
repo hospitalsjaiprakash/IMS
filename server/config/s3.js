@@ -18,9 +18,6 @@ if (process.env.S3_ENDPOINT_URL) {
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     }
   });
-  console.log('S3/R2 Client Initialized');
-} else {
-  console.log('S3/R2 Client NOT Initialized (Missing S3_ENDPOINT_URL)');
 }
 
 module.exports = { s3Client };

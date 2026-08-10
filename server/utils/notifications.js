@@ -17,11 +17,21 @@ const createNotification = async (
 ) => {
   try {
     // 1. Persist in-app notification
-    await query(
+    const result = await query(
       `INSERT INTO notifications (user_id, incident_id, title, message, type)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [userId, incidentId || null, title, message, type]
     );
+    
+    // 1b. Emit real-time socket event
+    try {
+      const { io } = require('../index');
+      if (io) {
+        io.to(`user_${userId}`).emit('new_notification', result.rows[0]);
+      }
+    } catch (socketErr) {
+      console.warn('[Socket] Failed to emit notification:', socketErr.message);
+    }
 
     // 2. Send email if template + payload available
     if (emailTemplateKey && emailPayload && templates[emailTemplateKey]) {

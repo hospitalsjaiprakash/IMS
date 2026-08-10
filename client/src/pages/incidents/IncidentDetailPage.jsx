@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, UPLOADS_URL } from '../../api';
@@ -8,7 +8,7 @@ import {
   formatDate, formatDateTime
 } from '../../utils/helpers';
 import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../utils/helpers';
-import { Alert, Modal, Spinner } from '../../components/ui';
+import { Alert, Modal, Spinner, Breadcrumbs, StatusBadge, SeverityBadge, SLABadge, SkeletonDetail } from '../../components/ui';
 import {
   ArrowLeft, MapPin, Calendar, User, FileText, CheckCircle,
   Clock, XCircle, AlertTriangle, MessageSquare, UserCheck,
@@ -20,9 +20,9 @@ import logo from '../../assets/logo.webp';
 
 const TIMELINE_STAGES = [
   { key: 'submitted', label: 'Submitted' },
-  { key: 'with_hod', label: 'HOD Feedback' },
-  { key: 'with_imc', label: 'IMC Feedback' },
-  { key: 'with_head_management', label: 'Management Feedback' },
+  { key: 'with_hod', label: 'Awaiting HOD Feedback' },
+  { key: 'with_imc', label: 'HOD Reviewed - Awaiting IMC' },
+  { key: 'with_head_management', label: 'IMC Reviewed - Awaiting Mgmt' },
   { key: 'resolved', label: 'Resolved' },
 ];
 
@@ -118,6 +118,23 @@ export default function IncidentDetailPage() {
   const [mdAttachments, setMdAttachments] = useState([]);
   const [previewFile, setPreviewFile] = useState(null);
 
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        setShowWithdrawModal(false);
+        setShowFeedbackModal(false);
+        setShowMdModal(false);
+        setShowReopenModal(false);
+        setShowRedirectModal(false);
+        setShowRejectRedirectModal(false);
+        setShowEditIncModal(false);
+        setEditFbModal(null);
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['incident', id],
     queryFn: () => incidentsApi.get(id).then(r => r.data),
@@ -127,6 +144,18 @@ export default function IncidentDetailPage() {
 
   const withdrawMutation = useMutation({
     mutationFn: () => incidentsApi.withdraw(id, { reason: withdrawReason }),
+    onMutate: async () => {
+      await qc.cancelQueries(['incident', id]);
+      const prev = qc.getQueryData(['incident', id]);
+      if (prev) {
+        qc.setQueryData(['incident', id], { ...prev, incident: { ...prev.incident, status: 'withdrawn' } });
+      }
+      return { prev };
+    },
+    onError: (err, vars, context) => {
+      if (context?.prev) qc.setQueryData(['incident', id], context.prev);
+      toast.error('Failed to withdraw');
+    },
     onSuccess: () => { toast.success('Incident withdrawn.'); setShowWithdrawModal(false); refetch(); }
   });
 
@@ -137,6 +166,18 @@ export default function IncidentDetailPage() {
       fd.append('acknowledged', hodAcknowledged);
       hodAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.hodFeedback(id, fd);
+    },
+    onMutate: async () => {
+      await qc.cancelQueries(['incident', id]);
+      const prev = qc.getQueryData(['incident', id]);
+      if (prev) {
+        qc.setQueryData(['incident', id], { ...prev, incident: { ...prev.incident, status: 'with_imc' } });
+      }
+      return { prev };
+    },
+    onError: (err, vars, context) => {
+      if (context?.prev) qc.setQueryData(['incident', id], context.prev);
+      toast.error('Failed to submit feedback');
     },
     onSuccess: () => { toast.success('Feedback submitted.'); setShowFeedbackModal(false); setHodAttachments([]); setFeedbackText(''); refetch(); }
   });
@@ -149,6 +190,21 @@ export default function IncidentDetailPage() {
       imcAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.imcFeedback(id, fd);
     },
+    onMutate: async (forwardToMd) => {
+      await qc.cancelQueries(['incident', id]);
+      const prev = qc.getQueryData(['incident', id]);
+      if (prev) {
+        qc.setQueryData(['incident', id], { 
+          ...prev, 
+          incident: { ...prev.incident, status: forwardToMd ? 'with_head_management' : 'resolved' } 
+        });
+      }
+      return { prev };
+    },
+    onError: (err, vars, context) => {
+      if (context?.prev) qc.setQueryData(['incident', id], context.prev);
+      toast.error('Failed to submit feedback');
+    },
     onSuccess: () => { toast.success('Feedback submitted.'); setShowFeedbackModal(false); setImcAttachments([]); setFeedbackText(''); refetch(); }
   });
 
@@ -160,6 +216,21 @@ export default function IncidentDetailPage() {
       fd.append('requireTraining', mdRequireTraining);
       mdAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.mdDecision(id, fd);
+    },
+    onMutate: async () => {
+      await qc.cancelQueries(['incident', id]);
+      const prev = qc.getQueryData(['incident', id]);
+      if (prev) {
+        qc.setQueryData(['incident', id], { 
+          ...prev, 
+          incident: { ...prev.incident, status: mdRequireTraining ? 'pending_training' : 'resolved' } 
+        });
+      }
+      return { prev };
+    },
+    onError: (err, vars, context) => {
+      if (context?.prev) qc.setQueryData(['incident', id], context.prev);
+      toast.error('Failed to submit decision');
     },
     onSuccess: () => { toast.success('Incident closed.'); setShowMdModal(false); setMdAttachments([]); setMdFaultType(''); setMdActions(''); refetch(); }
   });
@@ -265,7 +336,7 @@ export default function IncidentDetailPage() {
   });
   const departmentsList = deptsData || [];
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><Spinner size={32} /></div>;
+  if (isLoading) return <SkeletonDetail />;
   if (error || !data) return <Alert type="error" title="Not found" message="Incident not found or access denied." />;
 
   const { incident, feedbacks, attachments, finalReport } = data;
@@ -298,6 +369,12 @@ export default function IncidentDetailPage() {
 
   return (
     <>
+      <div className="mb-2 print:hidden">
+        <Breadcrumbs items={[
+          { label: 'Incidents', to: '/incidents' },
+          { label: incident?.reference_id || 'Detail' }
+        ]} />
+      </div>
       {/* --- PRINT TEMPLATE --- */}
       <div className="hidden print:block p-8 bg-white text-black w-full max-w-none m-0">
         {/* Header */}
@@ -396,7 +473,8 @@ export default function IncidentDetailPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="font-mono text-base font-bold text-green-700">{incident.reference_id}</span>
-              <span className={getStatusClass(incident.status)}>{getStatusLabel(incident.status)}</span>
+              <StatusBadge status={incident.status} />
+              <SLABadge createdAt={incident.created_at} status={incident.status} />
               {incident.priority_escalated_by && (
                 <span className="badge bg-red-100 text-red-700 font-bold border border-red-200 animate-pulse">
                   <Flame size={12} className="inline mr-1" />
@@ -425,7 +503,7 @@ export default function IncidentDetailPage() {
               <Download size={14} />
               Generate PDF
             </button>
-            <span className={`badge ${getSeverityClass(incident.severity)}`}>{incident.severity}</span>
+            <SeverityBadge severity={incident.severity} />
           </div>
         </div>
 
@@ -1156,10 +1234,10 @@ function DetailRow({ icon: Icon, label, value }) {
 function StatusMessage({ status }) {
   const msgs = {
     submitted: { type: 'info', msg: 'Your incident has been submitted successfully and is awaiting HOD feedback.' },
-    with_hod: { type: 'info', msg: 'Your incident has been reviewed by the Head of Department and is being processed.' },
-    with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is under simultaneous HOD and IMC feedback.' },
-    with_imc: { type: 'info', msg: 'Your incident is currently under review by the Incident Management Committee.' },
-    with_head_management: { type: 'info', msg: 'Your incident is under consideration by Hospital Management.' },
+    with_hod: { type: 'info', msg: 'Your incident has been routed to the Head of Department and is currently awaiting their review and feedback.' },
+    with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is currently awaiting simultaneous review and feedback from both the HOD and IMC.' },
+    with_imc: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from the Incident Management Committee.' },
+    with_head_management: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from Hospital Management.' },
     resolved: { type: 'success', msg: 'Your incident has been resolved. View the final report below.' },
     withdrawn: { type: 'warning', msg: 'This incident has been withdrawn by you.' },
     redirect_requested: { type: 'warning', msg: 'A redirection request has been submitted to the IMC for routing to the correct department.' },
