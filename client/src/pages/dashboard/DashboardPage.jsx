@@ -163,20 +163,18 @@ export default function DashboardPage() {
     <div className="space-y-6">
       {/* Page header */}
       <div className="page-header">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 font-display">Dashboard</h1>
-            <p className="text-sm text-sm text-slate-500 mt-1">
-              Welcome back, {user?.fullName} · {user?.department || 'Quality Management'}
-            </p>
-          </div>
-          {user?.role !== 'employee' && (
-            <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
-              <FilePlus size={16} />
-              <span>Report Incident</span>
-            </button>
-          )}
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 font-display">Dashboard</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Welcome back, {user?.fullName} · {user?.department || 'Quality Management'}
+          </p>
         </div>
+        {user?.role !== 'employee' && (
+          <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
+            <FilePlus size={16} />
+            <span>Report Incident</span>
+          </button>
+        )}
       </div>
 
       {(user?.role === 'hod' || user?.role === 'imc' || user?.role === 'system_admin') && (
