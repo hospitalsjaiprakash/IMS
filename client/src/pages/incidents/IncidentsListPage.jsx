@@ -41,7 +41,6 @@ export default function IncidentsListPage() {
   
   // Tasks 3, 7, 8 states
   const [viewStyle, setViewStyle] = useState('table'); // 'table' | 'cards' | 'kanban'
-  const [savedFilters, setSavedFilters] = useState(() => JSON.parse(localStorage.getItem('savedFilters') || '[]'));
   const [visibleColumns, setVisibleColumns] = useState(() => JSON.parse(localStorage.getItem('visibleColumns') || JSON.stringify(ALL_COLUMNS.map(c => c.id))));
   const [showColDropdown, setShowColDropdown] = useState(false);
 
@@ -63,22 +62,6 @@ export default function IncidentsListPage() {
     if (location.state) navigate(location.pathname, { replace: true, state: {} });
   };
   const hasFilters = filters.status || filters.severity || filters.incidentCategory || filters.dateFrom || filters.dateTo || filters.reviewStage;
-
-  const saveCurrentFilter = () => {
-    const name = prompt('Name for this filter view:');
-    if (!name) return;
-    const newFilters = [...savedFilters, { name, filterState: { ...filters, page: 1 } }];
-    setSavedFilters(newFilters);
-    localStorage.setItem('savedFilters', JSON.stringify(newFilters));
-    toast.success('Filter view saved');
-  };
-
-  const applySavedFilter = (f) => setFilters(f.filterState);
-  const deleteSavedFilter = (idx) => {
-    const newFilters = savedFilters.filter((_, i) => i !== idx);
-    setSavedFilters(newFilters);
-    localStorage.setItem('savedFilters', JSON.stringify(newFilters));
-  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['incidents', filters],
@@ -254,11 +237,6 @@ export default function IncidentsListPage() {
           <button onClick={() => setShowFilters(!showFilters)} className={`btn-secondary flex-shrink-0 ${hasFilters ? 'border-blue-500 text-blue-600 bg-blue-50' : ''}`}>
             <Filter size={15} /> Filters {hasFilters && <span className="w-2 h-2 rounded-full bg-blue-600 ml-1"></span>}
           </button>
-          {hasFilters && (
-            <button onClick={saveCurrentFilter} className="btn-secondary flex-shrink-0 text-slate-500" title="Save Filter">
-              <Save size={15} /> Save View
-            </button>
-          )}
           {hasFilters && <button onClick={clearFilters} className="btn-icon flex-shrink-0" title="Clear filters"><X size={16} /></button>}
           
           {viewStyle === 'table' && (
@@ -281,19 +259,6 @@ export default function IncidentsListPage() {
             </div>
           )}
         </div>
-
-        {/* Saved Filters */}
-        {savedFilters.length > 0 && (
-          <div className="flex gap-2 mt-3 overflow-x-auto pb-1">
-            <span className="text-xs font-bold text-slate-500 self-center">Saved Views:</span>
-            {savedFilters.map((sf, idx) => (
-              <div key={idx} className="flex items-center gap-1 bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-medium cursor-pointer hover:bg-indigo-100">
-                <span onClick={() => applySavedFilter(sf)}>{sf.name}</span>
-                <X size={12} className="ml-1 opacity-50 hover:opacity-100" onClick={() => deleteSavedFilter(idx)} />
-              </div>
-            ))}
-          </div>
-        )}
 
         {showFilters && (
           <div className="mt-3 pt-3 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">

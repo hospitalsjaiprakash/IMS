@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const [selectedInc, setSelectedInc] = useState(null);
+  const [activeView, setActiveView] = useState(user?.role === 'hod' ? 'hod' : 'personal');
 
   // Always call hooks before any conditional rendering
   const { data: stats, isLoading } = useQuery({
@@ -34,13 +35,13 @@ export default function DashboardPage() {
   });
 
   const { data: recentData } = useQuery({
-    queryKey: ['incidents', { page: 1, limit: 5 }],
-    queryFn: () => incidentsApi.list({ page: 1, limit: 5 }).then(r => r.data?.incidents || []),
+    queryKey: ['incidents', { page: 1, limit: 5, viewMode: activeView === 'personal' ? 'my_incidents' : undefined }],
+    queryFn: () => incidentsApi.list({ page: 1, limit: 5, viewMode: activeView === 'personal' ? 'my_incidents' : undefined }).then(r => r.data.incidents),
   });
 
   const { data: allReceived = [] } = useQuery({
     queryKey: ['incidents', 'received-all'],
-    queryFn: () => incidentsApi.list({ limit: 1000 }).then(r => r.data?.incidents || []),
+    queryFn: () => incidentsApi.list({ limit: 1000 }).then(r => r.data.incidents),
     enabled: user?.role === 'hod'
   });
 
@@ -57,6 +58,7 @@ export default function DashboardPage() {
   }
 
   const totals = stats?.totals || {};
+  const personalTotals = user?.role === 'hod' ? (stats?.hodReport?.myIncidents || {}) : totals;
   const monthly = stats?.monthly || [];
   const bySeverity = stats?.bySeverity || [];
   const byType = stats?.byType || [];
@@ -74,8 +76,8 @@ export default function DashboardPage() {
               <BarChart data={monthly} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorMonthly" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.1}/>
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.1}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -162,29 +164,54 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div className="page-header">
+      <div className="page-header flex-col items-start sm:flex-row sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 font-display">Dashboard</h1>
           <p className="text-sm text-slate-500 mt-1">
             Welcome back, {user?.fullName} · {user?.department || 'Quality Management'}
           </p>
         </div>
-        {user?.role !== 'employee' && (
-          <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
-            <FilePlus size={16} />
-            <span>Report Incident</span>
-          </button>
-        )}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          {user?.role === 'hod' && (
+            <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto shadow-inner border border-slate-200">
+              <button
+                onClick={() => setActiveView('hod')}
+                className={`flex-1 sm:flex-none px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${activeView === 'hod' ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                HOD View
+              </button>
+              <button
+                onClick={() => setActiveView('personal')}
+                className={`flex-1 sm:flex-none px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${activeView === 'personal' ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Personal View
+              </button>
+            </div>
+          )}
+          
+          {(user?.role !== 'employee' && activeView !== 'personal') && (
+            <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
+              <FilePlus size={16} />
+              <span>Report Incident</span>
+            </button>
+          )}
+          {(user?.role === 'employee' || activeView === 'personal') && (
+            <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0 justify-center">
+              <FilePlus size={16} />
+              <span>Report Incident</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {(user?.role === 'hod' || user?.role === 'imc' || user?.role === 'system_admin') && (
+      {(user?.role === 'hod' || user?.role === 'imc' || user?.role === 'system_admin') && activeView !== 'personal' && (
         <InsightSummary incidents={recentData} role={user?.role} />
       )}
 
       {/* OVERVIEW SECTION */}
       <div className="space-y-6">
         {/* Warnings Panel */}
-        {user?.role === 'hod' && (overdueCount > 0 || escalatedCount > 0) && (
+        {user?.role === 'hod' && activeView === 'hod' && (overdueCount > 0 || escalatedCount > 0) && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
             <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
               <ShieldAlert size={20} className="text-red-600" />
@@ -209,19 +236,19 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Stat cards — hidden for HOD (they use the sections below) */}
-        {user?.role !== 'hod' && (
+        {/* Stat cards — visible for employees or personal view */}
+        {(user?.role !== 'hod' || activeView === 'personal') && (
           <div className="space-y-4">
             <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
               <LayoutDashboard size={16} className="text-indigo-600" />
               My Incidents Overview
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              <div onClick={() => navigate('/incidents')} className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 hover:shadow-md transition-shadow cursor-pointer group">
+              <div onClick={() => navigate('/incidents', { state: { viewMode: 'my_incidents' } })} className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 hover:shadow-md transition-shadow cursor-pointer group">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-blue-800/70 uppercase tracking-wide">Total Incidents</p>
-                    <p className="text-3xl font-extrabold text-blue-900 mt-1">{totals.total || 0}</p>
+                    <p className="text-3xl font-extrabold text-blue-900 mt-1">{personalTotals.total || 0}</p>
                   </div>
                   <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
                     <FileText size={24} className="text-blue-600" />
@@ -229,11 +256,11 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div onClick={() => navigate('/incidents', { state: { status: 'active' } })} className="card p-5 bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 hover:shadow-md transition-shadow cursor-pointer group">
+              <div onClick={() => navigate('/incidents', { state: { status: 'active', viewMode: 'my_incidents' } })} className="card p-5 bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 hover:shadow-md transition-shadow cursor-pointer group">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-amber-800/70 uppercase tracking-wide">Active</p>
-                    <p className="text-3xl font-extrabold text-amber-900 mt-1">{totals.active || 0}</p>
+                    <p className="text-3xl font-extrabold text-amber-900 mt-1">{personalTotals.active || 0}</p>
                   </div>
                   <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
                     <Clock size={24} className="text-amber-600" />
@@ -241,11 +268,11 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div onClick={() => navigate('/incidents', { state: { status: 'resolved' } })} className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 hover:shadow-md transition-shadow cursor-pointer group">
+              <div onClick={() => navigate('/incidents', { state: { status: 'resolved', viewMode: 'my_incidents' } })} className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 hover:shadow-md transition-shadow cursor-pointer group">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-green-800/70 uppercase tracking-wide">Resolved</p>
-                    <p className="text-3xl font-extrabold text-green-900 mt-1">{totals.resolved || 0}</p>
+                    <p className="text-3xl font-extrabold text-green-900 mt-1">{personalTotals.resolved || 0}</p>
                   </div>
                   <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
                     <CheckCircle size={24} className="text-green-600" />
@@ -253,11 +280,11 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div onClick={() => navigate('/incidents', { state: { status: 'withdrawn' } })} className="card p-5 bg-gradient-to-br from-slate-50 to-gray-50 border-slate-200 hover:shadow-md transition-shadow cursor-pointer group">
+              <div onClick={() => navigate('/incidents', { state: { status: 'withdrawn', viewMode: 'my_incidents' } })} className="card p-5 bg-gradient-to-br from-slate-50 to-gray-50 border-slate-200 hover:shadow-md transition-shadow cursor-pointer group">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-slate-600/70 uppercase tracking-wide">Withdrawn</p>
-                    <p className="text-3xl font-extrabold text-slate-700 mt-1">{totals.withdrawn || 0}</p>
+                    <p className="text-3xl font-extrabold text-slate-700 mt-1">{personalTotals.withdrawn || 0}</p>
                   </div>
                   <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
                     <XOctagon size={24} className="text-slate-500" />
@@ -269,7 +296,7 @@ export default function DashboardPage() {
         )}
 
         {/* HOD extra stats */}
-        {user?.role === 'hod' && (
+        {user?.role === 'hod' && activeView === 'hod' && (
           <div className="space-y-6">
             {/* Department Overview */}
             <div>
@@ -357,35 +384,13 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
-
-            {/* My Personal Incidents */}
-            <div>
-              <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
-                <Activity size={16} className="text-indigo-600" />
-                My Personal Incidents
-              </h3>
-              <div className="flex flex-wrap gap-2.5">
-                <button onClick={() => navigate('/incidents', { state: { viewMode: 'my_incidents' } })} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 border border-indigo-100 rounded-lg text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition-colors">
-                  Total: {stats?.hodReport?.myIncidents?.total || 0}
-                </button>
-                <button onClick={() => navigate('/incidents', { state: { viewMode: 'my_incidents', status: 'active' } })} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <Clock size={14} className="text-amber-600" /> Active: {stats?.hodReport?.myIncidents?.active || 0}
-                </button>
-                <button onClick={() => navigate('/incidents', { state: { viewMode: 'my_incidents', status: 'resolved' } })} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <CheckCircle size={14} className="text-green-600" /> Resolved: {stats?.hodReport?.myIncidents?.resolved || 0}
-                </button>
-                <button onClick={() => navigate('/incidents', { state: { viewMode: 'my_incidents', status: 'withdrawn' } })} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <XOctagon size={14} className="text-slate-500" /> Withdrawn: {stats?.hodReport?.myIncidents?.withdrawn || 0}
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
 
 
         {/* Charts row */}
-        {user?.role !== 'employee' && renderChartsSection()}
+        {user?.role !== 'employee' && activeView !== 'personal' && renderChartsSection()}
       </div>
 
       {/* Recent incidents */}
@@ -399,7 +404,7 @@ export default function DashboardPage() {
         <div className="table-wrapper rounded-none border-0">
           <table className="table">
             <thead>
-              {user?.role === 'hod' ? (
+              {user?.role === 'hod' && activeView === 'hod' ? (
                 <tr>
                   <th>Reference ID</th>
                   <th>Reporter</th>
@@ -457,7 +462,7 @@ export default function DashboardPage() {
                       <SLABadge createdAt={inc.created_at} status={inc.status} />
                     </div>
                   </td>
-                  {user?.role === 'hod' ? (
+                  {user?.role === 'hod' && activeView === 'hod' ? (
                     <>
                       <td className="text-slate-700 text-xs font-medium">{inc.reporter_name || 'N/A'}</td>
                       <td className="text-slate-600 text-xs">{inc.reporter_department || 'N/A'}</td>

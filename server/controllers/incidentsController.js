@@ -1008,10 +1008,10 @@ exports.getDashboardStats = async (req, res) => {
 
     res.json({
       totals: totals.rows[0],
-      bySeverity: bySeverity.rows,
-      byType: byType.rows,
-      byStatus: byStatus.rows,
-      monthly: monthly.rows,
+      bySeverity: bySeverity.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      byType: byType.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      byStatus: byStatus.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      monthly: monthly.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       ...(hodReport && { hodReport })
     });
 

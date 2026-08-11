@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi } from '../../api';
 import { INCIDENT_CATEGORY_MAPPING, INCIDENT_CATEGORIES, OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../utils/helpers';
 import { Alert, Spinner, Modal, SearchableMultiSelect, SearchableSelect } from '../../components/ui';
@@ -457,13 +457,14 @@ export default function NewIncidentPage() {
               </div>
               {form.hasResponsiblePerson && (
                 <div>
-                  <label className="field-label field-required">Responsible Person's Name</label>
+                  <label className="field-label field-required">Responsible Person(s) Name</label>
                   <input
                     value={form.responsiblePersonName}
                     onChange={e => set('responsiblePersonName', e.target.value)}
-                    placeholder="Full name"
+                    placeholder="e.g. John Doe, Jane Smith"
                     className={`input ${errors.responsiblePersonName ? 'input-error' : ''}`}
                   />
+                  <p className="text-[10px] text-slate-500 mt-1">If there are multiple people, separate their names with commas.</p>
                   {errors.responsiblePersonName && <p className="field-error">{errors.responsiblePersonName}</p>}
                 </div>
               )}

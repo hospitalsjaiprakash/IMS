@@ -25,15 +25,19 @@ export default function SystemAdminDashboard() {
     queryFn: () => incidentsApi.getStats().then(r => r.data),
   });
 
+  const { data: recentData } = useQuery({
+    queryKey: ['recent-incidents'],
+    queryFn: () => incidentsApi.list({ limit: 5 }).then(r => r.data.incidents),
+  });
+
   if (isLoading) {
     return <div className="flex items-center justify-center h-64"><Spinner size={32} /></div>;
   }
 
-  const r = stats?.adminReport || {};
   const totals = stats?.totals || {};
-  const recent = r.recentIncidents || [];
-  const bySeverity = r.bySeverity || [];
-  const monthly = r.monthly || [];
+  const bySeverity = stats?.bySeverity || [];
+  const monthly = stats?.monthly || [];
+  const recent = Array.isArray(recentData) ? recentData : (recentData?.incidents || []);
 
   return (
     <div className="space-y-6">
@@ -54,12 +58,12 @@ export default function SystemAdminDashboard() {
           </h3>
 
           {/* Primary Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-blue-800/70 uppercase tracking-wide">Total Incidents</p>
-                  <p className="text-3xl font-extrabold text-blue-900 mt-1">{r.totalIncidents || 0}</p>
+                  <p className="text-3xl font-extrabold text-blue-900 mt-1">{totals.total || 0}</p>
                 </div>
                 <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center">
                   <FileText size={24} className="text-blue-600" />
@@ -70,8 +74,8 @@ export default function SystemAdminDashboard() {
             <div className="card p-5 bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-bold text-amber-800/70 uppercase tracking-wide">Active Incidents</p>
-                  <p className="text-3xl font-extrabold text-amber-900 mt-1">{r.activeIncidents || 0}</p>
+                  <p className="text-sm font-bold text-amber-800/70 uppercase tracking-wide">Active</p>
+                  <p className="text-3xl font-extrabold text-amber-900 mt-1">{totals.active || 0}</p>
                 </div>
                 <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center">
                   <Clock size={24} className="text-amber-600" />
@@ -83,10 +87,22 @@ export default function SystemAdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-green-800/70 uppercase tracking-wide">Resolved</p>
-                  <p className="text-3xl font-extrabold text-green-900 mt-1">{r.resolved || 0}</p>
+                  <p className="text-3xl font-extrabold text-green-900 mt-1">{totals.resolved || 0}</p>
                 </div>
                 <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center">
                   <CheckCircle size={24} className="text-green-600" />
+                </div>
+              </div>
+            </div>
+
+            <div className="card p-5 bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold text-slate-600 uppercase tracking-wide">Withdrawn</p>
+                  <p className="text-3xl font-extrabold text-slate-800 mt-1">{totals.withdrawn || 0}</p>
+                </div>
+                <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center">
+                  <AlertOctagon size={24} className="text-slate-500" />
                 </div>
               </div>
             </div>
@@ -95,13 +111,7 @@ export default function SystemAdminDashboard() {
           {/* Secondary Metrics (Pills) */}
           <div className="flex flex-wrap gap-2.5 mt-3">
             <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-default">
-              <Users size={14} className="text-blue-600" /> Total Users: {r.totalUsers || 0}
-            </button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-default">
-              <TrendingUp size={14} className="text-indigo-600" /> This Month: {r.thisMonth || 0}
-            </button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-default">
-              <RefreshCw size={14} className="text-orange-600" /> Redirect Requests: {r.pendingRedirects || 0}
+              <TrendingUp size={14} className="text-indigo-600" /> This Month: {totals.this_month || 0}
             </button>
           </div>
         </div>
@@ -249,7 +259,7 @@ export default function SystemAdminDashboard() {
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={monthly} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                 <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
                 <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e8edf4', fontSize: 12 }} />
                 <Bar dataKey="count" fill="#0e95ea" radius={[4, 4, 0, 0]} name="Incidents" />

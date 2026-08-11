@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles } from 'lucide-react';
+import logoImg from '../../assets/logo.webp';
 
 export function InsightSummary({ incidents = [], role }) {
   if (!incidents.length) return null;
@@ -27,20 +27,19 @@ export function InsightSummary({ incidents = [], role }) {
   const topCat = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0];
 
   return (
-    <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 border border-indigo-100 rounded-2xl p-4 sm:p-5 shadow-sm relative overflow-hidden">
-      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-200 to-purple-200 rounded-full blur-3xl opacity-30 -mr-10 -mt-10 pointer-events-none" />
+    <div className="bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 border border-emerald-100 rounded-2xl p-4 sm:p-5 shadow-sm relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-emerald-200 to-green-200 rounded-full blur-3xl opacity-30 -mr-10 -mt-10 pointer-events-none" />
       
       <div className="flex items-start gap-3 relative z-10">
-        <div className="mt-0.5 p-2 bg-white/60 backdrop-blur rounded-lg border border-white flex-shrink-0 shadow-sm">
-          <Sparkles className="w-5 h-5 text-indigo-500" />
+        <div className="mt-0.5 p-1.5 bg-white/60 backdrop-blur rounded-lg border border-white flex-shrink-0 shadow-sm">
+          <img src={logoImg} alt="Logo" className="w-6 h-6 object-contain" />
         </div>
         <div>
-          <h4 className="text-xs font-bold text-indigo-900/60 uppercase tracking-wider mb-1.5 flex items-center gap-2">
-            Smart Insights
-            <span className="bg-indigo-100 text-indigo-700 text-[9px] px-1.5 py-0.5 rounded font-bold tracking-normal">BETA</span>
+          <h4 className="text-xs font-bold text-emerald-900/60 uppercase tracking-wider mb-1.5 flex items-center gap-2">
+            Incident Summary
           </h4>
           <p className="text-sm text-slate-700 leading-relaxed font-medium">
-            Currently tracking <strong className="text-indigo-700 font-bold">{activeCount}</strong> active incidents.
+            Currently tracking <strong className="text-emerald-700 font-bold">{activeCount}</strong> active incidents.
             {escalatedCount > 0 ? (
               <span>
                 {' '}There are <strong className="text-rose-600 font-bold">{escalatedCount} escalated</strong> issues requiring immediate attention.
