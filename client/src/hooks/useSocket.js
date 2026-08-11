@@ -29,7 +29,7 @@ export function useSocket() {
     // When an incident is created, invalidate the incident list to trigger a refetch
     socket.on('incident_created', (data) => {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard_stats'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
     });
 
     // When an incident is updated (withdrawn, feedback, status change), invalidate it
@@ -38,7 +38,7 @@ export function useSocket() {
       if (data?.id) {
         queryClient.invalidateQueries({ queryKey: ['incident', data.id] });
       }
-      queryClient.invalidateQueries({ queryKey: ['dashboard_stats'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
     });
 
     socket.on('new_notification', (data) => {

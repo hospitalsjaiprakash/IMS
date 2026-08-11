@@ -31,6 +31,9 @@ app.use((req, res, next) => {
 });
 const PORT = process.env.PORT || 5000;
 
+// Trust the reverse proxy (Render, Vercel, etc) so rate limiters use the real client IP
+app.set('trust proxy', 1);
+
 // ─── MIDDLEWARE ───────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }

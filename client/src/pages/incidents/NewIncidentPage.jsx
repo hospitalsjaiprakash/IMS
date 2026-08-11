@@ -56,9 +56,15 @@ export default function NewIncidentPage() {
   });
   const departmentOptions = (departmentsData || []).map(d => d.name);
 
+  const queryClient = useQueryClient();
+
   const submitMutation = useMutation({
     mutationFn: (data) => incidentsApi.create(data),
     onSuccess: (res) => {
+      // Invalidate cache so lists update immediately
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+
       if (res.data.potentialDuplicate) {
         setDuplicateAlert(res.data);
       } else {

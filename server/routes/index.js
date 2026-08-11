@@ -16,15 +16,15 @@ const { s3Client } = require('../config/s3');
 
 // Rate limiting for auth routes
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 requests per windowMs
-  message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+  windowMs: 5 * 60 * 1000, // 5 minutes window
+  max: 50, // Limit each IP to 50 requests per windowMs
+  message: { error: 'Too many requests from this IP, please try again after 5 minutes' }
 });
 
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
-  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes' }
+  windowMs: 5 * 60 * 1000, // 5 minutes window
+  max: 50,
+  message: { error: 'Too many login attempts from this IP, please try again after 5 minutes' }
 });
 
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || 'uploads');
