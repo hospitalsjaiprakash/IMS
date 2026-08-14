@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import {
   FileText, Clock, CheckCircle, AlertTriangle,
-  Database, Users, BookOpen, TrendingUp
+  Database, Users, BookOpen, TrendingUp, UserCheck, MessageSquare
 } from 'lucide-react';
 
 const COLORS = ['#0e95ea', '#22c55e', '#f59e0b', '#d946ef', '#ef4444', '#6366f1', '#14b8a6', '#f97316', '#8b5cf6', '#ec4899'];
@@ -27,6 +27,8 @@ export default function AdminAnalyticsPage() {
     byDepartment = [],
     slaBreach = 0,
     stalledIncidents = [],
+    hodFeedbackPending = 0,
+    hodFeedbackGiven = 0,
   } = data || {};
 
   return (
@@ -48,9 +50,11 @@ export default function AdminAnalyticsPage() {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Clock} label="Avg Resolution" value={`${avgResolutionHours}h`} color="bg-blue-50" iconColor="text-blue-600" />
         <StatCard icon={AlertTriangle} label="SLA Breaches" value={slaBreach} color="bg-red-50" iconColor="text-red-600" />
+        <StatCard icon={MessageSquare} label="HOD Feedback Pending" value={hodFeedbackPending} color="bg-amber-50" iconColor="text-amber-600" />
+        <StatCard icon={CheckCircle} label="HOD Feedback Given" value={hodFeedbackGiven} color="bg-green-50" iconColor="text-green-600" />
       </div>
 
 

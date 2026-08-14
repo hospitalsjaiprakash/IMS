@@ -981,21 +981,27 @@ exports.getDashboardStats = async (req, res) => {
         FROM incidents WHERE reporter_id = $1
       `, [userId]);
 
-      const feedbackRes = await query(`
+      const feedbackGivenRes = await query(`
         SELECT COUNT(DISTINCT incident_id) as feedback_given
         FROM feedbacks WHERE author_id = $1 AND role = 'hod'
       `, [userId]);
 
+      const feedbackPendingRes = await query(`
+        SELECT COUNT(*) as pending
+        FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') 
+        AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')
+        ${deptFilter}
+      `, params);
+
       const receivedCount = parseInt(totals.rows[0].total) - parseInt(totals.rows[0].withdrawn || 0);
-      const feedbackGivenCount = parseInt(feedbackRes.rows[0].feedback_given || 0);
 
       hodReport = {
         received: receivedCount,
         active: parseInt(totals.rows[0].active || 0),
         resolved: parseInt(totals.rows[0].resolved || 0),
         withdrawn: parseInt(totals.rows[0].withdrawn || 0),
-        feedbackGiven: feedbackGivenCount,
-        feedbackPending: Math.max(0, receivedCount - feedbackGivenCount),
+        feedbackGiven: parseInt(feedbackGivenRes.rows[0].feedback_given || 0),
+        feedbackPending: parseInt(feedbackPendingRes.rows[0].pending || 0),
         myIncidents: {
           total: parseInt(myIncidentsRes.rows[0].total || 0),
           active: parseInt(myIncidentsRes.rows[0].active || 0),

@@ -289,7 +289,8 @@ exports.getSystemAnalytics = async (req, res) => {
   try {
     const [
       incidentsByMonth, avgResolutionTime, byDepartment,
-      slaBreach, stalledIncidents, claimStats, kbCount
+      slaBreach, stalledIncidents, claimStats, kbCount,
+      hodFeedbackStats
     ] = await Promise.all([
       query(`SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month,
         DATE_TRUNC('month', created_at) as month_date, COUNT(*) as count
@@ -318,7 +319,17 @@ exports.getSystemAnalytics = async (req, res) => {
         MAX(EXTRACT(EPOCH FROM (NOW()-claimed_at))/3600) as oldest_claim_hours
         FROM imc_claims`),
 
-      query(`SELECT COUNT(*) as count FROM knowledge_base`)
+      query(`SELECT COUNT(*) as count FROM knowledge_base`),
+      
+      query(`
+        SELECT 
+          COUNT(DISTINCT f.incident_id) as given,
+          (SELECT COUNT(*) FROM incidents i 
+           WHERE i.status NOT IN ('resolved', 'withdrawn') 
+           AND NOT EXISTS (SELECT 1 FROM feedbacks f2 WHERE f2.incident_id = i.id AND f2.role = 'hod')
+          ) as pending
+        FROM feedbacks f WHERE f.role = 'hod'
+      `)
     ]);
 
     res.json({
@@ -329,7 +340,9 @@ exports.getSystemAnalytics = async (req, res) => {
       stalledIncidents: stalledIncidents.rows,
       activeClaims: parseInt(claimStats.rows[0]?.active_claims || 0),
       oldestClaimHours: parseFloat(claimStats.rows[0]?.oldest_claim_hours || 0).toFixed(1),
-      knowledgeBaseCount: parseInt(kbCount.rows[0]?.count || 0)
+      knowledgeBaseCount: parseInt(kbCount.rows[0]?.count || 0),
+      hodFeedbackPending: parseInt(hodFeedbackStats.rows[0]?.pending || 0),
+      hodFeedbackGiven: parseInt(hodFeedbackStats.rows[0]?.given || 0)
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch analytics' });
