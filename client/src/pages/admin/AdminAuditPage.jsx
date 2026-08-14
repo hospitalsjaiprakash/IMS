@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { adminApi } from '../../api';
 import { Spinner, Pagination } from '../../components/ui';
-import { ShieldCheck, Activity, Users, Lock } from 'lucide-react';
+import { ShieldCheck, Activity, Users, Lock, Send } from 'lucide-react';
 import { formatDateTime, formatDate } from '../../utils/helpers';
 import toast from 'react-hot-toast';
+import CommunicationLogsTab from '../../components/admin/CommunicationLogsTab';
 
 const ACTION_COLORS = {
   LOGIN: 'badge-green',
@@ -100,6 +101,16 @@ export default function AdminAuditPage() {
             }`}
           >
             <Lock size={14} /> Role Governance History
+          </button>
+          <button
+            onClick={() => setActiveTab('communication_logs')}
+            className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-2 ${
+              activeTab === 'communication_logs'
+                ? 'bg-white text-purple-600 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+            }`}
+          >
+            <Send size={14} /> Communication Logs
           </button>
         </div>
       </div>
@@ -258,6 +269,11 @@ export default function AdminAuditPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* TAB 3: COMMUNICATION LOGS */}
+      {activeTab === 'communication_logs' && (
+        <CommunicationLogsTab />
       )}
     </div>
   );

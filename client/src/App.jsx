@@ -24,6 +24,7 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminAuditPage from './pages/admin/AdminAuditPage';
 import AdminAttachmentsPage from './pages/admin/AdminAttachmentsPage';
+import AdminCommunicationLogsPage from './pages/admin/AdminCommunicationLogsPage';
 import CategoryDetailPage from './pages/dashboard/CategoryDetailPage';
 import NotificationsPage from './pages/dashboard/NotificationsPage';
 import EmployeeDirectory from './pages/employees/EmployeeDirectory';

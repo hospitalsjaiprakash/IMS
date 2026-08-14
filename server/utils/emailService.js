@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { query } = require('../config/database');
 
 // ─── Transporter ──────────────────────────────────────────────────────────────
 const createTransporter = () => {
@@ -310,6 +311,18 @@ const sendEmail = async (to, templateData) => {
     console.log(`Subject: ${templateData.subject}`);
     console.log(`Note: SMTP not configured with real credentials in .env. Email simulated.`);
     console.log(`===========================================================\n`);
+    
+    try {
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
+         VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
+        [userRes.rows[0]?.id || null, to, templateData.subject]
+      );
+    } catch (dbErr) {
+      console.warn('[Email Log Error]', dbErr.message);
+    }
+    
     return true;
   }
 
@@ -322,9 +335,33 @@ const sendEmail = async (to, templateData) => {
       html: templateData.html,
     });
     console.log(`[Email SENT] To: ${to} | Subject: ${templateData.subject} | ID: ${info.messageId}`);
+    
+    try {
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
+         VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
+        [userRes.rows[0]?.id || null, to, templateData.subject]
+      );
+    } catch (dbErr) {
+      console.warn('[Email Log Error]', dbErr.message);
+    }
+
     return true;
   } catch (err) {
     console.error(`[Email FAILED] To: ${to} | Error: ${err.message}`);
+    
+    try {
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, error_message)
+         VALUES ($1, $2, 'EMAIL', $3, 'FAILED', $4)`,
+        [userRes.rows[0]?.id || null, to, templateData.subject, err.message]
+      );
+    } catch (dbErr) {
+      console.warn('[Email Log Error]', dbErr.message);
+    }
+
     return false;
   }
 };

@@ -293,6 +293,7 @@ router.post('/admin/map-department-leader', authenticate, authorize('system_admi
 router.get('/admin/system-admins', authenticate, authorize('system_admin'), adminController.getSystemAdmins);
 router.get('/admin/system-health', authenticate, authorize('system_admin'), adminController.getSystemHealth);
 router.get('/admin/master-data', authenticate, authorize('system_admin'), adminController.getMasterData);
+router.get('/admin/communication-logs', authenticate, authorize('system_admin'), adminController.getCommunicationLogs);
 // ─── EMPLOYEE SEARCH & DIRECTORY ───────────────────
 router.get('/employee/search', authenticate, authorize('imc', 'head_management', 'system_admin'), adminController.searchEmployeeProfile);
 router.get('/employees/directory', authenticate, authorize('imc', 'head_management', 'system_admin'), adminController.getAllUsers);

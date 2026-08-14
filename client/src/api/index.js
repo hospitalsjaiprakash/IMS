@@ -132,6 +132,7 @@ export const adminApi = {
   mapDepartmentLeader: (data) => api.post('/admin/map-department-leader', data),
   getSystemAdmins: () => api.get('/admin/system-admins'),
   toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
+  getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
 };
 
 // ── Employee Search ─────────────────────────────────

@@ -22,7 +22,18 @@ const createNotification = async (
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [userId, incidentId || null, title, message, type]
     );
-    
+
+    // Log to communication_logs
+    try {
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, content, status)
+         VALUES ($1, 'IN_APP', 'IN_APP_NOTIFICATION', $2, $3, 'DELIVERED')`,
+        [userId, title, message]
+      );
+    } catch (logErr) {
+      console.warn('[Notification Log Error]', logErr.message);
+    }
+
     // 1b. Emit real-time socket event
     try {
       const { io } = require('../index');

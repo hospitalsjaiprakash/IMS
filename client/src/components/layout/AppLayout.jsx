@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, FileText, Bell, Settings, LogOut,
   Users, BarChart3, ClipboardList,
-  ChevronRight, Menu, X, Shield, Search, Paperclip
+  ChevronRight, Menu, X, Shield, Search, Paperclip, Send
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { notificationsApi, authApi } from '../../api';

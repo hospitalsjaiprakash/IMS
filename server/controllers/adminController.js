@@ -659,3 +659,47 @@ exports.getAllAttachments = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch attachments' });
   }
 };
+
+exports.getCommunicationLogs = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, type, status, search } = req.query;
+    const offset = (page - 1) * limit;
+
+    let where = '1=1';
+    const params = [];
+    let idx = 1;
+
+    if (type) { where += ` AND cl.type = $${idx++}`; params.push(type); }
+    if (status) { where += ` AND cl.status = $${idx++}`; params.push(status); }
+    if (search) { 
+      where += ` AND (cl.recipient_contact ILIKE $${idx} OR cl.subject ILIKE $${idx})`;
+      params.push(`%${search}%`);
+      idx++;
+    }
+
+    const result = await query(
+      `SELECT cl.*, u.full_name, u.employee_id
+       FROM communication_logs cl
+       LEFT JOIN users u ON u.id = cl.user_id
+       WHERE ${where}
+       ORDER BY cl.created_at DESC
+       LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, limit, offset]
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) FROM communication_logs cl WHERE ${where}`,
+      params
+    );
+
+    res.json({
+      logs: result.rows,
+      total: parseInt(countResult.rows[0].count),
+      page: parseInt(page),
+      totalPages: Math.ceil(parseInt(countResult.rows[0].count) / limit)
+    });
+  } catch (error) {
+    console.error('Failed to fetch communication logs:', error);
+    res.status(500).json({ error: 'Failed to fetch communication logs' });
+  }
+};
