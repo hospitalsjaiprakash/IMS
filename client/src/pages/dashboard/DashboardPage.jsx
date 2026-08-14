@@ -52,7 +52,7 @@ export default function DashboardPage() {
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {[1,2,3,4].map(i => <SkeletonCard key={i} />)}
+        {[1, 2, 3, 4].map(i => <SkeletonCard key={i} />)}
       </div>
     );
   }
@@ -76,14 +76,14 @@ export default function DashboardPage() {
               <BarChart data={monthly} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorMonthly" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.1}/>
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.1} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                 <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} axisLine={false} tickLine={false} />
-                <Tooltip content={<GlassTooltip />} cursor={{fill: 'transparent'}} />
+                <Tooltip content={<GlassTooltip />} cursor={{ fill: 'transparent' }} />
                 <Bar dataKey="count" fill="url(#colorMonthly)" radius={[6, 6, 0, 0]} name="Incidents" />
               </BarChart>
             </ResponsiveContainer>
@@ -134,8 +134,8 @@ export default function DashboardPage() {
             >
               <defs>
                 <linearGradient id="colorType" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
-                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.3} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} vertical={true} />
@@ -148,7 +148,7 @@ export default function DashboardPage() {
                 axisLine={false}
                 tickLine={false}
               />
-              <Tooltip content={<GlassTooltip />} cursor={{fill: 'transparent'}} />
+              <Tooltip content={<GlassTooltip />} cursor={{ fill: 'transparent' }} />
               <Bar dataKey="count" radius={[0, 6, 6, 0]} name="Count">
                 {byType.map((_, i) => (
                   <Cell key={i} fill={`url(#colorType)`} />
@@ -188,7 +188,7 @@ export default function DashboardPage() {
               </button>
             </div>
           )}
-          
+
           {(user?.role !== 'employee' && activeView !== 'personal') && (
             <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
               <FilePlus size={16} />
@@ -304,7 +304,7 @@ export default function DashboardPage() {
                 <LayoutDashboard size={16} className="text-blue-600" />
                 Department Overview
               </h3>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div onClick={() => navigate('/incidents', { state: { viewMode: 'department' } })} className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 hover:shadow-md transition-shadow cursor-pointer group">
                   <div className="flex items-center justify-between">
@@ -356,7 +356,7 @@ export default function DashboardPage() {
                 <UserCheck size={16} className="text-amber-600" />
                 HOD Feedback Tracker
               </h3>
-              
+
               <div className="bg-white rounded-xl border border-slate-200 p-1.5 shadow-sm">
                 <div className="flex items-center">
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
@@ -365,14 +365,14 @@ export default function DashboardPage() {
                       <CheckCircle size={16} className={(stats?.hodReport?.feedbackPending || 0) === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'hodPending', viewMode: 'department' } })}
                         className="flex-1 bg-white hover:bg-amber-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-amber-300 shadow-sm"
                       >
                         <span className="block text-2xl font-extrabold text-amber-600 leading-none">{stats?.hodReport?.feedbackPending || 0}</span>
                         <span className="text-[10px] uppercase font-bold text-slate-500 mt-1 block">Pending Feedback</span>
                       </div>
-                      <div 
+                      <div
                         onClick={() => navigate('/incidents', { state: { reviewStage: 'hodGiven', viewMode: 'department' } })}
                         className="flex-1 bg-white hover:bg-green-50 p-2.5 rounded-lg cursor-pointer transition-colors border border-slate-200 hover:border-green-300 shadow-sm"
                       >
@@ -437,7 +437,7 @@ export default function DashboardPage() {
                   </td>
                 </tr>
               ) : recentData.slice(0, 5).map((inc, i) => (
-                <motion.tr 
+                <motion.tr
                   key={inc.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -567,7 +567,7 @@ export default function DashboardPage() {
 
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
-                <span className="text-slate-600 font-medium">IMC Status</span>
+                <span className="text-slate-600 font-medium">Status</span>
                 <StatusBadge status={selectedInc.status} />
               </div>
               {selectedInc.priority_escalated_by && (
@@ -576,18 +576,22 @@ export default function DashboardPage() {
                   <span className="text-red-700 text-xs font-bold bg-red-100 px-2 py-1 rounded border border-red-200">BY {selectedInc.priority_escalated_by.toUpperCase()}</span>
                 </div>
               )}
-              <div>
-                <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by HOD</span>
-                <p className="text-slate-700 bg-amber-50 p-3 rounded-xl border border-amber-100 text-sm">{selectedInc.hod_feedback || 'No feedback yet'}</p>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by IMC</span>
-                <p className="text-slate-700 bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-sm">{selectedInc.imc_feedback || 'No feedback yet'}</p>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by Management</span>
-                <p className="text-slate-700 bg-purple-50 p-3 rounded-xl border border-purple-100 text-sm">{selectedInc.management_feedback || 'No feedback yet'}</p>
-              </div>
+              {selectedInc.status !== 'withdrawn' && (
+                <>
+                  <div>
+                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by HOD</span>
+                    <p className="text-slate-700 bg-amber-50 p-3 rounded-xl border border-amber-100 text-sm">{selectedInc.hod_feedback || 'No feedback yet'}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by IMC</span>
+                    <p className="text-slate-700 bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-sm">{selectedInc.imc_feedback || 'No feedback yet'}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by Management</span>
+                    <p className="text-slate-700 bg-purple-50 p-3 rounded-xl border border-purple-100 text-sm">{selectedInc.management_feedback || 'No feedback yet'}</p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

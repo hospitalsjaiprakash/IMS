@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { timeAgo } from '../../utils/helpers';
 import { Spinner } from '../ui';
 import CommitteeLoginModal from '../auth/CommitteeLoginModal';
+import logoImg from '../../assets/logo.webp';
 
 const getRoleDashboard = (role) => {
   if (role === 'imc') return '/imc/dashboard';
@@ -134,9 +135,7 @@ export default function AppLayout() {
         {/* Logo */}
         <div className="px-4 py-5 border-b border-white/20 bg-white/40 backdrop-blur-md">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-green-600 flex items-center justify-center flex-shrink-0">
-              <span className="text-white font-bold text-sm font-display">JP</span>
-            </div>
+            <img src={logoImg} alt="JPHRC Logo" className="w-9 h-9 object-contain flex-shrink-0" />
             <div className="min-w-0">
               <p className="text-xs font-bold text-slate-800 leading-tight">JPHRC</p>
               <p className="text-[10px] text-slate-500 leading-tight">Incident Management</p>
