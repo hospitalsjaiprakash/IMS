@@ -291,7 +291,10 @@ exports.getIncidents = async (req, res) => {
         ARRAY_AGG(DISTINCT d.name) as departments,
         EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod') as has_hod_feedback,
         EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc') as has_imc_feedback,
-        EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') as has_management_feedback
+        EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') as has_management_feedback,
+        (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod' ORDER BY f.created_at DESC LIMIT 1) as hod_feedback,
+        (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc' ORDER BY f.created_at DESC LIMIT 1) as imc_feedback,
+        (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management' ORDER BY f.created_at DESC LIMIT 1) as management_feedback
        FROM incidents i
        LEFT JOIN users u ON u.id = i.reporter_id
        LEFT JOIN main_locations ml ON ml.id = i.main_location_id
@@ -1012,8 +1015,29 @@ exports.getDashboardStats = async (req, res) => {
       };
     }
 
+    let pipelineStats = {};
+    if (role === 'system_admin' || role === 'head_management' || role === 'coo' || role === 'asst_coo') {
+      const pipelineRes = await query(`
+        SELECT
+          (SELECT COUNT(DISTINCT incident_id) FROM feedbacks WHERE role = 'hod') as hod_given,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')) as hod_pending,
+          (SELECT COUNT(DISTINCT incident_id) FROM feedbacks WHERE role = 'imc') as imc_given,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc')) as imc_pending,
+          (SELECT COUNT(DISTINCT incident_id) FROM feedbacks WHERE role = 'head_management') as mgmt_given,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management')) as mgmt_pending
+      `);
+      pipelineStats = {
+        hodGiven: parseInt(pipelineRes.rows[0].hod_given || 0),
+        hodPending: parseInt(pipelineRes.rows[0].hod_pending || 0),
+        imcGiven: parseInt(pipelineRes.rows[0].imc_given || 0),
+        imcPending: parseInt(pipelineRes.rows[0].imc_pending || 0),
+        mgmtGiven: parseInt(pipelineRes.rows[0].mgmt_given || 0),
+        mgmtPending: parseInt(pipelineRes.rows[0].mgmt_pending || 0)
+      };
+    }
+
     res.json({
-      totals: totals.rows[0],
+      totals: { ...totals.rows[0], ...pipelineStats },
       bySeverity: bySeverity.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       byType: byType.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       byStatus: byStatus.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
