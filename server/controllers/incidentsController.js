@@ -146,11 +146,38 @@ exports.createIncident = async (req, res) => {
 
     // Insert attachments if any
     if (req.files && req.files.length > 0) {
+      const { s3Client } = require('../config/s3');
+      const { CopyObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+      const bucket = process.env.S3_BUCKET_NAME;
+      const safeRefId = incident.reference_id.replace(/\//g, '-'); // JPHRC-IMS-2026-00001
+
       for (const file of req.files) {
+        let storedFilename = file.filename || file.key || '';
+
+        // If R2 is active and the file was placed in pending/, move it to the proper folder
+        if (s3Client && bucket && file.key && file.key.startsWith('pending/')) {
+          const oldKey = file.key;
+          const filename = oldKey.split('/').pop(); // just the filename part
+          const newKey = `${safeRefId}/employee/${filename}`;
+
+          try {
+            await s3Client.send(new CopyObjectCommand({
+              Bucket: bucket,
+              CopySource: `${bucket}/${oldKey}`,
+              Key: newKey,
+            }));
+            await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: oldKey }));
+            storedFilename = newKey;
+          } catch (moveErr) {
+            console.error('[S3 Move] Failed to move file:', moveErr.message);
+            storedFilename = oldKey; // keep original key on error
+          }
+        }
+
         await client.query(
           `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [incident.id, req.user.id, 'submission', file.originalname, (file.filename || file.key), file.size, file.mimetype]
+          [incident.id, req.user.id, 'submission', file.originalname, storedFilename, file.size, file.mimetype]
         );
       }
     }

@@ -25,6 +25,8 @@ export default function IncidentsListPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
 
+  const defaultViewMode = user?.role === 'employee' ? 'my_incidents' : 'department';
+
   const [filters, setFilters] = useState({ 
     status: location.state?.status || '', 
     severity: location.state?.severity || '', 
@@ -32,9 +34,24 @@ export default function IncidentsListPage() {
     dateFrom: '', 
     dateTo: '', 
     page: 1, 
-    viewMode: location.state?.viewMode || 'department',
+    viewMode: location.state?.viewMode || defaultViewMode,
     reviewStage: location.state?.reviewStage || ''
   });
+
+  // Re-apply filters whenever dashboard cards navigate here with new state
+  useEffect(() => {
+    if (location.state && Object.keys(location.state).length > 0) {
+      setFilters(f => ({
+        ...f,
+        status: location.state.status || '',
+        severity: location.state.severity || '',
+        viewMode: location.state.viewMode || defaultViewMode,
+        reviewStage: location.state.reviewStage || '',
+        page: 1,
+      }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const [showFilters, setShowFilters] = useState(false);
   const [search, setSearch] = useState('');

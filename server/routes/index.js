@@ -34,17 +34,57 @@ if (!fs.existsSync(uploadDir)) {
 
 let upload;
 
+// Maps DB stage names to human-readable R2 folder names
+const stageFolderMap = {
+  submission: 'employee',
+  hod_feedback: 'hod',
+  imc_feedback: 'imc',
+  md_decision: 'mgmt',
+  investigator_report: 'investigator',
+};
+
+// Helper to build the S3 key with folder structure: referenceId/folder/filename
+async function buildS3Key(req, file, stage) {
+  const { query: dbQuery } = require('../config/database');
+  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+  const safeFilename = uniqueSuffix + '-' + file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const folder = stageFolderMap[stage] || stage || 'misc';
+
+  // Try to get incident reference_id from route param
+  const incidentId = req.params && req.params.id;
+  if (incidentId) {
+    try {
+      const result = await dbQuery('SELECT reference_id FROM incidents WHERE id = $1', [incidentId]);
+      if (result.rows.length > 0) {
+        // Convert JPHRC/IMS/2026/00001 -> JPHRC-IMS-2026-00001 (safe folder name)
+        const refId = result.rows[0].reference_id.replace(/\//g, '-');
+        return `${refId}/${folder}/${safeFilename}`;
+      }
+    } catch (e) {
+      console.error('[S3 Key] Failed to fetch reference_id:', e.message);
+    }
+  }
+
+  // Fallback for new incidents (submission stage - no ID yet)
+  return `pending/${folder}/${safeFilename}`;
+}
+
 if (s3Client && process.env.S3_BUCKET_NAME) {
   upload = multer({
     storage: multerS3({
       s3: s3Client,
       bucket: process.env.S3_BUCKET_NAME,
       metadata: function (req, file, cb) {
-        cb(null, { fieldName: file.fieldname });
+        cb(null, { fieldName: file.fieldname, stage: req._uploadStage || 'submission' });
       },
-      key: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + '-' + file.originalname);
+      key: async function (req, file, cb) {
+        try {
+          const stage = req._uploadStage || 'submission';
+          const key = await buildS3Key(req, file, stage);
+          cb(null, key);
+        } catch (err) {
+          cb(err);
+        }
       }
     })
   });
@@ -60,6 +100,7 @@ if (s3Client && process.env.S3_BUCKET_NAME) {
   });
   upload = multer({ storage: storage });
 }
+
 // ─── AUTH ─────────────────────────────────────────
 router.use('/auth', authLimiter); // Apply rate limiter to all auth routes
 router.post('/auth/register', authController.register);
@@ -79,7 +120,7 @@ router.put('/auth/contact-info', authenticate, authController.updateContactInfo)
 
 // ─── INCIDENTS ────────────────────────────────────
 router.get('/incidents', authenticate, incidentsController.getIncidents);
-router.post('/incidents', authenticate, upload.array('attachments', 10), incidentsController.createIncident);
+router.post('/incidents', authenticate, (req, _, next) => { req._uploadStage = 'submission'; next(); }, upload.array('attachments', 10), incidentsController.createIncident);
 router.get('/incidents/stats', authenticate, incidentsController.getDashboardStats);
 router.get('/incidents/export', authenticate, incidentsController.exportIncidents);
 router.get('/incidents/:id', authenticate, incidentsController.getIncident);
@@ -91,7 +132,7 @@ router.put('/incidents/:id', authenticate, incidentActionsController.updateIncid
 router.post('/incidents/:id/withdraw', authenticate, incidentsController.withdrawIncident);
 
 // HOD: submit feedback
-router.post('/incidents/:id/hod-feedback', authenticate, authorize('hod'), upload.array('attachments', 10), incidentsController.submitHodFeedback);
+router.post('/incidents/:id/hod-feedback', authenticate, authorize('hod'), (req, _, next) => { req._uploadStage = 'hod_feedback'; next(); }, upload.array('attachments', 10), incidentsController.submitHodFeedback);
 
 // HOD: request redirect to IMC
 router.post('/incidents/:id/request-redirect', authenticate, authorize('hod'), incidentActionsController.requestRedirect);
@@ -101,12 +142,12 @@ router.get('/hod/dashboard', authenticate, authorize('hod'), incidentsController
 router.get('/hod/incidents', authenticate, authorize('hod'), incidentsController.getIncidents);
 router.get('/hod/incidents/export', authenticate, authorize('hod'), incidentsController.exportIncidents);
 router.get('/hod/incidents/:id', authenticate, authorize('hod'), incidentsController.getIncident);
-router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod'), upload.array('attachments', 10), incidentsController.submitHodFeedback);
+router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod'), (req, _, next) => { req._uploadStage = 'hod_feedback'; next(); }, upload.array('attachments', 10), incidentsController.submitHodFeedback);
 router.post('/hod/incidents/:id/redirect', authenticate, authorize('hod'), incidentActionsController.requestRedirect);
 
 // IMC: claim, feedback, approve/reject redirect, verify training, assign investigator
 router.post('/incidents/:id/claim', authenticate, authorize('imc'), incidentsController.claimIncident);
-router.post('/incidents/:id/imc-feedback', authenticate, authorize('imc'), upload.array('attachments', 10), incidentsController.submitImcFeedback);
+router.post('/incidents/:id/imc-feedback', authenticate, authorize('imc'), (req, _, next) => { req._uploadStage = 'imc_feedback'; next(); }, upload.array('attachments', 10), incidentsController.submitImcFeedback);
 router.post('/incidents/:id/approve-redirect', authenticate, authorize('imc'), incidentActionsController.approveRedirect);
 router.post('/incidents/:id/reject-redirect', authenticate, authorize('imc'), incidentActionsController.rejectRedirect);
 router.post('/incidents/:id/verify-training', authenticate, authorize('imc'), incidentActionsController.verifyTraining);
@@ -117,7 +158,7 @@ router.get('/imc/incidents', authenticate, authorize('imc'), incidentsController
 router.get('/imc/incidents/export', authenticate, authorize('imc'), incidentsController.exportIncidents);
 router.get('/imc/incidents/:id', authenticate, authorize('imc'), incidentsController.getIncident);
 router.post('/imc/incidents/:id/claim', authenticate, authorize('imc'), incidentsController.claimIncident);
-router.post('/imc/incidents/:id/feedback', authenticate, authorize('imc'), upload.array('attachments', 10), incidentsController.submitImcFeedback);
+router.post('/imc/incidents/:id/feedback', authenticate, authorize('imc'), (req, _, next) => { req._uploadStage = 'imc_feedback'; next(); }, upload.array('attachments', 10), incidentsController.submitImcFeedback);
 router.post('/imc/incidents/:id/redirect/approve', authenticate, authorize('imc'), incidentActionsController.approveRedirect);
 router.post('/imc/incidents/:id/redirect/reject', authenticate, authorize('imc'), incidentActionsController.rejectRedirect);
 router.post('/imc/incidents/:id/verify-training', authenticate, authorize('imc'), incidentActionsController.verifyTraining);
@@ -152,14 +193,14 @@ router.post('/incidents/:id/reopen', authenticate, authorize('head_management', 
 router.put('/incidents/:id/feedback', authenticate, authorize('hod', 'imc', 'head_management'), incidentActionsController.editFeedback);
 
 // Management: final decision
-router.post('/incidents/:id/md-decision', authenticate, authorize('head_management'), upload.array('attachments', 10), incidentsController.submitMdDecision);
+router.post('/incidents/:id/md-decision', authenticate, authorize('head_management'), (req, _, next) => { req._uploadStage = 'md_decision'; next(); }, upload.array('attachments', 10), incidentsController.submitMdDecision);
 
 // ─── MODULAR MANAGEMENT ALIASES (Chapter 8 Specification) ───
 router.get('/management/dashboard', authenticate, authorize('head_management'), incidentsController.getDashboardStats);
 router.get('/management/incidents', authenticate, authorize('head_management'), incidentsController.getIncidents);
 router.get('/management/incidents/export', authenticate, authorize('head_management'), incidentsController.exportIncidents);
 router.get('/management/incidents/:id', authenticate, authorize('head_management'), incidentsController.getIncident);
-router.post('/management/incidents/:id/decision', authenticate, authorize('head_management'), upload.array('attachments', 10), incidentsController.submitMdDecision);
+router.post('/management/incidents/:id/decision', authenticate, authorize('head_management'), (req, _, next) => { req._uploadStage = 'md_decision'; next(); }, upload.array('attachments', 10), incidentsController.submitMdDecision);
 router.post('/management/incidents/:id/escalate', authenticate, authorize('head_management'), incidentActionsController.escalatePriority);
 router.post('/management/incidents/:id/remind-hod', authenticate, authorize('head_management'), incidentActionsController.remindHod);
 
