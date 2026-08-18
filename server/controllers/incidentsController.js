@@ -307,7 +307,7 @@ exports.getIncidents = async (req, res) => {
     } else if (reviewStage === 'mgmtPending') {
       whereClause += ` AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') AND i.status NOT IN ('resolved', 'withdrawn')`;
     } else if (reviewStage === 'trainingPending') {
-      whereClause += ` AND (i.status = 'pending_training' OR (i.has_responsible_person = TRUE AND i.training_completed = FALSE AND i.status != 'withdrawn'))`;
+      whereClause += ` AND i.status = 'pending_training'`;
     }
 
     // Exclude withdrawn for non-admin/non-MD/non-IMC/non-HOD/non-exec unless they are the reporter

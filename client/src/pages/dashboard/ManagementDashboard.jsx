@@ -173,7 +173,7 @@ export default function ManagementDashboard() {
     const mgmtGiven = allIncidents.filter(i => i.has_management_feedback || i.management_feedback).length;
     const mgmtPending = allIncidents.filter(i => !(i.has_management_feedback || i.management_feedback) && i.status !== 'resolved' && i.status !== 'withdrawn').length;
 
-    const trainingPending = allIncidents.filter(i => i.status === 'pending_training' || (i.has_responsible_person && !i.training_completed && i.status !== 'withdrawn')).length;
+    const trainingPending = allIncidents.filter(i => i.status === 'pending_training').length;
     const redirectCount = allIncidents.filter(i => i.status === 'redirect_requested').length;
     const graveCount = allIncidents.filter(i => i.severity === 'Grave').length;
 
