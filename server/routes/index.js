@@ -230,6 +230,36 @@ router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc')
 router.get('/notifications', authenticate, notificationsController.getNotifications);
 router.put('/notifications/:id/read', authenticate, notificationsController.markAsRead);
 
+// ─── ATTACHMENT DOWNLOAD (presigned URL or local fallback) ──────────────────
+router.get('/attachments/:id/download', authenticate, async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM attachments WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Attachment not found' });
+    const att = result.rows[0];
+    const storedFilename = att.stored_filename;
+
+    if (s3Client && process.env.S3_BUCKET_NAME) {
+      // Generate a presigned URL valid for 60 seconds
+      const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+      const { GetObjectCommand } = require('@aws-sdk/client-s3');
+      const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: storedFilename,
+        ResponseContentDisposition: `attachment; filename="${att.original_filename}"`,
+      }), { expiresIn: 60 });
+      return res.json({ url: signedUrl });
+    } else {
+      // Local file fallback
+      const filePath = path.resolve(uploadDir, storedFilename);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+      return res.json({ url: `/uploads/${storedFilename}` });
+    }
+  } catch (e) {
+    console.error('[GET /attachments/:id/download] error:', e);
+    res.status(500).json({ error: 'Failed to generate download link' });
+  }
+});
+
 // ─── LOCATIONS & DEPARTMENTS ──────────────────────
 router.get('/locations', authenticate, async (req, res) => {
   try {

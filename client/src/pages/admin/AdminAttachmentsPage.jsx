@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { adminApi, UPLOADS_URL } from '../../api';
+import { adminApi, attachmentsApi, API_BASE_URL } from '../../api';
 import { Spinner, Pagination, Modal } from '../../components/ui';
 import { Paperclip, Download, Eye, HardDrive, FileArchive, Search, X, ChevronDown, ChevronRight, File } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -76,6 +76,17 @@ export default function AdminAttachmentsPage() {
 
   const paginatedData = groupedData.list.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
+  const getDownloadUrl = async (file) => {
+    try {
+      const res = await attachmentsApi.getDownloadUrl(file.id);
+      return res.data.url;
+    } catch (e) {
+      console.error('Failed to get download URL:', e);
+      // Fallback: try local uploads path
+      return `${API_BASE_URL.replace('/api', '/uploads')}/${file.stored_filename}`;
+    }
+  };
+
   const handleBulkDownload = async (group) => {
     try {
       setIsZipping(true);
@@ -83,22 +94,8 @@ export default function AdminAttachmentsPage() {
       
       const zip = new JSZip();
       
-      // Fetch each file and add to zip
       await Promise.all(group.files.map(async (file) => {
-        // Construct the full R2 URL based on environment/config (assuming stored_filename is the full path or URL)
-        // If stored_filename is just the key, we need the base URL. 
-        // Let's assume the client can fetch it via the same URL format used in IncidentDetailPage: 
-        // We'll use the file's original_filename for the zip entry.
-        
-        // Wait, typically attachments are fetched from cloudflare R2 URL. If stored_filename is a full URL, fetch it.
-        // If not, we might need to rely on the backend. For this implementation, we assume `stored_filename` is the direct URL or can be fetched relatively.
-        let fetchUrl = file.stored_filename;
-        
-        // Ensure valid URL
-        if (!fetchUrl.startsWith('http')) {
-           fetchUrl = `${UPLOADS_URL}/${fetchUrl}`;
-        }
-
+        const fetchUrl = await getDownloadUrl(file);
         const response = await fetch(fetchUrl);
         if (!response.ok) throw new Error(`Failed to fetch ${file.original_filename}`);
         const blob = await response.blob();
@@ -114,6 +111,34 @@ export default function AdminAttachmentsPage() {
       toast.error('Error downloading files.', { id: 'zip-toast' });
     } finally {
       setIsZipping(false);
+    }
+  };
+
+  const handleFileClick = async (file) => {
+    // Get presigned URL first, then open preview
+    toast.loading('Preparing file…', { id: 'file-load' });
+    try {
+      const fetchUrl = await getDownloadUrl(file);
+      toast.dismiss('file-load');
+      setPreviewFile({ ...file, fetchUrl });
+    } catch (e) {
+      toast.error('Could not load file.', { id: 'file-load' });
+    }
+  };
+
+  const handleDownloadDirect = async (file) => {
+    toast.loading('Preparing download…', { id: 'dl-load' });
+    try {
+      const fetchUrl = await getDownloadUrl(file);
+      toast.dismiss('dl-load');
+      const a = document.createElement('a');
+      a.href = fetchUrl;
+      a.download = file.original_filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {
+      toast.error('Download failed.', { id: 'dl-load' });
     }
   };
 
@@ -226,15 +251,10 @@ export default function AdminAttachmentsPage() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                               {group.files.map(file => {
                                 const fileExt = (file.original_filename || '').split('.').pop().toUpperCase();
-                                let fetchUrl = file.stored_filename;
-                                if (!fetchUrl.startsWith('http')) {
-                                  fetchUrl = `${UPLOADS_URL}/${fetchUrl}`;
-                                }
-
-                                return (
+                                 return (
                                   <button
                                     key={file.id} 
-                                    onClick={() => setPreviewFile({ ...file, fetchUrl })}
+                                    onClick={() => handleFileClick(file)}
                                     className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-lg shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer group/file text-left w-full"
                                   >
                                     <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0 group-hover/file:bg-indigo-600 group-hover/file:text-white transition-colors">
@@ -251,6 +271,13 @@ export default function AdminAttachmentsPage() {
                                         <span className="text-xs text-slate-500">
                                           {formatBytes(file.file_size)}
                                         </span>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); handleDownloadDirect(file); }}
+                                          className="ml-auto p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                                          title="Download"
+                                        >
+                                          <Download size={14} />
+                                        </button>
                                       </div>
                                     </div>
                                   </button>
@@ -288,14 +315,13 @@ export default function AdminAttachmentsPage() {
         footer={
           <div className="flex justify-between w-full">
             {previewFile ? (
-              <a 
-                href={previewFile.fetchUrl}
-                download={previewFile.original_filename}
+              <button
+                onClick={() => handleDownloadDirect(previewFile)}
                 className="btn-primary flex items-center gap-2"
               >
                 <Download size={16} />
                 Download
-              </a>
+              </button>
             ) : <div />}
             <button onClick={() => setPreviewFile(null)} className="btn-secondary">Close</button>
           </div>

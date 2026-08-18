@@ -135,6 +135,11 @@ export const adminApi = {
   getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
 };
 
+// ── Attachment Download (presigned) ────────────────
+export const attachmentsApi = {
+  getDownloadUrl: (id) => api.get(`/attachments/${id}/download`),
+};
+
 // ── Employee Search ─────────────────────────────────
 export const employeeApi = {
   search: (q) => api.get('/employee/search', { params: { q } }),
