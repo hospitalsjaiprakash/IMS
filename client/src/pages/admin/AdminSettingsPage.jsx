@@ -47,6 +47,7 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     if (config) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalConfig(config);
       setDirty(false);
     }

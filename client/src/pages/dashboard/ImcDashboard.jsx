@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi, imcApi, authApi } from '../../api';
 import { mockDepartments } from '../../api/mockData';
@@ -97,7 +98,7 @@ const computeStats = (groupIncidents) => {
 };
 
 export default function ImcDashboard() {
-  const { user } = useAuthStore();
+  const { user, leaveRole } = useAuthStore();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');

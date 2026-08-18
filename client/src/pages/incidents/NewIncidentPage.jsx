@@ -35,7 +35,7 @@ export default function NewIncidentPage() {
     incidentDate: '',
     incidentTime: '',
     mainLocationId: '',
-    subLocationId: '',
+    subLocationText: '',
     occurredTo: '',
     severity: '',
     description: '',
@@ -105,7 +105,7 @@ export default function NewIncidentPage() {
 
     if (step === 4) {
       if (!form.mainLocationId) e.mainLocationId = 'Select a location';
-      if (!form.subLocationId)  e.subLocationId  = 'Sub-location is required';
+      if (!form.subLocationText || !form.subLocationText.trim()) e.subLocationText  = 'Sub-location is required';
     }
 
     if (step === 5) {
@@ -136,7 +136,7 @@ export default function NewIncidentPage() {
     formData.append('incidentDate', form.incidentDate);
     formData.append('incidentTime', form.incidentTime);
     formData.append('mainLocationId', form.mainLocationId);
-    formData.append('subLocationId', form.subLocationId);
+    formData.append('subLocationText', form.subLocationText);
     formData.append('occurredTo', form.occurredTo);
     formData.append('severity', form.severity);
     formData.append('incidentCategory', categories[0] || '');
@@ -161,9 +161,7 @@ export default function NewIncidentPage() {
     submitMutation.mutate(formData);
   };
 
-  const subLocations = form.mainLocationId
-    ? (meta?.subLocations || []).filter(s => s.main_location_id == form.mainLocationId)
-    : [];
+  // Removed subLocations array since it's now manual input
 
   return (
     <div className="w-full">
@@ -312,18 +310,15 @@ export default function NewIncidentPage() {
               </div>
               {form.mainLocationId && (
                 <div>
-                  <label className="field-label field-required">Sub-Location</label>
-                  <select
-                    value={form.subLocationId}
-                    onChange={e => set('subLocationId', e.target.value)}
-                    className={`select ${errors.subLocationId ? 'input-error' : ''}`}
-                  >
-                    <option value="">Select sub-location…</option>
-                    {subLocations.map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                  {errors.subLocationId && <p className="field-error">{errors.subLocationId}</p>}
+                  <label className="field-label field-required">Exact Sub-Location</label>
+                  <input
+                    type="text"
+                    value={form.subLocationText}
+                    onChange={e => set('subLocationText', e.target.value)}
+                    placeholder="E.g., 2nd Floor, Room 102"
+                    className={`input ${errors.subLocationText ? 'input-error' : ''}`}
+                  />
+                  {errors.subLocationText && <p className="field-error">{errors.subLocationText}</p>}
                 </div>
               )}
             </div>

@@ -44,14 +44,25 @@ exports.createIncident = async (req, res) => {
 
     let {
       departmentIds, incidentDate, incidentTime,
-      mainLocationId, subLocationId,
+      mainLocationId, subLocationText,
       occurredTo, severity, incidentCategory, incidentType, description,
       hasResponsiblePerson, responsiblePersonName, incidentCategories
     } = req.body;
 
     // Convert empty strings or 'null' from FormData to actual null for integer columns
     const mLoc = mainLocationId && mainLocationId !== 'null' && mainLocationId !== 'Select a location' ? parseInt(mainLocationId, 10) : null;
-    const sLoc = subLocationId && subLocationId !== 'null' ? parseInt(subLocationId, 10) : null;
+    
+    let sLoc = null;
+    if (mLoc && subLocationText && subLocationText.trim() !== '') {
+      const subText = subLocationText.trim();
+      const existSub = await client.query('SELECT id FROM sub_locations WHERE main_location_id = $1 AND name ILIKE $2', [mLoc, subText]);
+      if (existSub.rows.length > 0) {
+        sLoc = existSub.rows[0].id;
+      } else {
+        const newSub = await client.query('INSERT INTO sub_locations (main_location_id, name) VALUES ($1, $2) RETURNING id', [mLoc, subText]);
+        sLoc = newSub.rows[0].id;
+      }
+    }
 
     if (typeof departmentIds === 'string') departmentIds = JSON.parse(departmentIds);
     if (typeof incidentCategories === 'string') incidentCategories = JSON.parse(incidentCategories);
