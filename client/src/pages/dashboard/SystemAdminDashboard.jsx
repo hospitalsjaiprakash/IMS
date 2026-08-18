@@ -59,7 +59,7 @@ export default function SystemAdminDashboard() {
 
           {/* Primary Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 shadow-sm hover:shadow-md transition-shadow">
+            <div onClick={() => navigate('/incidents')} className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-blue-800/70 uppercase tracking-wide">Total Incidents</p>
@@ -71,7 +71,7 @@ export default function SystemAdminDashboard() {
               </div>
             </div>
 
-            <div className="card p-5 bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 shadow-sm hover:shadow-md transition-shadow">
+            <div onClick={() => navigate('/incidents', { state: { status: 'active' } })} className="card p-5 bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-amber-800/70 uppercase tracking-wide">Active</p>
@@ -83,7 +83,7 @@ export default function SystemAdminDashboard() {
               </div>
             </div>
 
-            <div className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 shadow-sm hover:shadow-md transition-shadow">
+            <div onClick={() => navigate('/incidents', { state: { status: 'resolved' } })} className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-green-800/70 uppercase tracking-wide">Resolved</p>
@@ -95,7 +95,7 @@ export default function SystemAdminDashboard() {
               </div>
             </div>
 
-            <div className="card p-5 bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+            <div onClick={() => navigate('/incidents', { state: { status: 'withdrawn' } })} className="card p-5 bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold text-slate-600 uppercase tracking-wide">Withdrawn</p>
