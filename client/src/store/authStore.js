@@ -4,10 +4,10 @@ import { queryClient } from '../utils/queryClient';
 
 export const useAuthStore = create((set) => ({
   user: (() => {
-    try { return JSON.parse(localStorage.getItem('ims_user')); } catch { return null; }
+    try { return JSON.parse(sessionStorage.getItem('ims_user')); } catch { return null; }
   })(),
-  token: localStorage.getItem('ims_token'),
-  isAuthenticated: !!localStorage.getItem('ims_token'),
+  token: sessionStorage.getItem('ims_token'),
+  isAuthenticated: !!sessionStorage.getItem('ims_token'),
   loading: false,
   error: null,
 
@@ -16,9 +16,9 @@ export const useAuthStore = create((set) => ({
     try {
       const { data } = await authApi.login(credentials);
       queryClient.clear();
-      localStorage.removeItem('ims_query_cache');
-      localStorage.setItem('ims_token', data.token);
-      localStorage.setItem('ims_user', JSON.stringify(data.user));
+      sessionStorage.removeItem('ims_query_cache');
+      sessionStorage.setItem('ims_token', data.token);
+      sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
@@ -48,9 +48,9 @@ export const useAuthStore = create((set) => ({
     try {
       const { data } = await authApi.committeeLogin(credentials);
       queryClient.clear();
-      localStorage.removeItem('ims_query_cache');
-      localStorage.setItem('ims_token', data.token);
-      localStorage.setItem('ims_user', JSON.stringify(data.user));
+      sessionStorage.removeItem('ims_query_cache');
+      sessionStorage.setItem('ims_token', data.token);
+      sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
@@ -66,9 +66,9 @@ export const useAuthStore = create((set) => ({
     try {
       const { data } = await authApi.switchRole(credentials);
       queryClient.clear();
-      localStorage.removeItem('ims_query_cache');
-      localStorage.setItem('ims_token', data.token);
-      localStorage.setItem('ims_user', JSON.stringify(data.user));
+      sessionStorage.removeItem('ims_query_cache');
+      sessionStorage.setItem('ims_token', data.token);
+      sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
@@ -84,9 +84,9 @@ export const useAuthStore = create((set) => ({
     try {
       const { data } = await authApi.leaveRole({ targetRole });
       queryClient.clear();
-      localStorage.removeItem('ims_query_cache');
-      localStorage.setItem('ims_token', data.token);
-      localStorage.setItem('ims_user', JSON.stringify(data.user));
+      sessionStorage.removeItem('ims_query_cache');
+      sessionStorage.setItem('ims_token', data.token);
+      sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
@@ -99,22 +99,22 @@ export const useAuthStore = create((set) => ({
 
   logout: () => {
     queryClient.clear();
-    localStorage.removeItem('ims_token');
-    localStorage.removeItem('ims_user');
+    sessionStorage.removeItem('ims_token');
+    sessionStorage.removeItem('ims_user');
     // Clear cached query data so a new user doesn't see stale data from previous session
-    localStorage.removeItem('ims_query_cache');
+    sessionStorage.removeItem('ims_query_cache');
     set({ user: null, token: null, isAuthenticated: false });
   },
 
   updateUser: (user) => {
-    localStorage.setItem('ims_user', JSON.stringify(user));
+    sessionStorage.setItem('ims_user', JSON.stringify(user));
     set({ user });
   },
 
   refreshUser: async () => {
     try {
       const { data } = await authApi.getMe();
-      localStorage.setItem('ims_user', JSON.stringify(data));
+      sessionStorage.setItem('ims_user', JSON.stringify(data));
       set({ user: data });
     } catch (e) {
       console.debug('Failed to refresh user:', e.message);

@@ -99,6 +99,8 @@ export default function IncidentDetailPage() {
   // Edit incident modal (Employee only, while still 'submitted')
   const [showEditIncModal, setShowEditIncModal] = useState(false);
   const [editInc, setEditInc] = useState({});
+  const [activeTimelineStage, setActiveTimelineStage] = useState(null);
+
 
   const [withdrawReason, setWithdrawReason] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
@@ -345,10 +347,12 @@ export default function IncidentDetailPage() {
     ['submitted', 'with_hod'].includes(incident.status);
 
   const canHodFeedback = user?.role === 'hod' &&
-    ['with_hod', 'with_hod_and_imc'].includes(incident.status);
+    ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    !feedbacks?.some(f => f.role === 'hod');
 
   const canRequestRedirect = user?.role === 'hod' &&
-    ['with_hod', 'with_hod_and_imc'].includes(incident.status);
+    ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    !feedbacks?.some(f => f.role === 'hod');
 
   const canImcAct = user?.role === 'imc' &&
     (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training'].includes(incident.status) ||
@@ -624,7 +628,7 @@ export default function IncidentDetailPage() {
           )}
 
           {/* IMC Inline Review & Action Card */}
-          {canImcAct && incident.status !== 'pending_training' && (
+          {canImcAct && incident.status !== 'pending_training' && !feedbacks?.some(f => f.role === 'imc') && (
             <div className="card p-5 border-indigo-200 bg-indigo-50/10 print:hidden">
               {incident.status === 'redirect_requested' ? (
                 <div>
@@ -716,7 +720,7 @@ export default function IncidentDetailPage() {
                     </div>
                     <div className="flex justify-end gap-2">
                       <button
-                        onClick={() => imcFeedbackMutation.mutate()}
+                        onClick={() => imcFeedbackMutation.mutate(true)}
                         disabled={!feedbackText.trim() || imcFeedbackMutation.isPending}
                         className="btn-primary btn-sm"
                       >
@@ -805,23 +809,71 @@ export default function IncidentDetailPage() {
             <h2 className="text-sm font-semibold text-slate-800 mb-4">Progress</h2>
             <div className="space-y-0">
               {TIMELINE_STAGES.map((stage, i) => {
-                const done = statusOrder[incident.status] > i || (i === 4 && incident.status === 'resolved');
-                const active = statusOrder[incident.status] === i || (i === 4 && incident.status === 'pending_training');
+                let done = false;
+                let active = false;
+                
+                if (i === 0) {
+                  done = true;
+                } else if (i === 1) {
+                  done = statusOrder[incident.status] > 1 || feedbacks?.some(f => f.role === 'hod');
+                  active = !done && ['with_hod', 'with_hod_and_imc'].includes(incident.status);
+                } else if (i === 2) {
+                  done = statusOrder[incident.status] > 2 || feedbacks?.some(f => f.role === 'imc');
+                  active = !done && ['with_imc', 'with_hod_and_imc', 'redirect_requested'].includes(incident.status);
+                } else if (i === 3) {
+                  done = statusOrder[incident.status] > 3 || feedbacks?.some(f => f.role === 'head_management');
+                  active = !done && incident.status === 'with_head_management';
+                } else if (i === 4) {
+                  done = incident.status === 'resolved';
+                  active = incident.status === 'pending_training';
+                }
+
+                if (statusOrder[incident.status] > i && i < 4) done = true;
+                
+                let stageLabel = stage.label;
+                if (i === 1) {
+                  stageLabel = done ? 'HOD Reviewed' : 'Awaiting HOD Feedback';
+                } else if (i === 2) {
+                  stageLabel = done ? 'IMC Reviewed' : 'Awaiting IMC Feedback';
+                } else if (i === 3) {
+                  stageLabel = done ? 'Mgmt Reviewed' : 'Awaiting Mgmt Feedback';
+                } else if (i === 4 && incident.status === 'pending_training') {
+                  stageLabel = 'Training Verification (IMC)';
+                }
+
+                let reviewDate = null;
+                if (done) {
+                  if (i === 0) reviewDate = incident.created_at;
+                  else if (i === 1) reviewDate = feedbacks?.find(f => f.role === 'hod')?.created_at;
+                  else if (i === 2) reviewDate = feedbacks?.find(f => f.role === 'imc')?.created_at;
+                  else if (i === 3) reviewDate = finalReport?.generated_at || incident.resolved_at || feedbacks?.find(f => f.role === 'head_management')?.created_at;
+                  else if (i === 4) reviewDate = incident.resolved_at;
+                }
+
                 return (
                   <div key={stage.key} className="relative flex gap-3 pb-5 last:pb-0">
                     {i < TIMELINE_STAGES.length - 1 && (
                       <div className={`absolute left-3.5 top-7 bottom-0 w-px ${done ? 'bg-success-400' : 'bg-slate-200'}`} />
                     )}
-                    <div className={`relative z-10 flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                      done ? 'bg-green-500 text-white' : active ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-200 text-slate-400'
-                    }`}>
+                    <button 
+                      onClick={() => done && reviewDate ? setActiveTimelineStage(activeTimelineStage === i ? null : i) : null}
+                      className={`relative z-10 flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-transform ${done ? 'cursor-pointer hover:scale-110' : ''} ${
+                        done ? 'bg-green-500 text-white shadow-sm ring-2 ring-green-100' : active ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-200 text-slate-400'
+                      }`}
+                      title={done ? "Click to view timestamp" : ""}
+                    >
                       {done ? <CheckCircle size={14} /> : i + 1}
-                    </div>
+                    </button>
                     <div className="pt-1">
                       <p className={`text-sm font-medium ${active ? 'text-blue-700 font-bold' : done ? 'text-green-700' : 'text-slate-400'}`}>
-                        {i === 4 && incident.status === 'pending_training' ? 'Training Verification (IMC)' : stage.label}
+                        {stageLabel}
                       </p>
                       {active && <p className="text-xs text-blue-500 mt-0.5 flex items-center gap-1"><Clock size={11} /> In progress</p>}
+                      {activeTimelineStage === i && done && reviewDate && (
+                        <p className="text-xs text-slate-500 mt-1 flex items-center gap-1 animate-fade-in">
+                          <Calendar size={11} /> {formatDateTime(reviewDate)}
+                        </p>
+                      )}
                     </div>
                   </div>
                 );

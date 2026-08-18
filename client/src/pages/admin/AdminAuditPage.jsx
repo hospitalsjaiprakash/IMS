@@ -56,7 +56,7 @@ export default function AdminAuditPage() {
       
       const res = await fetch(`/api/admin/audit-logs/export?${qs.toString()}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('ims_token')}`
+          'Authorization': `Bearer ${sessionStorage.getItem('ims_token')}`
         }
       });
       

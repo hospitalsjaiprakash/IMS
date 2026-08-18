@@ -39,11 +39,11 @@ const getRoleDashboard = (role) => {
 // ── React Query client ──────────────────────────────────────────────────────
 // Imported from ./utils/queryClient to allow clearing cache across auth sessions
 
-// ── localStorage persister ──────────────────────────────────────────────────
-// Saves the entire React Query cache to localStorage key 'ims_query_cache'
+// ── sessionStorage persister ──────────────────────────────────────────────────
+// Saves the entire React Query cache to sessionStorage key 'ims_query_cache'
 // maxAge: cache survives for 24 hours across page refreshes
-const localStoragePersister = createSyncStoragePersister({
-  storage: window.localStorage,
+const sessionStoragePersister = createSyncStoragePersister({
+  storage: window.sessionStorage,
   key: 'ims_query_cache',
 });
 
@@ -66,7 +66,7 @@ export default function App() {
     <PersistQueryClientProvider
       client={queryClient}
       persistOptions={{
-        persister: localStoragePersister,
+        persister: sessionStoragePersister,
         maxAge: 1000 * 60 * 60 * 24, // 24 hours
       }}
     >
