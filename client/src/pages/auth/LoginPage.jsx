@@ -17,7 +17,7 @@ export default function LoginPage() {
     if (!bgRef.current) return;
     const { clientX, clientY } = e;
     // Calculate movement offset based on cursor position relative to screen center
-    const moveX = (clientX / window.innerWidth - 0.5) * 60; 
+    const moveX = (clientX / window.innerWidth - 0.5) * 60;
     const moveY = (clientY / window.innerHeight - 0.5) * 60;
     bgRef.current.style.transform = `translate(${moveX}px, ${moveY}px)`;
   };
@@ -164,20 +164,20 @@ export default function LoginPage() {
       </div>
 
       {/* Right Split: Login Form */}
-      <div 
+      <div
         className="w-full lg:w-[35%] flex flex-col relative bg-white overflow-y-auto overflow-x-hidden"
         onMouseMove={handleMouseMove}
       >
-        
+
         {/* Scattered Particle Pattern Background (Antigravity inspired) */}
-        <div 
+        <div
           ref={bgRef}
-          className="absolute inset-[-100px] z-0 pointer-events-none transition-transform duration-100 ease-out" 
-          style={{ 
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='14' cy='18' r='1' fill='%2386efac'/%3E%3Ccircle cx='54' cy='38' r='1.5' fill='%23bae6fd'/%3E%3Ccircle cx='96' cy='22' r='1' fill='%2322c55e'/%3E%3Ccircle cx='34' cy='78' r='1' fill='%2386efac'/%3E%3Ccircle cx='106' cy='94' r='1.5' fill='%23e0f2fe'/%3E%3Ccircle cx='72' cy='106' r='1' fill='%234ade80'/%3E%3Ccircle cx='110' cy='50' r='1' fill='%2386efac'/%3E%3Ccircle cx='26' cy='106' r='1.5' fill='%23bae6fd'/%3E%3Ccircle cx='66' cy='14' r='1' fill='%2322c55e'/%3E%3Ccircle cx='18' cy='58' r='1' fill='%2386efac'/%3E%3Ccircle cx='85' cy='65' r='1' fill='%234ade80'/%3E%3Ccircle cx='45' cy='95' r='1.2' fill='%23bbf7d0'/%3E%3C/svg%3E")`, 
-            backgroundSize: '120px 120px', 
-            opacity: 0.8 
-          }} 
+          className="absolute inset-[-100px] z-0 pointer-events-none transition-transform duration-100 ease-out"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='14' cy='18' r='1' fill='%2386efac'/%3E%3Ccircle cx='54' cy='38' r='1.5' fill='%23bae6fd'/%3E%3Ccircle cx='96' cy='22' r='1' fill='%2322c55e'/%3E%3Ccircle cx='34' cy='78' r='1' fill='%2386efac'/%3E%3Ccircle cx='106' cy='94' r='1.5' fill='%23e0f2fe'/%3E%3Ccircle cx='72' cy='106' r='1' fill='%234ade80'/%3E%3Ccircle cx='110' cy='50' r='1' fill='%2386efac'/%3E%3Ccircle cx='26' cy='106' r='1.5' fill='%23bae6fd'/%3E%3Ccircle cx='66' cy='14' r='1' fill='%2322c55e'/%3E%3Ccircle cx='18' cy='58' r='1' fill='%2386efac'/%3E%3Ccircle cx='85' cy='65' r='1' fill='%234ade80'/%3E%3Ccircle cx='45' cy='95' r='1.2' fill='%23bbf7d0'/%3E%3C/svg%3E")`,
+            backgroundSize: '120px 120px',
+            opacity: 0.8
+          }}
         />
 
         {/* Form Area */}
