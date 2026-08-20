@@ -189,12 +189,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {(user?.role !== 'employee' && activeView !== 'personal') && (
-            <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0">
-              <FilePlus size={16} />
-              <span>Report Incident</span>
-            </button>
-          )}
           {(user?.role === 'employee' || activeView === 'personal') && (
             <button onClick={() => navigate('/incidents/new')} className="btn-primary flex-shrink-0 justify-center">
               <FilePlus size={16} />
