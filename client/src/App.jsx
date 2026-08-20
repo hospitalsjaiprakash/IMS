@@ -6,6 +6,7 @@ import { useAuthStore } from './store/authStore';
 import { queryClient } from './utils/queryClient';
 import { useSocket } from './hooks/useSocket';
 import { useEffect } from 'react';
+import { pingServer } from './api';
 
 import AppLayout from './components/layout/AppLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -62,6 +63,10 @@ function PublicRoute({ children }) {
 }
 
 export default function App() {
+  // Ping the server immediately on app load to wake it up from Render free-tier sleep
+  useEffect(() => {
+    pingServer();
+  }, []);
   return (
     <PersistQueryClientProvider
       client={queryClient}

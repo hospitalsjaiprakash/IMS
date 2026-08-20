@@ -3,14 +3,26 @@ import axios from 'axios';
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 export const UPLOADS_URL = API_BASE_URL.replace(/\/api$/, '/uploads');
 
-// ─── Axios instance ───────────────────────────────────────────────────────────
+// ─── Axios instances ──────────────────────────────────────────────────────────
+// Standard instance (30s timeout) for regular requests
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 30000,
+});
+
+// Long-timeout instance (60s) for login — Render free-tier can take 30-50s to cold start
+const authApi_axios = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 60000,
 });
 
 // Attach JWT token on every request
 api.interceptors.request.use((config) => {
+  const token = sessionStorage.getItem('ims_token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+authApi_axios.interceptors.request.use((config) => {
   const token = sessionStorage.getItem('ims_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -41,9 +53,10 @@ api.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────
 export const authApi = {
-  register: (data) => api.post('/auth/register', data),
-  login: (data) => api.post('/auth/login', data),
-  committeeLogin: (data) => api.post('/auth/committee-login', data),
+  // Use 60s-timeout instance for login/register — Render cold start can take up to 50s
+  register: (data) => authApi_axios.post('/auth/register', data),
+  login: (data) => authApi_axios.post('/auth/login', data),
+  committeeLogin: (data) => authApi_axios.post('/auth/committee-login', data),
   switchRole: (data) => api.post('/auth/switch-role', data),
   forgotPassword: (data) => api.post('/auth/forgot-password', data),
   resetPassword: (data) => api.post('/auth/reset-password', data),
@@ -56,6 +69,10 @@ export const authApi = {
   updateNotificationPrefs: (data) => api.put('/auth/notification-prefs', data),
   updateContactInfo: (data) => api.put('/auth/contact-info', data),
 };
+
+// ── Server wake-up ping (call on app load to avoid cold-start delays on login) ──
+export const pingServer = () =>
+  axios.get(`${API_BASE_URL.replace(/\/api$/, '')}/ping`, { timeout: 8000 }).catch(() => {});
 
 // ── Incidents ─────────────────────────────────────
 export const incidentsApi = {

@@ -1074,8 +1074,17 @@ exports.getDashboardStats = async (req, res) => {
       };
     }
 
+    const t = totals.rows[0];
+    const parsedTotals = {
+      total: parseInt(t.total || 0),
+      active: parseInt(t.active || 0),
+      resolved: parseInt(t.resolved || 0),
+      withdrawn: parseInt(t.withdrawn || 0),
+      this_month: parseInt(t.this_month || 0),
+      ...pipelineStats
+    };
     res.json({
-      totals: { ...totals.rows[0], ...pipelineStats },
+      totals: parsedTotals,
       bySeverity: bySeverity.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       byType: byType.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       byStatus: byStatus.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),

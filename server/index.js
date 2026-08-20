@@ -74,6 +74,11 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Keep-alive ping endpoint (called by client on load to wake up the server)
+app.get('/ping', (req, res) => {
+  res.json({ alive: true, ts: Date.now() });
+});
+
 // ─── ERROR HANDLER ────────────────────────────────
 app.all('*', (req, res, next) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
@@ -119,6 +124,26 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
+  // ─── Self-ping to prevent Render free-tier cold starts ───
+  // Render shuts down free services after 15 min of inactivity.
+  // We ping ourselves every 14 min to stay warm.
+  if (process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL) {
+    const selfUrl = (process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL).replace(/\/$/, '');
+    const pingInterval = 14 * 60 * 1000; // 14 minutes
+    setInterval(async () => {
+      try {
+        const http = require('https');
+        http.get(`${selfUrl}/ping`, (res) => {
+          console.log(`[keep-alive] Self-ping OK (status ${res.statusCode})`);
+        }).on('error', (err) => {
+          console.warn('[keep-alive] Self-ping failed:', err.message);
+        });
+      } catch (e) {
+        // Silently ignore ping errors
+      }
+    }, pingInterval);
+    console.log(`[keep-alive] Self-ping enabled every 14 min → ${selfUrl}/ping`);
+  }
   console.log(`
   ╔══════════════════════════════════════════════════╗
   ║   JPHRC Incident Management System - API         ║

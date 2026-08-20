@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
-import { authApi } from '../../api';
-import { AlertCircle, CheckCircle2, UserPlus, LogIn, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { authApi, pingServer } from '../../api';
+import { AlertCircle, CheckCircle2, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Spinner } from '../../components/ui';
 
 import jphBuildImg from '../../assets/JPHBUILD.webp';
@@ -24,9 +24,15 @@ export default function LoginPage() {
 
   const [mode, setMode] = useState('login'); // 'login' | 'register' | 'forgot' | 'forgot_otp'
   const [localLoading, setLocalLoading] = useState(false);
+  const [serverWaking, setServerWaking] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+
+  // Ping the server on mount to wake it up before the user submits the form
+  useEffect(() => {
+    pingServer();
+  }, []);
 
   // Login state
   const [loginForm, setLoginForm] = useState({ employeeId: '', password: '' });
@@ -64,11 +70,24 @@ export default function LoginPage() {
       setError('Employee ID and password are required.');
       return;
     }
+    setServerWaking(false);
+    // Show a friendly "waking up" message after 8 seconds if still loading
+    const wakingTimer = setTimeout(() => setServerWaking(true), 8000);
     const result = await login(loginForm);
+    clearTimeout(wakingTimer);
+    setServerWaking(false);
     if (result.success) {
       navigate('/dashboard');
     } else {
-      setError(result.error);
+      // Friendly message for timeout / network errors caused by Render cold start
+      const isTimeout = result.error?.toLowerCase().includes('timeout') ||
+                        result.error?.toLowerCase().includes('network') ||
+                        result.error?.toLowerCase().includes('failed');
+      if (isTimeout) {
+        setError('The server took too long to respond. This can happen after a period of inactivity. Please try again — it should work now.');
+      } else {
+        setError(result.error);
+      }
     }
   };
 
@@ -234,6 +253,16 @@ export default function LoginPage() {
               </div>
             )}
 
+            {/* Server waking up banner — shown after 8s of loading */}
+            {serverWaking && !error && (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-5">
+                <Loader2 size={16} className="text-amber-600 flex-shrink-0 mt-0.5 animate-spin" />
+                <p className="text-sm text-amber-800">
+                  <strong>Server is starting up…</strong> This takes about 30–60 seconds after a period of inactivity. Please hold on!
+                </p>
+              </div>
+            )}
+
             {successMsg && (
               <div className="flex items-start gap-2.5 bg-green-50 border border-green-200 rounded-xl p-3.5 mb-5">
                 <CheckCircle2 size={16} className="text-green-600 flex-shrink-0 mt-0.5" />
@@ -294,7 +323,7 @@ export default function LoginPage() {
                   className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-2 disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {loading ? <Spinner size={18} className="text-white" /> : null}
-                  {loading ? 'Signing In…' : 'Sign In'}
+                  {loading ? (serverWaking ? 'Server Starting Up…' : 'Signing In…') : 'Sign In'}
                 </button>
               </form>
             )}
