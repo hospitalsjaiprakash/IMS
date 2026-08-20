@@ -348,27 +348,34 @@ export default function IncidentDetailPage() {
     ['submitted', 'with_hod'].includes(incident.status);
 
   const canHodFeedback = user?.role === 'hod' &&
+    user?.id !== incident.reporter_id &&
     ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
     !feedbacks?.some(f => f.role === 'hod');
 
   const canRequestRedirect = user?.role === 'hod' &&
+    user?.id !== incident.reporter_id &&
     ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
     !feedbacks?.some(f => f.role === 'hod');
 
   const canImcAct = user?.role === 'imc' &&
+    user?.id !== incident.reporter_id &&
     (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training'].includes(incident.status) ||
      (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
 
   const canMdAct = user?.role === 'head_management' &&
+    user?.id !== incident.reporter_id &&
     incident.status === 'with_head_management';
 
   const canReopen = (user?.role === 'head_management' || user?.role === 'imc') &&
+    user?.id !== incident.reporter_id &&
     incident.status === 'resolved';
 
   const canEscalate = (user?.role === 'head_management' || user?.role === 'imc') &&
+    user?.id !== incident.reporter_id &&
     incident.status !== 'resolved' && incident.status !== 'withdrawn' && !incident.priority_escalated_by;
 
   const canRemindHod = (user?.role === 'head_management' || user?.role === 'imc') &&
+    user?.id !== incident.reporter_id &&
     incident.status !== 'resolved' && incident.status !== 'withdrawn' &&
     !feedbacks?.some(fb => fb.role === 'hod');
 
