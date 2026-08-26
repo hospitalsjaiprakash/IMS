@@ -4,13 +4,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, FileText, Bell, Settings, LogOut,
   Users, BarChart3, ClipboardList,
-  ChevronRight, Menu, X, Shield, Search, Paperclip, Send
+  ChevronRight, Menu, X, Shield, Search, Paperclip, Send, Megaphone
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
-import { notificationsApi, authApi } from '../../api';
+import { notificationsApi, authApi, attachmentsApi } from '../../api';
 import { useQuery } from '@tanstack/react-query';
 import { timeAgo } from '../../utils/helpers';
-import { Spinner } from '../ui';
+import { Spinner, AttachmentViewerModal } from '../ui';
 import CommitteeLoginModal from '../auth/CommitteeLoginModal';
 import logoImg from '../../assets/logo.webp';
 
@@ -42,6 +42,7 @@ const getNavItems = (role) => {
   if (role === 'system_admin') {
     base.push(
       { to: '/admin/users', icon: Users, label: 'Users & Roles' },
+      { to: '/admin/communications', icon: Megaphone, label: 'Communications' },
       { to: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
       { to: '/admin/audit', icon: Shield, label: 'Audit Logs' },
       { to: '/admin/attachments', icon: Paperclip, label: 'Attachments' },
@@ -56,6 +57,8 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerFile, setViewerFile] = useState(null);
   const notifRef = useRef(null);
 
 
@@ -309,15 +312,43 @@ export default function AppLayout() {
                   ) : notifData.notifications.map((n) => (
                     <div
                       key={n.id}
-                      onClick={() => { markRead(n.id); if (n.incident_id) navigate(`/incidents/${n.incident_id}`); setNotifOpen(false); }}
+                      onClick={async () => {
+                        markRead(n.id);
+                        if (n.incident_id) {
+                          navigate(`/incidents/${n.incident_id}`);
+                        } else if (n.attachment_url) {
+                          if (n.attachment_url.startsWith('http')) {
+                            setViewerFile({ url: n.attachment_url, name: n.attachment_name });
+                            setViewerOpen(true);
+                          } else {
+                            try {
+                              const res = await attachmentsApi.getBroadcastDownloadUrl(n.attachment_url);
+                              if (res.data?.url) {
+                                setViewerFile({ url: res.data.url, name: n.attachment_name });
+                                setViewerOpen(true);
+                              }
+                            } catch (e) {
+                              console.error('Failed to get download link:', e);
+                            }
+                          }
+                        }
+                        setNotifOpen(false);
+                      }}
                       className={`px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${!n.is_read ? 'bg-blue-50/40' : ''}`}
                     >
                       <div className="flex items-start gap-2">
                         {!n.is_read && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />}
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-slate-800 leading-snug">{n.title}</p>
                           <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{n.message}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">{timeAgo(n.created_at)}</p>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-[10px] text-slate-400">{timeAgo(n.created_at)}</p>
+                            {n.attachment_url && (
+                              <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                <Paperclip size={10} /> Attachment
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -356,6 +387,13 @@ export default function AppLayout() {
         open={adminModalOpen}
         onClose={() => setAdminModalOpen(false)}
         targetRole={adminTargetRole}
+      />
+
+      <AttachmentViewerModal
+        open={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+        fileUrl={viewerFile?.url}
+        fileName={viewerFile?.name}
       />
     </div>
   );

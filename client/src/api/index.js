@@ -150,11 +150,13 @@ export const adminApi = {
   getSystemAdmins: () => api.get('/admin/system-admins'),
   toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
   getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
+  broadcastNotification: (data) => api.post('/admin/broadcast-notification', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
 };
 
 // ── Attachment Download (presigned) ────────────────
 export const attachmentsApi = {
   getDownloadUrl: (id) => api.get(`/attachments/${id}/download`),
+  getBroadcastDownloadUrl: (key) => api.get('/admin/broadcast-attachments/download', { params: { key } }),
 };
 
 // ── Employee Search ─────────────────────────────────

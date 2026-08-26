@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Pool } = require('pg');
+const fs = require('fs');
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -10,20 +11,18 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-async function check() {
+async function migrate() {
   try {
-    const res = await pool.query(`
-      SELECT d.name
-      FROM incident_departments id
-      JOIN departments d ON id.department_id = d.id
-      WHERE id.incident_id = '36ce6462-f9aa-4c8b-9015-f971b060abfe'
+    console.log("Running migration...");
+    await pool.query(`
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS attachment_url VARCHAR(255);
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(255);
     `);
-    console.log("Departments:");
-    console.log(res.rows);
+    console.log("Migration successful!");
   } catch(e) {
     console.error(e);
   } finally {
     pool.end();
   }
 }
-check();
+migrate();

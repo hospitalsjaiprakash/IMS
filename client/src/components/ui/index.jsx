@@ -21,11 +21,11 @@ export function SkeletonCard() {
 // Props: options: string[], value: string[], onChange: (string[]) => void
 //        placeholder, label, error
 export function SearchableMultiSelect({ options = [], value = [], onChange, placeholder = 'Select…', error }) {
-  const [open, setOpen]       = useState(false);
-  const [query, setQuery]     = useState('');
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
-  const ref                   = useRef(null);
-  const triggerRef            = useRef(null);
+  const ref = useRef(null);
+  const triggerRef = useRef(null);
 
   // close on outside click
   useEffect(() => {
@@ -62,7 +62,7 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
 
   const toggle = (opt) => {
     if (value.includes(opt)) onChange(value.filter(v => v !== opt));
-    else                     onChange([...value, opt]);
+    else onChange([...value, opt]);
   };
 
   const remove = (opt, e) => { e.stopPropagation(); onChange(value.filter(v => v !== opt)); };
@@ -74,9 +74,8 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
         ref={triggerRef}
         type="button"
         onClick={handleOpen}
-        className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2 text-sm text-left flex flex-wrap items-center gap-1.5 focus:outline-none focus:ring-2 transition-colors duration-150 ${
-          error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
-        }`}
+        className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2 text-sm text-left flex flex-wrap items-center gap-1.5 focus:outline-none focus:ring-2 transition-colors duration-150 ${error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
+          }`}
       >
         {value.length === 0 ? (
           <span className="text-slate-400 flex-1">{placeholder}</span>
@@ -93,7 +92,7 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
 
       {/* Dropdown */}
       {open && (
-        <div 
+        <div
           style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
           className="bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden"
         >
@@ -121,13 +120,11 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
                   key={opt}
                   type="button"
                   onClick={() => toggle(opt)}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${
-                    selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'
-                  }`}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'
+                    }`}
                 >
-                  <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border ${
-                    selected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
-                  }`}>
+                  <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border ${selected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                    }`}>
                     {selected && <Check size={10} className="text-white" />}
                   </div>
                   {opt}
@@ -152,11 +149,11 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
 // Props: options: string[], value: string, onChange: (string) => void
 //        placeholder, error
 export function SearchableSelect({ options = [], value = '', onChange, placeholder = 'Select…', error }) {
-  const [open, setOpen]       = useState(false);
-  const [query, setQuery]     = useState('');
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
-  const ref                   = useRef(null);
-  const triggerRef            = useRef(null);
+  const ref = useRef(null);
+  const triggerRef = useRef(null);
 
   useEffect(() => {
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -197,9 +194,8 @@ export function SearchableSelect({ options = [], value = '', onChange, placehold
         ref={triggerRef}
         type="button"
         onClick={handleOpen}
-        className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2.5 text-sm text-left flex items-center focus:outline-none focus:ring-2 transition-colors duration-150 ${
-          error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
-        }`}
+        className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2.5 text-sm text-left flex items-center focus:outline-none focus:ring-2 transition-colors duration-150 ${error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
+          }`}
       >
         <span className={`flex-1 truncate ${value ? 'text-slate-800' : 'text-slate-400'}`}>
           {value || placeholder}
@@ -238,13 +234,11 @@ export function SearchableSelect({ options = [], value = '', onChange, placehold
                 key={opt}
                 type="button"
                 onClick={() => select(opt)}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${
-                  value === opt ? 'bg-green-50 text-green-700 font-medium' : 'hover:bg-slate-50 text-slate-700'
-                }`}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${value === opt ? 'bg-green-50 text-green-700 font-medium' : 'hover:bg-slate-50 text-slate-700'
+                  }`}
               >
-                <div className={`w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center border ${
-                  value === opt ? 'bg-green-600 border-green-600' : 'border-slate-300'
-                }`}>
+                <div className={`w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center border ${value === opt ? 'bg-green-600 border-green-600' : 'border-slate-300'
+                  }`}>
                   {value === opt && <Check size={9} className="text-white" />}
                 </div>
                 {opt}
@@ -297,10 +291,10 @@ export function LoadingScreen() {
 // ── Alert ─────────────────────────────────────────
 export function Alert({ type = 'info', title, message, className = '' }) {
   const cfg = {
-    info:    { bg: 'bg-blue-50 border-blue-200', icon: Info, iconCls: 'text-blue-600' },
+    info: { bg: 'bg-blue-50 border-blue-200', icon: Info, iconCls: 'text-blue-600' },
     success: { bg: 'bg-green-50 border-green-200', icon: CheckCircle, iconCls: 'text-green-700' },
     warning: { bg: 'bg-amber-50 border-yellow-200', icon: AlertTriangle, iconCls: 'text-amber-700' },
-    error:   { bg: 'bg-red-50 border-red-200', icon: AlertCircle, iconCls: 'text-red-700' },
+    error: { bg: 'bg-red-50 border-red-200', icon: AlertCircle, iconCls: 'text-red-700' },
   };
   const { bg, icon: Icon, iconCls } = cfg[type] || cfg.info;
   return (
@@ -418,18 +412,16 @@ export function Tabs({ tabs, active, onChange }) {
         <button
           key={tab.id}
           onClick={() => onChange(tab.id)}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
-            active === tab.id
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${active === tab.id
               ? 'border-blue-600 text-blue-700'
               : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
+            }`}
         >
           {tab.icon && <tab.icon size={15} />}
           {tab.label}
           {tab.count !== undefined && (
-            <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${
-              active === tab.id ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
-            }`}>{tab.count}</span>
+            <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${active === tab.id ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+              }`}>{tab.count}</span>
           )}
         </button>
       ))}
@@ -459,11 +451,10 @@ export function SLABadge({ createdAt, status, className = '' }) {
   const info = getSLABadgeInfo(createdAt, status);
   if (!info) return null;
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-      info.isOverdue 
-        ? 'bg-red-50 text-red-700 border-red-200' 
+    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${info.isOverdue
+        ? 'bg-red-50 text-red-700 border-red-200'
         : 'bg-amber-50 text-amber-700 border-amber-200'
-    } ${className}`}>
+      } ${className}`}>
       <Clock size={10} />
       {info.text}
     </span>
@@ -541,3 +532,4 @@ export function SkeletonDetail() {
 
 export * from './KanbanBoard';
 export * from './InsightSummary';
+export * from './AttachmentViewerModal';

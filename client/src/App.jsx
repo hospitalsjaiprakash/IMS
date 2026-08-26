@@ -25,6 +25,7 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminAuditPage from './pages/admin/AdminAuditPage';
 import AdminAttachmentsPage from './pages/admin/AdminAttachmentsPage';
+import AdminCommunicationsPage from './pages/admin/AdminCommunicationsPage';
 import CategoryDetailPage from './pages/dashboard/CategoryDetailPage';
 import NotificationsPage from './pages/dashboard/NotificationsPage';
 import EmployeeDirectory from './pages/employees/EmployeeDirectory';
@@ -116,6 +117,7 @@ export default function App() {
               <Route path="admin/analytics" element={<ProtectedRoute roles={['system_admin','head_management']}><AdminAnalyticsPage /></ProtectedRoute>} />
               <Route path="admin/users" element={<ProtectedRoute roles={['system_admin']}><AdminUsersPage /></ProtectedRoute>} />
               <Route path="admin/attachments" element={<ProtectedRoute roles={['system_admin']}><AdminAttachmentsPage /></ProtectedRoute>} />
+              <Route path="admin/communications" element={<ProtectedRoute roles={['system_admin']}><AdminCommunicationsPage /></ProtectedRoute>} />
               <Route path="admin/settings" element={<ProtectedRoute roles={['system_admin']}><AdminSettingsPage /></ProtectedRoute>} />
               <Route path="admin/audit" element={<ProtectedRoute roles={['system_admin']}><AdminAuditPage /></ProtectedRoute>} />
               <Route path="*" element={<div className="flex flex-col items-center justify-center h-64 text-center"><p className="text-4xl font-bold text-slate-200 font-display mb-3">404</p><p className="text-slate-500 mb-4">Page not found</p><a href="/dashboard" className="btn-primary">Go to Dashboard</a></div>} />

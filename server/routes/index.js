@@ -342,6 +342,8 @@ router.post('/knowledge-base', authenticate, authorize('imc'), async (req, res) 
 });
 
 // ─── ADMIN ────────────────────────────────────────
+router.post('/admin/broadcast-notification', authenticate, authorize('system_admin'), (req, _, next) => { req._uploadStage = 'broadcast'; next(); }, upload.single('attachment'), adminController.broadcastNotification);
+router.get('/admin/broadcast-attachments/download', authenticate, adminController.downloadBroadcastAttachment);
 router.get('/admin/attachments', authenticate, authorize('system_admin'), adminController.getAllAttachments);
 router.get('/admin/dashboard', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
 router.get('/admin/config', authenticate, authorize('system_admin'), adminController.getSystemConfig);

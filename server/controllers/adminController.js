@@ -716,3 +716,104 @@ exports.getCommunicationLogs = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch communication logs' });
   }
 };
+
+exports.broadcastNotification = async (req, res) => {
+  try {
+    const { title, message } = req.body;
+    if (!title || !message) {
+      return res.status(400).json({ error: 'Title and message are required.' });
+    }
+
+    let attachmentUrl = null;
+    let attachmentName = null;
+
+    if (req.file) {
+      attachmentUrl = req.file.key || req.file.filename;
+      attachmentName = req.file.originalname;
+    }
+
+    const result = await query(
+      `INSERT INTO notifications (user_id, title, message, type, attachment_url, attachment_name)
+       SELECT id, $1, $2, 'broadcast', $3, $4 FROM users WHERE is_active = TRUE`,
+      [title, message, attachmentUrl, attachmentName]
+    );
+
+    // Also log to communication_logs so it shows up in past broadcasts
+    await query(
+      `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, content, status, details)
+       VALUES ($1, 'All Active Users', 'BROADCAST', $2, $3, 'SENT', $4)`,
+      [
+        req.user.id,
+        title,
+        message,
+        JSON.stringify({ attachmentName, attachmentUrl, count: result.rowCount })
+      ]
+    );
+
+    try {
+      const { io } = require('../index');
+      if (io) {
+        io.emit('new_notification', {
+          title,
+          message,
+          type: 'broadcast',
+          attachment_url: attachmentUrl,
+          attachment_name: attachmentName,
+          created_at: new Date()
+        });
+      }
+    } catch (socketErr) {
+      console.warn('[Socket] Failed to emit broadcast notification:', socketErr.message);
+    }
+
+    await auditLog(req.user.id, 'BROADCAST_NOTIFICATION_SENT', null, {
+      title, attachmentName, count: result.rowCount
+    }, req.ip);
+
+    res.json({ success: true, count: result.rowCount });
+  } catch (error) {
+    console.error('Error broadcasting notification:', error);
+    res.status(500).json({ error: 'Failed to broadcast notification.' });
+  }
+};
+
+exports.downloadBroadcastAttachment = async (req, res) => {
+  try {
+    const { key } = req.query;
+    if (!key) return res.status(400).json({ error: 'Key is required' });
+
+    const { s3Client } = require('../config/s3');
+    if (s3Client && process.env.S3_BUCKET_NAME) {
+      const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+      const { GetObjectCommand } = require('@aws-sdk/client-s3');
+      const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: key,
+        ResponseContentDisposition: `attachment`,
+      }), { expiresIn: 60 });
+      return res.json({ url: signedUrl });
+    } else {
+      const path = require('path');
+      const fs = require('fs');
+      const uploadDir = path.resolve(process.env.UPLOAD_DIR || 'uploads');
+      const filePath = path.resolve(uploadDir, key);
+      
+      // If the file starts with "pending/broadcast/", that means S3 key logic was used but stored locally? 
+      // Actually, if local, it doesn't have "pending/broadcast/". It just has filename. 
+      // We will try to resolve exactly what was passed.
+      if (!fs.existsSync(filePath)) {
+        // sometimes if it's local, the key is just the filename, not in a folder
+        const fallbackPath = path.resolve(uploadDir, path.basename(key));
+        if (fs.existsSync(fallbackPath)) {
+          return res.json({ url: `/uploads/${path.basename(key)}` });
+        }
+        return res.status(404).json({ error: 'File not found on disk' });
+      }
+      return res.json({ url: `/uploads/${key}` });
+    }
+  } catch (error) {
+    console.error('Failed to get broadcast attachment url:', error);
+    res.status(500).json({ error: 'Failed to generate download link' });
+  }
+};
+
