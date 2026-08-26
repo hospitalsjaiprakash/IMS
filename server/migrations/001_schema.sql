@@ -298,6 +298,12 @@ CREATE TABLE IF NOT EXISTS system_config (
 
 INSERT INTO system_config (key, value) VALUES
   ('sla_days', '7'),
+  ('hod_feedback_days', '7'),
+  ('imc_feedback_days', '7'),
+  ('mgmt_feedback_days', '7'),
+  ('auto_reminder_days', '2'),
+  ('otp_validity_minutes', '10'),
+  ('maintenance_mode', 'false'),
   ('claim_lock_minutes', '30'),
   ('parallel_grave_review', 'true'),
   ('data_retention_years', '5'),

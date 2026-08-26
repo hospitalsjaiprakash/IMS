@@ -1,0 +1,362 @@
+import React from 'react';
+import { Download, FileText, AlertCircle } from 'lucide-react';
+import { Modal, Spinner, Alert } from '../../../components/ui';
+import { UPLOADS_URL } from '../../../api';
+import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../../utils/helpers';
+import FileUploadArea from '../FileUploadArea';
+
+export function WithdrawModal({ show, onClose, withdrawReason, setWithdrawReason, mutate, isPending }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Withdraw Incident" size="sm"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={mutate} disabled={!withdrawReason.trim() || isPending} className="btn-primary bg-red-600 hover:bg-red-700 border-red-600">
+          {isPending && <Spinner size={15} className="text-white" />} Withdraw
+        </button>
+      </>}
+    >
+      <div>
+        <label className="field-label field-required">Reason for withdrawal</label>
+        <textarea
+          value={withdrawReason}
+          onChange={e => setWithdrawReason(e.target.value)}
+          className="textarea"
+          rows={3}
+          placeholder="Please explain why you want to withdraw this incident..."
+        />
+      </div>
+    </Modal>
+  );
+}
+
+export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText, hodAcknowledged, setHodAcknowledged, hodAttachments, setHodAttachments, mutate, isPending, canHodFeedback }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Submit Feedback" size="lg"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        {canHodFeedback && (
+          <button
+            onClick={mutate}
+            disabled={!feedbackText.trim() || !hodAcknowledged || isPending}
+            className="btn-primary"
+          >
+            {isPending && <Spinner size={15} className="text-white" />} Submit Feedback
+          </button>
+        )}
+      </>}
+    >
+      {canHodFeedback && (
+        <div className="mb-4 p-4 rounded-xl border border-amber-200 bg-amber-50">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hodAcknowledged}
+              onChange={e => setHodAcknowledged(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-blue-600"
+            />
+            <span className="text-sm text-slate-700">
+              I acknowledge that I have reviewed the incident details and am providing feedback as Head of Department.
+            </span>
+          </label>
+        </div>
+      )}
+      <label className="field-label field-required">Feedback</label>
+      <textarea
+        value={feedbackText}
+        onChange={e => setFeedbackText(e.target.value)}
+        className="textarea"
+        rows={5}
+        placeholder="Provide your detailed review and recommendations…"
+      />
+      <FileUploadArea files={hodAttachments} setFiles={setHodAttachments} />
+    </Modal>
+  );
+}
+
+export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFaultType, mdActions, setMdActions, mdRequireTraining, setMdRequireTraining, mdAttachments, setMdAttachments, mutate, isPending }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Final Decision & Close Incident" size="lg"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={mutate} disabled={!mdFaultType || !mdActions.trim() || isPending} className="btn-primary">
+          {isPending && <Spinner size={15} className="text-white" />} Close & Generate Report
+        </button>
+      </>}
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="field-label field-required">Fault Type</label>
+          <input value={mdFaultType} onChange={e => setMdFaultType(e.target.value)} className="input" placeholder="e.g. System Failure, Human Error, Process Gap…" />
+        </div>
+        <div>
+          <label className="field-label field-required">Corrective Actions</label>
+          <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe the corrective actions taken or recommended…" />
+        </div>
+        <div className="pt-2 border-t border-slate-100">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={mdRequireTraining}
+              onChange={e => setMdRequireTraining(e.target.checked)}
+              className="w-4 h-4 accent-blue-600 rounded"
+            />
+            <span className="text-sm font-semibold text-slate-800">
+              Mandatory Training Required for Responsible Employee
+            </span>
+          </label>
+          <p className="text-xs text-slate-500 mt-1 pl-7">
+            If checked, this employee will be flagged for mandatory training, and the IMC authority will be assigned to verify training completion.
+          </p>
+        </div>
+        <FileUploadArea files={mdAttachments} setFiles={setMdAttachments} />
+      </div>
+    </Modal>
+  );
+}
+
+export function ReopenModal({ show, onClose, reopenReason, setReopenReason, mutate, isPending }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Re-open Incident"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={mutate} disabled={!reopenReason.trim() || isPending} className="btn-primary">
+          Re-open
+        </button>
+      </>}
+    >
+      <Alert type="info" message="Re-opening will return this incident to IMC feedback. This action is logged." className="mb-4" />
+      <label className="field-label field-required">Reason for re-opening</label>
+      <textarea value={reopenReason} onChange={e => setReopenReason(e.target.value)} className="textarea" rows={3} placeholder="Why is this incident being re-opened?" />
+    </Modal>
+  );
+}
+
+export function RedirectIncidentModal({ show, onClose, redirectReason, setRedirectReason, mutate, isPending }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Request Redirection to IMC"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button
+          onClick={mutate}
+          disabled={!redirectReason.trim() || isPending}
+          className="btn-danger bg-orange-600 hover:bg-orange-700 border-orange-600 focus:ring-orange-500"
+        >
+          {isPending && <Spinner size={15} className="text-white" />} Request Redirection
+        </button>
+      </>}
+    >
+      <Alert type="warning" message="This action will flag this incident as misrouted. The Incident Management Committee (IMC) will review your request and route it to the correct department HOD." className="mb-4" />
+      <label className="field-label field-required">Reason for redirection request</label>
+      <textarea
+        value={redirectReason}
+        onChange={e => setRedirectReason(e.target.value)}
+        className="textarea"
+        rows={4}
+        placeholder="Please explain why this incident is not for your department, and suggest the correct department if possible…"
+      />
+    </Modal>
+  );
+}
+
+export function RejectRedirectModal({ show, onClose, rejectRedirectReason, setRejectRedirectReason, mutate, isPending }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Reject Redirection Request"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button
+          onClick={mutate}
+          disabled={!rejectRedirectReason.trim() || isPending}
+          className="btn-danger focus:ring-red-500"
+        >
+          {isPending && <Spinner size={15} className="text-white" />} Reject Request
+        </button>
+      </>}
+    >
+      <Alert type="warning" message="This will return the incident to the original department HOD for action." className="mb-4" />
+      <label className="field-label field-required">Reason for Rejection</label>
+      <textarea
+        value={rejectRedirectReason}
+        onChange={e => setRejectRedirectReason(e.target.value)}
+        className="textarea"
+        rows={4}
+        placeholder="Please explain why the redirection request is denied..."
+      />
+    </Modal>
+  );
+}
+
+export function EditFeedbackModal({ editFbModal, onClose, editFbText, setEditFbText, mutate, isPending }) {
+  return (
+    <Modal
+      open={!!editFbModal}
+      onClose={onClose}
+      title={editFbModal ? `Edit ${editFbModal.feedbackType.replace('head_management', 'Management').replace('hod', 'HOD').replace('imc', 'IMC').toUpperCase()} Feedback` : ''}
+      size="md"
+      footer={
+        <>
+          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button
+            disabled={isPending || !editFbText.trim()}
+            onClick={() => mutate({ feedbackType: editFbModal.feedbackType, feedbackText: editFbText })}
+            className="btn-primary disabled:opacity-60"
+          >
+            {isPending ? 'Saving…' : 'Save Changes'}
+          </button>
+        </>
+      }
+    >
+      {editFbModal && (
+        <div className="space-y-4 pt-1">
+          <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-xl border border-amber-200">
+            <AlertCircle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-slate-700">
+              You are editing your own <strong>{editFbModal.feedbackType.replace('head_management', 'Management').replace('hod', 'HOD').replace('imc', 'IMC')}</strong> feedback.
+              This change will be recorded in the audit trail.
+            </p>
+          </div>
+          <div>
+            <label className="field-label field-required">Corrected Feedback</label>
+            <textarea
+              rows={5}
+              value={editFbText}
+              onChange={e => setEditFbText(e.target.value)}
+              className="textarea"
+              placeholder="Update your feedback…"
+            />
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, isPending }) {
+  return (
+    <Modal
+      open={show}
+      onClose={onClose}
+      title="Edit Incident"
+      size="lg"
+      footer={
+        <>
+          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button
+            disabled={isPending || !editInc.description?.trim()}
+            onClick={() => mutate(editInc)}
+            className="btn-primary disabled:opacity-60"
+          >
+            {isPending ? 'Saving…' : 'Save Changes'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4 pt-1">
+        <Alert type="info" message="You can edit this incident only while it hasn't been reviewed by your HOD yet." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="field-label field-required">Incident Date</label>
+            <input
+              type="date"
+              value={editInc.incidentDate || ''}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={e => setEditInc(p => ({ ...p, incidentDate: e.target.value }))}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="field-label field-required">Incident Time</label>
+            <input
+              type="time"
+              value={editInc.incidentTime || ''}
+              onChange={e => setEditInc(p => ({ ...p, incidentTime: e.target.value }))}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="field-label field-required">Occurred To</label>
+            <select
+              value={editInc.occurredTo || ''}
+              onChange={e => setEditInc(p => ({ ...p, occurredTo: e.target.value }))}
+              className="select"
+            >
+              <option value="">Select…</option>
+              {OCCURRED_TO_OPTIONS.map(o => <option key={o}>{o}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="field-label field-required">Severity</label>
+            <select
+              value={editInc.severity || ''}
+              onChange={e => setEditInc(p => ({ ...p, severity: e.target.value }))}
+              className="select"
+            >
+              <option value="">Select…</option>
+              {SEVERITY_OPTIONS.map(o => <option key={o}>{o}</option>)}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="field-label field-required">
+            Description
+            <span className="text-slate-400 font-normal ml-1">({(editInc.description || '').length}/2000)</span>
+          </label>
+          <textarea
+            rows={5}
+            value={editInc.description || ''}
+            onChange={e => setEditInc(p => ({ ...p, description: e.target.value }))}
+            maxLength={2000}
+            className="textarea"
+            placeholder="Update the incident description…"
+          />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+export function FilePreviewModal({ previewFile, onClose }) {
+  return (
+    <Modal
+      open={!!previewFile}
+      onClose={onClose}
+      title={previewFile?.original_filename || 'File Preview'}
+      size="full"
+      footer={
+        <div className="flex justify-between w-full">
+          {previewFile ? (
+            <a
+              href={`${UPLOADS_URL}/${previewFile.stored_filename}`}
+              download={previewFile.original_filename}
+              className="btn-primary flex items-center gap-2"
+            >
+              <Download size={16} /> Download
+            </a>
+          ) : <div />}
+          <button onClick={onClose} className="btn-secondary">Close</button>
+        </div>
+      }
+    >
+      {previewFile && (
+        <div className="flex justify-center bg-slate-900 rounded-xl overflow-hidden" style={{ minHeight: '50vh', maxHeight: '80vh' }}>
+          {previewFile.mime_type?.startsWith('image/') || previewFile.original_filename?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+            <img src={`${UPLOADS_URL}/${previewFile.stored_filename}`} alt="Preview" className="w-full h-full object-contain" />
+          ) : previewFile.mime_type === 'application/pdf' || previewFile.original_filename?.endsWith('.pdf') ? (
+            <iframe src={`${UPLOADS_URL}/${previewFile.stored_filename}`} className="w-full h-[80vh]" title="PDF Preview" />
+          ) : (
+            <div className="p-8 text-center bg-white w-full flex flex-col items-center justify-center">
+              <FileText size={48} className="mx-auto text-slate-300 mb-3" />
+              <p className="text-slate-600 font-medium mb-2">Preview not available</p>
+              <a
+                href={`${UPLOADS_URL}/${previewFile.stored_filename}`}
+                download={previewFile.original_filename}
+                className="btn-primary inline-flex mt-2"
+              >
+                Download
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}

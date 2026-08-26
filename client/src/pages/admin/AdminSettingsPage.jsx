@@ -6,33 +6,49 @@ import { Settings, Save, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CONFIG_FIELDS = [
+
   {
-    key: 'sla_days',
-    label: 'SLA Resolution Days',
-    description: 'Number of days before an incident is flagged as overdue.',
+    key: 'hod_feedback_days',
+    label: 'HOD Feedback Time Limit (Days)',
+    description: 'Maximum days allowed for HOD to provide feedback after an incident is reported.',
     type: 'number',
     min: 1, max: 30,
   },
   {
-    key: 'parallel_grave_review',
-    label: 'Parallel HOD+IMC Feedback for Grave Incidents',
-    description: 'When enabled, Grave severity incidents skip straight to simultaneous HOD and IMC feedback.',
+    key: 'imc_feedback_days',
+    label: 'IMC Feedback Time Limit (Days)',
+    description: 'Maximum days allowed for IMC to provide feedback after HOD feedback on that incident.',
+    type: 'number',
+    min: 1, max: 30,
+  },
+  {
+    key: 'mgmt_feedback_days',
+    label: 'Management Feedback Time Limit (Days)',
+    description: 'Maximum days allowed for Management to provide feedback after IMC provides feedback.',
+    type: 'number',
+    min: 1, max: 30,
+  },
+  {
+    key: 'auto_reminder_days',
+    label: 'Auto-Reminder Frequency (Days)',
+    description: 'How often the system sends automated reminders for pending feedback.',
+    type: 'number',
+    min: 1, max: 14,
+  },
+  {
+    key: 'otp_validity_minutes',
+    label: 'OTP Validity Duration (Minutes)',
+    description: 'How long an OTP is valid for login or role actions.',
+    type: 'number',
+    min: 1, max: 60,
+  },
+  {
+    key: 'maintenance_mode',
+    label: 'Maintenance Mode',
+    description: 'When enabled, users cannot report new incidents (System under maintenance).',
     type: 'boolean',
   },
-  {
-    key: 'data_retention_years',
-    label: 'Data Retention (years)',
-    description: 'How long resolved incident data is kept before archiving.',
-    type: 'number',
-    min: 1, max: 10,
-  },
-  {
-    key: 'withdrawn_retention_years',
-    label: 'Withdrawn Incident Retention (years)',
-    description: 'How long withdrawn incidents are kept before purging.',
-    type: 'number',
-    min: 1, max: 5,
-  },
+
 ];
 
 export default function AdminSettingsPage() {
@@ -143,15 +159,7 @@ export default function AdminSettingsPage() {
         ))}
       </div>
 
-      <div className="card p-5 bg-slate-50">
-        <h3 className="text-sm font-semibold text-slate-700 mb-3">Configuration Notes</h3>
-        <ul className="space-y-1.5 text-xs text-slate-500 list-disc list-inside">
-          <li>All configuration changes are logged in the audit trail with the administrator's name.</li>
-          <li>SLA settings take effect immediately for existing active incidents.</li>
-          <li>Data retention settings apply to the nightly archival job.</li>
-          <li>Contact your system administrator before changing critical settings.</li>
-        </ul>
-      </div>
+
     </div>
   );
 }

@@ -84,7 +84,8 @@ const welcomeEmailTemplate = (user) => ({
 // =============================================
 exports.register = async (req, res) => {
   try {
-    const { fullName, employeeId, whatsapp, email, password } = req.body;
+    let { fullName, employeeId, whatsapp, email, password } = req.body;
+    if (employeeId) employeeId = employeeId.trim().toUpperCase();
 
     // Basic validation
     if (!fullName?.trim() || !employeeId?.trim() || !email?.trim() || !password) {
@@ -265,7 +266,8 @@ exports.register = async (req, res) => {
 // =============================================
 exports.login = async (req, res) => {
   try {
-    const { employeeId, password } = req.body;
+    let { employeeId, password } = req.body;
+    if (employeeId) employeeId = employeeId.trim().toUpperCase();
 
     if (!employeeId?.trim() || !password) {
       return res.status(400).json({ error: 'Employee ID and password are required.' });
@@ -710,7 +712,8 @@ exports.resetPassword = async (req, res) => {
 // =============================================
 exports.requestEmployeePasswordReset = async (req, res) => {
   try {
-    const { employeeId, email } = req.body;
+    let { employeeId, email } = req.body;
+    if (employeeId) employeeId = employeeId.trim().toUpperCase();
     if (!employeeId || !email) {
       return res.status(400).json({ error: 'Employee ID and Email address are required.' });
     }
@@ -745,7 +748,8 @@ exports.requestChangePasswordOtp = async (req, res) => {
 
 exports.resetEmployeePassword = async (req, res) => {
   try {
-    const { employeeId, otp, newPassword } = req.body;
+    let { employeeId, otp, newPassword } = req.body;
+    if (employeeId) employeeId = employeeId.trim().toUpperCase();
     if (!employeeId || !otp || !newPassword) {
       return res.status(400).json({ error: 'All fields are required.' });
     }
