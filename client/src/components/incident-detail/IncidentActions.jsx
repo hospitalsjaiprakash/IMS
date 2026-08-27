@@ -29,7 +29,7 @@ export default function IncidentActions({
   }
 
   return (
-    <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-200 print:hidden">
+    <div className="flex flex-wrap items-center gap-2 print:hidden">
       {isEmployeeReporter && (
         <button onClick={() => openEditIncident(incident)} className="btn-secondary btn-sm">
           <Pencil size={14} /> Edit Incident

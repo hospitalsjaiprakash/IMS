@@ -237,23 +237,23 @@ export default function IncidentDetailPage() {
 
   return (
     <>
-      <div className="mb-2 print:hidden">
+      <div className="mb-4 print:hidden flex flex-col gap-2">
         <Breadcrumbs items={[
           { label: 'Incidents', to: '/incidents' },
           { label: incident?.reference_id || 'Detail' }
         ]} />
+        <div>
+          <button onClick={() => navigate('/incidents')} className="btn-ghost text-slate-500 -ml-1 print:hidden">
+            <ArrowLeft size={16} />
+            Back to Incidents
+          </button>
+        </div>
       </div>
 
-      <IncidentHeader incident={incident} />
-
-      {/* --- NORMAL UI --- */}
-      <div className="w-full space-y-5 print:hidden">
-        <button onClick={() => navigate('/incidents')} className="btn-ghost text-slate-500 -ml-1 print:hidden">
-          <ArrowLeft size={16} />
-          Back to Incidents
-        </button>
-
-        <div className="card p-5">
+      <IncidentHeader 
+        incident={incident} 
+        user={user}
+        actions={
           <IncidentActions
             incident={incident}
             user={user}
@@ -274,7 +274,12 @@ export default function IncidentDetailPage() {
             escalateMutation={escalateMutation}
             remindHodMutation={remindHodMutation}
           />
-        </div>
+        }
+      />
+
+      {/* --- NORMAL UI --- */}
+      <div className="w-full space-y-5 print:hidden">
+
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 print:block print:space-y-5">
           <div className="lg:col-span-2 space-y-5 print:block">

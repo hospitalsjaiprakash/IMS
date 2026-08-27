@@ -4,7 +4,7 @@ import { StatusBadge, SeverityBadge, SLABadge } from '../../components/ui';
 import { formatDate } from '../../utils/helpers';
 import logo from '../../assets/logo.webp';
 
-export default function IncidentHeader({ incident }) {
+export default function IncidentHeader({ incident, actions, user }) {
   return (
     <>
       {/* --- PRINT TEMPLATE HEADER --- */}
@@ -54,6 +54,7 @@ export default function IncidentHeader({ incident }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {actions}
             <button onClick={() => window.print()} className="btn-secondary btn-sm print:hidden shadow-sm mr-2 border-slate-200">
               <Download size={14} />
               Generate PDF

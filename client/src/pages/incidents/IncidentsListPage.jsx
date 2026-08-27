@@ -227,10 +227,12 @@ export default function IncidentsListPage() {
               <button onClick={() => setViewStyle('kanban')} className={`p-1.5 rounded-md flex items-center justify-center transition-all ${viewStyle === 'kanban' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`} title="Kanban Board"><Columns size={16} /></button>
             </div>
           )}
-          <button onClick={() => setShowExportModal(true)} className="btn-secondary">
-            <Download size={16} />
-            <span>Export Report</span>
-          </button>
+          {user?.role !== 'employee' && (
+            <button onClick={() => setShowExportModal(true)} className="btn-secondary">
+              <Download size={16} />
+              <span>Export Report</span>
+            </button>
+          )}
           {(user?.role === 'employee' || user?.role === 'hod') && (
             <button onClick={() => navigate('/incidents/new')} className="btn-primary">
               <FilePlus size={16} />
