@@ -77,6 +77,13 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
   const [search, setSearch] = React.useState('');
   const [users, setUsers] = React.useState([]);
   const [loadingUsers, setLoadingUsers] = React.useState(false);
+  const [decision, setDecision] = React.useState('AGREE');
+
+  React.useEffect(() => {
+    if (!show) {
+      setDecision('AGREE');
+    }
+  }, [show]);
 
   // Quick inline search using fetch
   React.useEffect(() => {
@@ -114,80 +121,98 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
   };
 
   return (
-    <Modal open={show} onClose={onClose} title="Final Decision & Close Incident" size="lg"
+    <Modal open={show} onClose={onClose} title="Management Action" size="lg"
       footer={<>
         <button onClick={onClose} className="btn-secondary">Cancel</button>
-        <button onClick={mutate} disabled={!mdFaultType || !mdActions.trim() || isPending} className="btn-primary">
-          {isPending && <Spinner size={15} className="text-white" />} Close & Generate Report
+        <button onClick={() => mutate(decision)} disabled={isPending || (decision !== 'DISAGREE_REINVESTIGATE' && (!mdFaultType || !mdActions.trim()))} className="btn-primary">
+          {isPending && <Spinner size={15} className="text-white" />} Submit Decision
         </button>
       </>}
     >
       <div className="space-y-4">
         <div>
-          <label className="field-label field-required">Fault Type</label>
-          <input value={mdFaultType} onChange={e => setMdFaultType(e.target.value)} className="input" placeholder="e.g. System Failure, Human Error, Process Gap…" />
+          <label className="field-label field-required">Decision</label>
+          <select value={decision} onChange={e => setDecision(e.target.value)} className="input">
+            <option value="AGREE">Approve / Agree with IMC</option>
+            <option value="DISAGREE_MODIFY">Modify Proposed Outcomes</option>
+            <option value="DISAGREE_REINVESTIGATE">Reject & Re-investigate</option>
+          </select>
         </div>
-        <div>
-          <label className="field-label field-required">Corrective Actions</label>
-          <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe the corrective actions taken or recommended…" />
-        </div>
-        
-        <div className="pt-3 border-t border-slate-100">
-          <label className="field-label">Responsible Employees (Optional)</label>
-          <div className="relative mb-3">
-            <input 
-              type="text" 
-              value={search} 
-              onChange={e => setSearch(e.target.value)} 
-              className="input" 
-              placeholder="Search employee by name or ID to assign responsibility..."
-            />
-            {loadingUsers && <Spinner size={14} className="absolute right-3 top-3 text-slate-400" />}
-            {users.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {users.map(u => (
-                  <button
-                    key={u.id}
-                    onClick={() => addEmployee(u)}
-                    className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between"
-                  >
-                    <div>
-                      <div className="text-sm font-medium text-slate-800">{u.full_name}</div>
-                      <div className="text-xs text-slate-500">{u.employee_id} • {u.department}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
-          {mdResponsibleEmployees.length > 0 && (
-            <div className="space-y-2 mt-2">
-              {mdResponsibleEmployees.map(emp => (
-                <div key={emp.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <div>
-                    <div className="text-sm font-medium text-slate-800">{emp.full_name}</div>
-                    <div className="text-xs text-slate-500">{emp.employee_id} • {emp.department}</div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={emp.needs_training} 
-                        onChange={() => toggleTraining(emp.id)}
-                        className="w-4 h-4 accent-amber-600 rounded"
-                      />
-                      <span className="text-sm font-semibold text-amber-700">Needs Training</span>
-                    </label>
-                    <button onClick={() => removeEmployee(emp.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">Remove</button>
-                  </div>
-                </div>
-              ))}
+        {decision === 'DISAGREE_REINVESTIGATE' ? (
+          <div>
+            <label className="field-label field-required">Re-investigation Notes / Reason</label>
+            <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe why this incident needs re-investigation..." />
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="field-label field-required">Fault Type</label>
+              <input value={mdFaultType} onChange={e => setMdFaultType(e.target.value)} className="input" placeholder="e.g. System Failure, Human Error, Process Gap…" />
             </div>
-          )}
-        </div>
-        
-        <FileUploadArea files={mdAttachments} setFiles={setMdAttachments} />
+            <div>
+              <label className="field-label field-required">Corrective Actions / Notes</label>
+              <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe the corrective actions taken or recommended…" />
+            </div>
+            
+            <div className="pt-3 border-t border-slate-100">
+              <label className="field-label">Responsible Employees (Optional)</label>
+              <div className="relative mb-3">
+                <input 
+                  type="text" 
+                  value={search} 
+                  onChange={e => setSearch(e.target.value)} 
+                  className="input" 
+                  placeholder="Search employee by name or ID to assign responsibility..."
+                />
+                {loadingUsers && <Spinner size={14} className="absolute right-3 top-3 text-slate-400" />}
+                {users.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {users.map(u => (
+                      <button
+                        key={u.id}
+                        onClick={() => addEmployee(u)}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-slate-800">{u.full_name}</div>
+                          <div className="text-xs text-slate-500">{u.employee_id} • {u.department}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {mdResponsibleEmployees.length > 0 && (
+                <div className="space-y-2 mt-2">
+                  {mdResponsibleEmployees.map(emp => (
+                    <div key={emp.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                      <div>
+                        <div className="text-sm font-medium text-slate-800">{emp.full_name}</div>
+                        <div className="text-xs text-slate-500">{emp.employee_id} • {emp.department}</div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={emp.needs_training} 
+                            onChange={() => toggleTraining(emp.id)}
+                            className="w-4 h-4 accent-amber-600 rounded"
+                          />
+                          <span className="text-sm font-semibold text-amber-700">Needs Training</span>
+                        </label>
+                        <button onClick={() => removeEmployee(emp.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <FileUploadArea files={mdAttachments} setFiles={setMdAttachments} />
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -195,17 +220,40 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
 
 export function ReopenModal({ show, onClose, reopenReason, setReopenReason, mutate, isPending }) {
   return (
-    <Modal open={show} onClose={onClose} title="Re-open Incident"
+    <Modal open={show} onClose={onClose} title="Reopen Incident"
       footer={<>
         <button onClick={onClose} className="btn-secondary">Cancel</button>
         <button onClick={mutate} disabled={!reopenReason.trim() || isPending} className="btn-primary">
-          Re-open
+          {isPending && <Spinner size={15} className="text-white" />} Confirm Reopen
         </button>
       </>}
     >
-      <Alert type="info" message="Re-opening will return this incident to IMC feedback. This action is logged." className="mb-4" />
-      <label className="field-label field-required">Reason for re-opening</label>
-      <textarea value={reopenReason} onChange={e => setReopenReason(e.target.value)} className="textarea" rows={3} placeholder="Why is this incident being re-opened?" />
+      <div className="space-y-4">
+        <Alert type="warning" message="Reopening this incident will send it back to the IMC queue." />
+        <div>
+          <label className="field-label field-required">Reason for Reopening</label>
+          <textarea value={reopenReason} onChange={e => setReopenReason(e.target.value)} className="textarea" rows={3} placeholder="Provide a reason..." />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+export function ImcReportModal({ show, onClose, attachments, setAttachments, mutate, isPending }) {
+  return (
+    <Modal open={show} onClose={onClose} title="Generate Official IMC Report"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={mutate} disabled={isPending} className="btn-primary">
+          {isPending && <Spinner size={15} className="text-white" />} Generate Report
+        </button>
+      </>}
+    >
+      <div className="space-y-4">
+        <Alert type="info" message="Upload the official IMC report document (PDF recommended) based on the Management's decision." />
+        
+        <FileUploadArea files={attachments} setFiles={setAttachments} />
+      </div>
     </Modal>
   );
 }

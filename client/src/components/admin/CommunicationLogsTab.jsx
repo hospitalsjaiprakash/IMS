@@ -7,7 +7,6 @@ import { Mail, MessageSquare, Bell, Search, AlertCircle, Info } from 'lucide-rea
 
 const TYPE_ICONS = {
   EMAIL: <Mail size={14} className="text-blue-500" />,
-  WHATSAPP: <MessageSquare size={14} className="text-emerald-500" />,
   IN_APP_NOTIFICATION: <Bell size={14} className="text-amber-500" />
 };
 
@@ -57,7 +56,6 @@ export default function CommunicationLogsTab() {
         >
           <option value="">All Types</option>
           <option value="EMAIL">Email</option>
-          <option value="WHATSAPP">WhatsApp</option>
           <option value="IN_APP_NOTIFICATION">In-App Notification</option>
         </select>
         <select

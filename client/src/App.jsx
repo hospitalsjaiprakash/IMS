@@ -17,6 +17,7 @@ import ImcDashboard from './pages/dashboard/ImcDashboard';
 import ManagementDashboard from './pages/dashboard/ManagementDashboard';
 import SystemAdminDashboard from './pages/dashboard/SystemAdminDashboard';
 import AssistantCooDashboard from './pages/dashboard/AssistantCooDashboard';
+import MyTeamPage from './pages/dashboard/MyTeamPage';
 import IncidentsListPage from './pages/incidents/IncidentsListPage';
 import IncidentDetailPage from './pages/incidents/IncidentDetailPage';
 import NewIncidentPage from './pages/incidents/NewIncidentPage';
@@ -94,6 +95,7 @@ export default function App() {
 
               {/* Employee & HOD dashboard */}
               <Route path="dashboard" element={<ProtectedRoute roles={['employee','hod']}><DashboardPage /></ProtectedRoute>} />
+              <Route path="my-team" element={<ProtectedRoute roles={['hod']}><MyTeamPage /></ProtectedRoute>} />
 
               {/* IMC Portal */}
               <Route path="imc/dashboard" element={<ProtectedRoute roles={['imc']}><ImcDashboard /></ProtectedRoute>} />

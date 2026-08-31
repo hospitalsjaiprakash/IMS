@@ -10,7 +10,7 @@ const generateReferenceId = async (client) => {
   );
   
   const seqNumber = result.rows[0].next_seq;
-  const padded = String(seqNumber).padStart(5, '0');
+  const padded = String(seqNumber).padStart(4, '0');
   const referenceId = `JPHRC/IMS/${year}/${padded}`;
   
   return { referenceId, year, seqNumber };

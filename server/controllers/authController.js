@@ -84,7 +84,7 @@ const welcomeEmailTemplate = (user) => ({
 // =============================================
 exports.register = async (req, res) => {
   try {
-    let { fullName, employeeId, whatsapp, email, password } = req.body;
+    let { fullName, employeeId, email, password } = req.body;
     if (employeeId) employeeId = employeeId.trim().toUpperCase();
 
     // Basic validation
@@ -136,13 +136,12 @@ exports.register = async (req, res) => {
         `UPDATE users SET
           password_hash = $1,
           email = COALESCE(NULLIF($2, ''), email),
-          whatsapp = COALESCE(NULLIF($3, ''), whatsapp),
-          full_name = COALESCE(NULLIF($4, ''), full_name),
-          phone = COALESCE(phone, $5),
+          full_name = COALESCE(NULLIF($3, ''), full_name),
+          phone = COALESCE(phone, $4),
           updated_at = NOW()
-         WHERE id = $6
+         WHERE id = $5
          RETURNING *`,
-        [passwordHash, email.trim(), whatsapp?.trim() || null, fullName.trim(), portalPhone, record.id]
+        [passwordHash, email.trim(), fullName.trim(), portalPhone, record.id]
       );
 
       const user = updatedUser.rows[0];
@@ -223,15 +222,14 @@ exports.register = async (req, res) => {
     }
 
     const newUser = await query(
-      `INSERT INTO users (employee_id, full_name, email, phone, whatsapp, department, designation, role, password_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO users (employee_id, full_name, email, phone, department, designation, role, password_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         employeeId.trim(),
         portalData.name || fullName.trim(),
         email.trim(),
         portalData.phone || null,
-        whatsapp?.trim() || portalData.whatsapp || null,
         portalData.department || null,
         portalData.designation || null,
         assignedRole,
@@ -353,7 +351,6 @@ exports.login = async (req, res) => {
         fullName: user.full_name,
         email: user.email,
         phone: user.phone || '',
-        whatsapp: user.whatsapp || '',
         department: user.department,
         designation: user.designation,
         role: activeRole,
@@ -375,8 +372,8 @@ exports.login = async (req, res) => {
 exports.getMe = async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, employee_id, full_name, email, phone, whatsapp, department, designation, role,
-              is_imc_lead, is_imc_member, is_management_member, is_system_admin, whatsapp_notifications
+      `SELECT id, employee_id, full_name, email, phone, department, designation, role,
+              is_imc_lead, is_imc_member, is_management_member, is_system_admin
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -400,15 +397,13 @@ exports.getMe = async (req, res) => {
       fullName: user.full_name,
       email: user.email,
       phone: user.phone || '',
-      whatsapp: user.whatsapp || '',
       department: user.department,
       designation: user.designation,
       role: user.role,
       isImcLead: user.is_imc_lead,
       isImcMember: user.is_imc_member,
       isManagementMember: user.is_management_member,
-      isSystemAdmin: user.is_system_admin,
-      whatsappNotifications: user.whatsapp_notifications
+      isSystemAdmin: user.is_system_admin
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -416,27 +411,11 @@ exports.getMe = async (req, res) => {
 };
 
 // =============================================
-// UPDATE NOTIFICATION PREFS
-// =============================================
-exports.updateNotificationPrefs = async (req, res) => {
-  try {
-    const { whatsappNotifications } = req.body;
-    await query(
-      'UPDATE users SET whatsapp_notifications = $1, updated_at = NOW() WHERE id = $2',
-      [whatsappNotifications, req.user.id]
-    );
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
-// =============================================
-// UPDATE CONTACT INFO (Email, Phone & WhatsApp)
+// UPDATE CONTACT INFO (Email & Phone)
 // =============================================
 exports.updateContactInfo = async (req, res) => {
   try {
-    const { email, whatsapp, phone } = req.body;
+    const { email, phone } = req.body;
 
     // Check if user is allowed (employee or hod or any logged in user)
     if (!['employee', 'hod', 'imc', 'head_management', 'system_admin'].includes(req.user.role)) {
@@ -451,10 +430,10 @@ exports.updateContactInfo = async (req, res) => {
     // Update in DB
     const result = await query(
       `UPDATE users 
-       SET email = $1, whatsapp = $2, phone = COALESCE($3, phone), updated_at = NOW() 
-       WHERE id = $4 
-       RETURNING id, employee_id, full_name, email, phone, whatsapp, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin, whatsapp_notifications`,
-      [email ? email.trim() : null, whatsapp ? whatsapp.trim() : null, phone ? phone.trim() : null, req.user.id]
+       SET email = $1, phone = COALESCE($2, phone), updated_at = NOW() 
+       WHERE id = $3 
+       RETURNING id, employee_id, full_name, email, phone, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin`,
+      [email ? email.trim() : null, phone ? phone.trim() : null, req.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -477,15 +456,13 @@ exports.updateContactInfo = async (req, res) => {
         fullName: updatedUser.full_name,
         email: updatedUser.email || '',
         phone: updatedUser.phone || '',
-        whatsapp: updatedUser.whatsapp || '',
         department: updatedUser.department,
         designation: updatedUser.designation,
         role: updatedUser.role,
         isImcLead: updatedUser.is_imc_lead,
         isImcMember: updatedUser.is_imc_member,
         isManagementMember: updatedUser.is_management_member,
-        isSystemAdmin: updatedUser.is_system_admin,
-        whatsappNotifications: updatedUser.whatsapp_notifications
+        isSystemAdmin: updatedUser.is_system_admin
       }
     });
   } catch (error) {
@@ -549,15 +526,13 @@ exports.committeeLogin = async (req, res) => {
         fullName: user.full_name,
         email: user.email || '',
         phone: user.phone || '',
-        whatsapp: user.whatsapp || '',
         department: user.department,
         designation: user.designation,
         role: targetRole,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
-        isSystemAdmin: user.is_system_admin,
-        whatsappNotifications: user.whatsapp_notifications
+        isSystemAdmin: user.is_system_admin
       }
     });
   } catch (error) {
@@ -629,15 +604,14 @@ exports.switchRole = async (req, res) => {
         fullName: user.full_name,
         email: user.email || '',
         phone: user.phone || '',
-        whatsapp: user.whatsapp || '',
+        
         department: user.department,
         designation: user.designation,
         role: finalTargetRole,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
-        isSystemAdmin: user.is_system_admin,
-        whatsappNotifications: user.whatsapp_notifications
+        isSystemAdmin: user.is_system_admin
       }
     });
   } catch (error) {
@@ -866,15 +840,14 @@ exports.leaveRole = async (req, res) => {
         fullName: updatedUser.full_name,
         email: updatedUser.email || '',
         phone: updatedUser.phone || '',
-        whatsapp: updatedUser.whatsapp || '',
+        
         department: updatedUser.department,
         designation: updatedUser.designation,
         role: updatedUser.role,
         isImcLead: updatedUser.is_imc_lead,
         isImcMember: updatedUser.is_imc_member,
         isManagementMember: updatedUser.is_management_member,
-        isSystemAdmin: updatedUser.is_system_admin,
-        whatsappNotifications: updatedUser.whatsapp_notifications
+        isSystemAdmin: updatedUser.is_system_admin
       }
     });
   } catch (error) {

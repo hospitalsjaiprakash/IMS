@@ -254,7 +254,7 @@ exports.createIncident = async (req, res) => {
 // =============================================
 exports.getIncidents = async (req, res) => {
   try {
-    const { status, severity, incidentCategory, incidentType, dateFrom, dateTo, page = 1, limit = 10, departmentId, reviewStage, viewMode } = req.query;
+    const { status, severity, incidentCategory, incidentType, dateFrom, dateTo, page = 1, limit = 10, departmentId, reviewStage, viewMode, teamMemberId, teamMemberName } = req.query;
     const offset = (page - 1) * limit;
     const { role, id: userId, department } = req.user;
 
@@ -296,6 +296,13 @@ exports.getIncidents = async (req, res) => {
       params.push(userId, userDept);
       paramIdx += 2;
     }
+    
+    if (teamMemberId && teamMemberName) {
+      whereClause += ` AND (i.reporter_id = $${paramIdx} OR i.responsible_person_name ILIKE $${paramIdx+1})`;
+      params.push(teamMemberId, `%${teamMemberName}%`);
+      paramIdx += 2;
+    }
+
     if (status === 'active') {
       whereClause += ` AND i.status NOT IN ('resolved', 'withdrawn')`;
     } else if (status) { whereClause += ` AND i.status = $${paramIdx++}`; params.push(status); }
@@ -765,5 +772,37 @@ exports.getDashboardStats = async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch stats.' });
+  }
+};
+
+// =============================================
+// GET HOD TEAM
+// =============================================
+exports.getHodTeam = async (req, res) => {
+  try {
+    const { id: userId, department } = req.user;
+    
+    let deptName = department;
+    const deptCheck = await query('SELECT name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1', [userId]);
+    if (deptCheck.rows.length > 0) {
+      deptName = deptCheck.rows[0].name;
+    }
+
+    if (!deptName) {
+      return res.status(400).json({ error: 'No department found for this user.' });
+    }
+
+    const result = await query(
+      `SELECT id, employee_id, full_name, email, phone, department, designation, role 
+       FROM users 
+       WHERE LOWER(department) = LOWER($1) AND is_active = true
+       ORDER BY full_name`,
+      [deptName]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('getHodTeam error:', error);
+    res.status(500).json({ error: 'Failed to fetch team members.' });
   }
 };

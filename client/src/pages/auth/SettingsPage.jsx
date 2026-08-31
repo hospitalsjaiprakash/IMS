@@ -10,12 +10,10 @@ import toast from 'react-hot-toast';
 export default function SettingsPage() {
   const { user, refreshUser, logout } = useAuthStore();
   const navigate = useNavigate();
-  const [whatsappNotif, setWhatsappNotif] = useState(user?.whatsappNotifications ?? true);
 
   // Profile editing state
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [emailInput, setEmailInput] = useState(user?.email || '');
-  const [whatsappInput, setWhatsappInput] = useState(user?.whatsapp || '');
   const [phoneInput, setPhoneInput] = useState(user?.phone || '');
 
   const updateContactMutation = useMutation({
@@ -35,7 +33,6 @@ export default function SettingsPage() {
 
   const handleStartEdit = () => {
     setEmailInput(user?.email || '');
-    setWhatsappInput(user?.whatsapp || '');
     setPhoneInput(user?.phone || '');
     setIsEditingProfile(true);
   };
@@ -44,7 +41,6 @@ export default function SettingsPage() {
     e.preventDefault();
     updateContactMutation.mutate({
       email: emailInput,
-      whatsapp: whatsappInput,
       phone: phoneInput
     });
   };
@@ -58,14 +54,7 @@ export default function SettingsPage() {
   const [cpError, setCpError] = useState('');
   const [showPwd, setShowPwd] = useState(false);
 
-  const updatePrefMutation = useMutation({
-    mutationFn: () => authApi.updateNotificationPrefs({ whatsappNotifications: whatsappNotif }),
-    onSuccess: () => {
-      toast.success('Preferences saved.');
-      refreshUser();
-    },
-    onError: () => toast.error('Failed to update preferences'),
-  });
+
 
   const handleRequestCpOtp = async () => {
     setCpLoading(true);
@@ -167,7 +156,7 @@ export default function SettingsPage() {
             <div className="bg-blue-50 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-800 flex items-start gap-2.5">
               <Info size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
               <span>
-                You can update your registered Email Address and WhatsApp Number below. These details will be used for system notifications and verification OTPs.
+                You can update your registered Email Address and Phone Number below. These details will be used for system notifications and verification OTPs.
               </span>
             </div>
 
@@ -188,20 +177,6 @@ export default function SettingsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                  <MessageSquare size={14} className="text-emerald-600" />
-                  WhatsApp Number
-                </label>
-                <input
-                  type="text"
-                  value={whatsappInput}
-                  onChange={(e) => setWhatsappInput(e.target.value)}
-                  placeholder="e.g. 9876543210"
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-emerald-500 rounded-xl text-slate-900 outline-none text-sm transition-all shadow-sm font-mono"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
                   <Phone size={14} className="text-slate-500" />
                   Phone Number
                 </label>
@@ -209,7 +184,7 @@ export default function SettingsPage() {
                   type="text"
                   value={phoneInput}
                   onChange={(e) => setPhoneInput(e.target.value)}
-                  placeholder="e.g. 9876543210 (Optional if same as WhatsApp)"
+                  placeholder="e.g. 9876543210"
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-blue-500 rounded-xl text-slate-900 outline-none text-sm transition-all shadow-sm font-mono"
                 />
               </div>
@@ -262,19 +237,6 @@ export default function SettingsPage() {
                     </span>
                   ) : (
                     <span className="text-slate-400 italic">Not provided</span>
-                  )}
-                </span>
-              </div>
-              <div className="py-2 border-b sm:border-b-0 border-slate-100 flex justify-between sm:block">
-                <span className="text-xs font-medium text-slate-400 block mb-0.5">WhatsApp Number</span>
-                <span className="font-mono text-slate-800 font-medium">
-                  {user?.whatsapp ? (
-                    <span className="flex items-center gap-1.5">
-                      <MessageSquare size={13} className="text-emerald-600 flex-shrink-0" />
-                      {user.whatsapp}
-                    </span>
-                  ) : (
-                    <span className="text-slate-400 italic font-sans">Not provided</span>
                   )}
                 </span>
               </div>
@@ -446,39 +408,7 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Notification prefs */}
-      <div className="card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Bell size={17} className="text-slate-600" />
-          <h2 className="text-sm font-semibold text-slate-800">Notification Preferences</h2>
-        </div>
 
-        <div className="flex items-center justify-between py-3 border-b border-slate-100">
-          <div>
-            <p className="text-sm font-medium text-slate-800">WhatsApp Notifications</p>
-            <p className="text-xs text-slate-500 mt-0.5">Receive incident updates via WhatsApp</p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={whatsappNotif}
-              onChange={e => setWhatsappNotif(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-slate-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-          </label>
-        </div>
-
-        <div className="mt-4 flex justify-end">
-          <button
-            onClick={() => updatePrefMutation.mutate()}
-            disabled={updatePrefMutation.isPending}
-            className="btn-primary btn-sm"
-          >
-            Save Preferences
-          </button>
-        </div>
-      </div>
 
 
     </div>

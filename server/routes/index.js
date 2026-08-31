@@ -116,7 +116,7 @@ router.post('/auth/change-password-otp', authenticate, authController.requestCha
 router.get('/auth/me', authenticate, authController.getMe);
 router.get('/auth/committee-members', authenticate, authController.getCommitteeMembers);
 router.post('/auth/leave-role', authenticate, authController.leaveRole);
-router.put('/auth/notification-prefs', authenticate, authController.updateNotificationPrefs);
+
 router.put('/auth/contact-info', authenticate, authController.updateContactInfo);
 
 // ─── INCIDENTS ────────────────────────────────────
@@ -140,6 +140,7 @@ router.post('/incidents/:id/request-redirect', authenticate, authorize('hod'), i
 
 // ─── MODULAR HOD ALIASES (Chapter 6 Specification) ───
 router.get('/hod/dashboard', authenticate, authorize('hod'), incidentsController.getDashboardStats);
+router.get('/hod/team', authenticate, authorize('hod'), incidentsController.getHodTeam);
 router.get('/hod/incidents', authenticate, authorize('hod'), incidentsController.getIncidents);
 router.get('/hod/incidents/export', authenticate, authorize('hod'), incidentsController.exportIncidents);
 router.get('/hod/incidents/:id', authenticate, authorize('hod'), incidentsController.getIncident);
@@ -164,6 +165,8 @@ router.post('/imc/incidents/:id/redirect/approve', authenticate, authorize('imc'
 router.post('/imc/incidents/:id/redirect/reject', authenticate, authorize('imc'), incidentActionsController.rejectRedirect);
 router.post('/imc/incidents/:id/verify-training', authenticate, authorize('imc'), incidentActionsController.verifyTraining);
 router.post('/imc/incidents/:id/remind-hod', authenticate, authorize('imc'), incidentActionsController.remindHod);
+router.post('/imc/incidents/:id/report', authenticate, authorize('imc'), (req, _, next) => { req._uploadStage = 'imc_report'; next(); }, upload.array('attachments', 10), incidentWorkflowController.generateImcReport);
+router.post('/imc/incidents/:id/close', authenticate, authorize('imc'), incidentWorkflowController.closeIncident);
 
 // IMC/Management: escalate priority
 router.post('/incidents/:id/escalate-priority', authenticate, authorize('imc', 'head_management'), incidentActionsController.escalatePriority);
@@ -194,14 +197,14 @@ router.post('/incidents/:id/reopen', authenticate, authorize('head_management', 
 router.put('/incidents/:id/feedback', authenticate, authorize('hod', 'imc', 'head_management'), incidentActionsController.editFeedback);
 
 // Management: final decision
-router.post('/incidents/:id/md-decision', authenticate, authorize('head_management'), (req, _, next) => { req._uploadStage = 'md_decision'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitMdDecision);
+router.post('/incidents/:id/management-action', authenticate, authorize('head_management'), incidentWorkflowController.submitManagementAction);
 
 // ─── MODULAR MANAGEMENT ALIASES (Chapter 8 Specification) ───
 router.get('/management/dashboard', authenticate, authorize('head_management'), incidentsController.getDashboardStats);
 router.get('/management/incidents', authenticate, authorize('head_management'), incidentsController.getIncidents);
 router.get('/management/incidents/export', authenticate, authorize('head_management'), incidentsController.exportIncidents);
 router.get('/management/incidents/:id', authenticate, authorize('head_management'), incidentsController.getIncident);
-router.post('/management/incidents/:id/decision', authenticate, authorize('head_management'), (req, _, next) => { req._uploadStage = 'md_decision'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitMdDecision);
+router.post('/management/incidents/:id/decision', authenticate, authorize('head_management'), incidentWorkflowController.submitManagementAction);
 router.post('/management/incidents/:id/escalate', authenticate, authorize('head_management'), incidentActionsController.escalatePriority);
 router.post('/management/incidents/:id/remind-hod', authenticate, authorize('head_management'), incidentActionsController.remindHod);
 

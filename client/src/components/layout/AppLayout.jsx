@@ -27,7 +27,7 @@ const getNavItems = (role) => {
   ];
   if (role === 'hod') {
     base.push(
-      { to: '/incidents?viewMode=my_team', icon: Users, label: 'My Team', matchSearch: '?viewMode=my_team' }
+      { to: '/my-team', icon: Users, label: 'My Team' }
     );
   }
   if (role === 'imc') {

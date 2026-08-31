@@ -372,7 +372,7 @@ exports.getAllUsers = async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, employee_id, full_name, email, phone, whatsapp, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin, last_sync, is_active
+      `SELECT id, employee_id, full_name, email, phone, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin, last_sync, is_active
        FROM users WHERE ${where} ORDER BY full_name LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, limit, offset]
     );
@@ -607,7 +607,7 @@ exports.searchEmployeeProfile = async (req, res) => {
     }
 
     const userResult = await query(
-      `SELECT id, employee_id, full_name, email, phone, whatsapp, department, designation, role 
+      `SELECT id, employee_id, full_name, email, phone, department, designation, role 
        FROM users 
        WHERE employee_id ILIKE $1 OR full_name ILIKE $2
        LIMIT 10`,

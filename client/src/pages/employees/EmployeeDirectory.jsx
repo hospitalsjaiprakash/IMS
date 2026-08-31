@@ -107,7 +107,7 @@ export default function EmployeeDirectory() {
                       </div>
                       <div className="flex items-center gap-2 text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
                         <Phone size={16} className="text-slate-400" />
-                        <span className="font-medium">{emp.phone || emp.whatsapp || 'N/A'}</span>
+                        <span className="font-medium">{emp.phone || 'N/A'}</span>
                       </div>
                       <div className="flex items-center gap-2 font-semibold text-indigo-700 bg-indigo-50 p-2.5 rounded-lg border border-indigo-100">
                         <FileText size={16} />
@@ -262,10 +262,10 @@ export default function EmployeeDirectory() {
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex flex-col gap-1 text-xs">
-                              {(user.phone || user.whatsapp) ? (
+                              {user.phone ? (
                                 <div className="flex items-center gap-1.5 text-slate-600">
                                   <Phone size={13} className="text-slate-400" />
-                                  {user.phone || user.whatsapp}
+                                  {user.phone}
                                 </div>
                               ) : (
                                 <span className="text-slate-400 italic">No phone</span>

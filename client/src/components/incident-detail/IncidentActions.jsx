@@ -19,13 +19,18 @@ export default function IncidentActions({
   setShowMdModal,
   setShowReopenModal,
   setShowAssignInvestigatorModal,
+  setShowImcReportModal,
   openEditIncident,
   escalateMutation,
-  remindHodMutation
+  remindHodMutation,
+  closeIncidentMutation,
+  canAssignInvestigator,
+  canGenerateImcReport,
+  canCloseIncident
 }) {
   const isEmployeeReporter = user?.id === incident.reporter_id && incident.status === 'submitted';
 
-  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canAssignInvestigator) {
+  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canAssignInvestigator && !canGenerateImcReport && !canCloseIncident) {
     return null;
   }
 
@@ -58,7 +63,18 @@ export default function IncidentActions({
       )}
       {canMdAct && (
         <button onClick={() => setShowMdModal(true)} className="btn-primary btn-sm">
-          <CheckCircle size={14} /> Close & Generate Report
+          <CheckCircle size={14} /> Management Action
+        </button>
+      )}
+      {canGenerateImcReport && (
+        <button onClick={() => setShowImcReportModal(true)} className="btn-primary btn-sm">
+          <Pencil size={14} /> Generate IMC Report
+        </button>
+      )}
+      {canCloseIncident && (
+        <button onClick={() => closeIncidentMutation.mutate()} disabled={closeIncidentMutation.isPending} className="btn-primary btn-sm">
+          {closeIncidentMutation.isPending ? <Spinner size={14} /> : <CheckCircle size={14} />}
+          Verify Training & Close Incident
         </button>
       )}
       {canReopen && (

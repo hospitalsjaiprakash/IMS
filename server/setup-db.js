@@ -28,6 +28,7 @@ const migrations = [
   '010_broadcast_notifications.sql',
   '010_communication_logs.sql',
   '012_workflow_updates.sql',
+  '013_full_workflow.sql',
 ];
 
 function splitSqlStatements(sql) {

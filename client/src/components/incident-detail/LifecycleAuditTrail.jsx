@@ -168,12 +168,49 @@ export default function LifecycleAuditTrail({ incident, feedbacks, attachments, 
     {
       key: 'mgmt',
       icon: UserCircle2,
-      color: finalReport ? 'green' : 'orange',
+      color: incident.management_decision ? 'green' : 'orange',
       label: 'Management Decision',
-      done: !!finalReport,
-      pending: !finalReport,
-      timestamp: finalReport?.generated_at,
+      done: !!incident.management_decision,
+      pending: !incident.management_decision,
+      timestamp: mgmtFb?.created_at || incident.updated_at,
       elapsedFrom: submittedAt,
+      body: incident.management_decision ? (
+        <div className="space-y-2">
+          <div className="text-xs">
+            <p className="text-slate-400 uppercase tracking-wide font-semibold" style={{fontSize:'10px'}}>Decision</p>
+            <p className="text-slate-800 font-semibold mt-0.5">{incident.management_decision.replace('_', ' ')}</p>
+          </div>
+          {incident.management_notes && (
+            <div className="text-xs mt-2">
+              <p className="text-slate-400 uppercase tracking-wide font-semibold mb-1" style={{fontSize:'10px'}}>Notes</p>
+              <p className="text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50 p-2 rounded-lg border border-slate-100">{incident.management_notes}</p>
+            </div>
+          )}
+          {mgmtFb && (
+            <blockquote className="text-xs text-slate-700 bg-slate-50 border-l-2 border-orange-300 pl-3 pr-2 py-2 rounded-r-lg leading-relaxed italic mt-2">
+              "{mgmtFb.feedback_text}"
+            </blockquote>
+          )}
+          {mdAtts.length > 0 && (
+            <div className="mt-2">
+              <p className="text-slate-400 uppercase tracking-wide font-semibold mb-1" style={{fontSize:'10px'}}>Attachments ({mdAtts.length})</p>
+              <StageAttachments attachments={attachments} stage="md_decision" />
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-orange-700 italic">Management decision is pending.</p>
+      )
+    },
+    {
+      key: 'imc_report',
+      icon: Activity,
+      color: finalReport ? 'green' : 'orange',
+      label: 'IMC Report Generated',
+      done: !!finalReport,
+      pending: !!incident.management_decision && !finalReport,
+      timestamp: finalReport?.generated_at,
+      elapsedFrom: mgmtFb?.created_at || incident.updated_at,
       body: finalReport ? (
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
@@ -195,18 +232,13 @@ export default function LifecycleAuditTrail({ incident, feedbacks, attachments, 
             <p className="text-slate-400 uppercase tracking-wide font-semibold mb-1" style={{fontSize:'10px'}}>Corrective Actions</p>
             <p className="text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50 p-2 rounded-lg border border-slate-100">{finalReport.corrective_actions}</p>
           </div>
-          {mgmtFb && (
-            <blockquote className="text-xs text-slate-700 bg-slate-50 border-l-2 border-orange-300 pl-3 pr-2 py-2 rounded-r-lg leading-relaxed italic">
-              "{mgmtFb.feedback_text}"
-            </blockquote>
-          )}
           <div>
-            <p className="text-slate-400 uppercase tracking-wide font-semibold mb-1" style={{fontSize:'10px'}}>Attachments ({mdAtts.length})</p>
-            <StageAttachments attachments={attachments} stage="md_decision" />
+            <p className="text-slate-400 uppercase tracking-wide font-semibold mb-1" style={{fontSize:'10px'}}>Official IMC Report</p>
+            <StageAttachments attachments={attachments} stage="imc_report" />
           </div>
         </div>
       ) : (
-        <p className="text-xs text-orange-700 italic">Management decision is pending.</p>
+        <p className="text-xs text-orange-700 italic">Pending IMC Report Generation.</p>
       )
     },
     ...( incident.has_responsible_person ? [{

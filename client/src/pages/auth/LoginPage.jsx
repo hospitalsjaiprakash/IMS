@@ -38,7 +38,7 @@ export default function LoginPage() {
   const [loginForm, setLoginForm] = useState({ employeeId: '', password: '' });
 
   // Register state
-  const [regForm, setRegForm] = useState({ fullName: '', employeeId: '', whatsapp: '', email: '', password: '' });
+  const [regForm, setRegForm] = useState({ fullName: '', employeeId: '', email: '', password: '' });
 
   // Forgot password state
   const [forgotForm, setForgotForm] = useState({ employeeId: '', email: '', otp: '', newPassword: '' });
@@ -352,16 +352,6 @@ export default function LoginPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">WhatsApp Number</label>
-                  <input
-                    name="whatsapp"
-                    value={regForm.whatsapp}
-                    onChange={handleRegChange}
-                    placeholder="e.g. 8093421865"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
-                  />
-                </div>
 
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Email Address</label>

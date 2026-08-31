@@ -74,6 +74,11 @@ export const authApi = {
 export const pingServer = () =>
   axios.get(`${API_BASE_URL.replace(/\/api$/, '')}/ping`, { timeout: 8000 }).catch(() => {});
 
+// ── Teams ─────────────────────────────────────────
+export const teamsApi = {
+  getHodTeam: () => api.get('/hod/team'),
+};
+
 // ── Incidents ─────────────────────────────────────
 export const incidentsApi = {
   list: (params) => api.get('/incidents', { params }),
@@ -85,7 +90,9 @@ export const incidentsApi = {
   withdraw: (id, data) => api.post(`/incidents/${id}/withdraw`, data),
   hodFeedback: (id, data) => api.post(`/incidents/${id}/hod-feedback`, data),
   imcFeedback: (id, data) => api.post(`/incidents/${id}/imc-feedback`, data),
-  mdDecision: (id, data) => api.post(`/incidents/${id}/md-decision`, data),
+  managementAction: (id, data) => api.post(`/incidents/${id}/management-action`, data),
+  imcReport: (id, data) => api.post(`/incidents/${id}/report`, data),
+  closeIncident: (id) => api.post(`/incidents/${id}/close`),
   reopen: (id, data) => api.post(`/incidents/${id}/reopen`, data),
   assignInvestigator: (id, data) => api.post(`/incidents/${id}/assign-investigator`, data),
   requestRedirect: (id, data) => api.post(`/incidents/${id}/request-redirect`, data),

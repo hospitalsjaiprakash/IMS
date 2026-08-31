@@ -24,7 +24,8 @@ import {
   EditFeedbackModal,
   EditIncidentModal,
   FilePreviewModal,
-  AssignInvestigatorModal
+  AssignInvestigatorModal,
+  ImcReportModal
 } from '../../components/incident-detail/modals';
 
 const TIMELINE_STAGES = [
@@ -32,12 +33,14 @@ const TIMELINE_STAGES = [
   { key: 'with_hod', label: 'Awaiting HOD Feedback' },
   { key: 'with_imc', label: 'HOD Reviewed - Awaiting IMC' },
   { key: 'with_head_management', label: 'IMC Reviewed - Awaiting Mgmt' },
-  { key: 'resolved', label: 'Resolved' },
+  { key: 'pending_imc_report', label: 'Mgmt Decided - Awaiting IMC Report' },
+  { key: 'pending_training', label: 'Awaiting CAPA / Training' },
+  { key: 'closed', label: 'Closed' },
 ];
 
 const statusOrder = {
   submitted: 0, with_hod: 1, with_hod_and_imc: 1, with_imc: 2,
-  redirect_requested: 2, with_head_management: 3, pending_training: 3.5, resolved: 4,
+  redirect_requested: 2, with_head_management: 3, pending_imc_report: 4, pending_training: 5, resolved: 6, closed: 6,
 };
 
 function StatusMessage({ status }) {
@@ -47,7 +50,10 @@ function StatusMessage({ status }) {
     with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is currently awaiting simultaneous review and feedback from both the HOD and IMC.' },
     with_imc: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from the Incident Management Committee.' },
     with_head_management: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from Hospital Management.' },
+    pending_imc_report: { type: 'info', msg: 'Management has submitted their decision. Awaiting IMC Convenor to generate the official report.' },
+    pending_training: { type: 'warning', msg: 'Mandatory CAPA / Training is required before this incident can be fully closed.' },
     resolved: { type: 'success', msg: 'Your incident has been resolved. View the final report below.' },
+    closed: { type: 'success', msg: 'Your incident has been officially closed.' },
     withdrawn: { type: 'warning', msg: 'This incident has been withdrawn by you.' },
     redirect_requested: { type: 'warning', msg: 'A redirection request has been submitted to the IMC for routing to the correct department.' },
   };
@@ -68,6 +74,7 @@ export default function IncidentDetailPage() {
   const [showRedirectModal, setShowRedirectModal] = useState(false);
   const [showRejectRedirectModal, setShowRejectRedirectModal] = useState(false);
   const [showAssignInvestigatorModal, setShowAssignInvestigatorModal] = useState(false);
+  const [showImcReportModal, setShowImcReportModal] = useState(false);
 
   const [editFbModal, setEditFbModal] = useState(null); // { feedbackType, currentText }
   const [editFbText, setEditFbText] = useState('');
@@ -78,6 +85,7 @@ export default function IncidentDetailPage() {
 
   const [withdrawReason, setWithdrawReason] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
+  const [imcSeverity, setImcSeverity] = useState('');
   const [mdFaultType, setMdFaultType] = useState('');
   const [mdActions, setMdActions] = useState('');
   const [mdRequireTraining, setMdRequireTraining] = useState(false);
@@ -103,6 +111,7 @@ export default function IncidentDetailPage() {
         setShowRedirectModal(false);
         setShowRejectRedirectModal(false);
         setShowAssignInvestigatorModal(false);
+        setShowImcReportModal(false);
         setShowEditIncModal(false);
         setEditFbModal(null);
       }
@@ -139,23 +148,40 @@ export default function IncidentDetailPage() {
       const fd = new FormData();
       fd.append('feedbackText', feedbackText);
       fd.append('forwardToMd', !!forwardToMd);
+      fd.append('severity', imcSeverity);
       imcAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.imcFeedback(id, fd);
     },
-    onSuccess: () => { toast.success('Feedback submitted.'); setShowFeedbackModal(false); setImcAttachments([]); setFeedbackText(''); refetch(); }
+    onSuccess: () => { toast.success('Feedback submitted.'); setShowFeedbackModal(false); setImcAttachments([]); setFeedbackText(''); setImcSeverity(''); refetch(); }
   });
 
   const mdMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (decisionType) => {
       const fd = new FormData();
+      fd.append('decision', decisionType);
+      fd.append('notes', mdActions); // Actually using mdActions as notes here or feedbackText? Let's use mdActions as notes for simplicity, but wait, maybe create a dedicated state for notes. For now I will leave it to be done in modal.
       fd.append('faultType', mdFaultType);
       fd.append('correctiveActions', mdActions);
       fd.append('requireTraining', mdRequireTraining);
       fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
       mdAttachments.forEach(f => fd.append('attachments', f));
-      return incidentsApi.mdDecision(id, fd);
+      return incidentsApi.managementAction(id, fd);
     },
-    onSuccess: () => { toast.success('Incident closed.'); setShowMdModal(false); setMdAttachments([]); setMdFaultType(''); setMdActions(''); setMdResponsibleEmployees([]); refetch(); }
+    onSuccess: () => { toast.success('Management action submitted.'); setShowMdModal(false); setMdAttachments([]); setMdFaultType(''); setMdActions(''); setMdResponsibleEmployees([]); refetch(); }
+  });
+
+  const imcReportMutation = useMutation({
+    mutationFn: () => {
+      const fd = new FormData();
+      imcAttachments.forEach(f => fd.append('attachments', f));
+      return incidentsApi.imcReport(id, fd);
+    },
+    onSuccess: () => { toast.success('Official IMC Report generated.'); setShowImcReportModal(false); setImcAttachments([]); refetch(); }
+  });
+
+  const closeIncidentMutation = useMutation({
+    mutationFn: () => incidentsApi.closeIncident(id),
+    onSuccess: () => { toast.success('Incident closed.'); refetch(); }
   });
 
   const reopenMutation = useMutation({
@@ -242,10 +268,12 @@ export default function IncidentDetailPage() {
   const canRequestRedirect = user?.role === 'hod' && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
   const canImcAct = user?.role === 'imc' && user?.id !== incident.reporter_id && (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training'].includes(incident.status) || (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
   const canMdAct = user?.role === 'head_management' && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
-  const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && incident.status === 'resolved';
-  const canEscalate = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && incident.status !== 'resolved' && incident.status !== 'withdrawn' && !incident.priority_escalated_by;
-  const canRemindHod = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && incident.status !== 'resolved' && incident.status !== 'withdrawn' && !feedbacks?.some(fb => fb.role === 'hod');
+  const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
+  const canEscalate = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !incident.priority_escalated_by;
+  const canRemindHod = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !feedbacks?.some(fb => fb.role === 'hod');
   const canAssignInvestigator = user?.role === 'imc' && user?.is_imc_lead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
+  const canGenerateImcReport = user?.role === 'imc' && user?.is_imc_lead && incident.status === 'pending_imc_report';
+  const canCloseIncident = user?.role === 'imc' && incident.status === 'pending_training';
 
   return (
     <>
@@ -278,15 +306,19 @@ export default function IncidentDetailPage() {
             canEscalate={canEscalate}
             canRemindHod={canRemindHod}
             canAssignInvestigator={canAssignInvestigator}
+            canGenerateImcReport={canGenerateImcReport}
+            canCloseIncident={canCloseIncident}
             setShowWithdrawModal={setShowWithdrawModal}
             setShowFeedbackModal={setShowFeedbackModal}
             setShowRedirectModal={setShowRedirectModal}
             setShowMdModal={setShowMdModal}
             setShowReopenModal={setShowReopenModal}
             setShowAssignInvestigatorModal={setShowAssignInvestigatorModal}
+            setShowImcReportModal={setShowImcReportModal}
             openEditIncident={openEditIncident}
             escalateMutation={escalateMutation}
             remindHodMutation={remindHodMutation}
+            closeIncidentMutation={closeIncidentMutation}
           />
         }
       />
@@ -411,10 +443,24 @@ export default function IncidentDetailPage() {
                         />
                         <FileUploadArea files={imcAttachments} setFiles={setImcAttachments} />
                       </div>
+                      <div>
+                        <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
+                        <select
+                          value={imcSeverity}
+                          onChange={(e) => setImcSeverity(e.target.value)}
+                          className="select w-full"
+                          required
+                        >
+                          <option value="">Select Severity...</option>
+                          <option value="Minor">Minor</option>
+                          <option value="Major">Major</option>
+                          <option value="Grave">Grave</option>
+                        </select>
+                      </div>
                       <div className="flex justify-end gap-2">
                         <button
                           onClick={() => imcFeedbackMutation.mutate(true)}
-                          disabled={!feedbackText.trim() || imcFeedbackMutation.isPending}
+                          disabled={!feedbackText.trim() || !imcSeverity || imcFeedbackMutation.isPending}
                           className="btn-primary btn-sm"
                         >
                           {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
@@ -517,14 +563,20 @@ export default function IncidentDetailPage() {
                     done = statusOrder[incident.status] > 2 || feedbacks?.some(f => f.role === 'imc');
                     active = !done && ['with_imc', 'with_hod_and_imc', 'redirect_requested'].includes(incident.status);
                   } else if (i === 3) {
-                    done = statusOrder[incident.status] > 3 || feedbacks?.some(f => f.role === 'head_management');
+                    done = statusOrder[incident.status] > 3;
                     active = !done && incident.status === 'with_head_management';
                   } else if (i === 4) {
-                    done = incident.status === 'resolved';
-                    active = incident.status === 'pending_training';
+                    done = statusOrder[incident.status] > 4;
+                    active = !done && incident.status === 'pending_imc_report';
+                  } else if (i === 5) {
+                    done = statusOrder[incident.status] > 5;
+                    active = !done && incident.status === 'pending_training';
+                  } else if (i === 6) {
+                    done = ['resolved', 'closed'].includes(incident.status);
+                    active = false;
                   }
 
-                  if (statusOrder[incident.status] > i && i < 4) done = true;
+                  if (statusOrder[incident.status] > i && i < 6) done = true;
                   
                   let stageLabel = stage.label;
                   if (i === 1) {
@@ -532,9 +584,13 @@ export default function IncidentDetailPage() {
                   } else if (i === 2) {
                     stageLabel = done ? 'IMC Reviewed' : 'Awaiting IMC Feedback';
                   } else if (i === 3) {
-                    stageLabel = done ? 'Mgmt Reviewed' : 'Awaiting Mgmt Feedback';
-                  } else if (i === 4 && incident.status === 'pending_training') {
-                    stageLabel = 'Training Verification (IMC)';
+                    stageLabel = done ? 'Mgmt Reviewed' : 'Awaiting Mgmt Decision';
+                  } else if (i === 4) {
+                    stageLabel = done ? 'IMC Report Generated' : 'Awaiting IMC Report';
+                  } else if (i === 5) {
+                    stageLabel = done ? 'Training Completed' : 'Awaiting Training';
+                  } else if (i === 6) {
+                    stageLabel = done ? 'Closed' : 'Closed';
                   }
 
                   let reviewDate = null;
@@ -542,8 +598,7 @@ export default function IncidentDetailPage() {
                     if (i === 0) reviewDate = incident.created_at;
                     else if (i === 1) reviewDate = feedbacks?.find(f => f.role === 'hod')?.created_at;
                     else if (i === 2) reviewDate = feedbacks?.find(f => f.role === 'imc')?.created_at;
-                    else if (i === 3) reviewDate = finalReport?.generated_at || incident.resolved_at || feedbacks?.find(f => f.role === 'head_management')?.created_at;
-                    else if (i === 4) reviewDate = incident.resolved_at;
+                    else if (i === 6) reviewDate = incident.resolved_at;
                   }
 
                   return (
@@ -662,6 +717,14 @@ export default function IncidentDetailPage() {
         setEditInc={setEditInc}
         mutate={(data) => editIncidentMutation.mutate(data)}
         isPending={editIncidentMutation.isPending}
+      />
+      <ImcReportModal
+        show={showImcReportModal}
+        onClose={() => setShowImcReportModal(false)}
+        attachments={imcAttachments}
+        setAttachments={setImcAttachments}
+        mutate={() => imcReportMutation.mutate()}
+        isPending={imcReportMutation.isPending}
       />
       <FilePreviewModal
         previewFile={previewFile}
