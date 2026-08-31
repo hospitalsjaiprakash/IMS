@@ -73,7 +73,46 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
   );
 }
 
-export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFaultType, mdActions, setMdActions, mdRequireTraining, setMdRequireTraining, mdAttachments, setMdAttachments, mutate, isPending }) {
+export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFaultType, mdActions, setMdActions, mdRequireTraining, setMdRequireTraining, mdResponsibleEmployees, setMdResponsibleEmployees, mdAttachments, setMdAttachments, mutate, isPending }) {
+  const [search, setSearch] = React.useState('');
+  const [users, setUsers] = React.useState([]);
+  const [loadingUsers, setLoadingUsers] = React.useState(false);
+
+  // Quick inline search using fetch
+  React.useEffect(() => {
+    if (search.length > 2) {
+      setLoadingUsers(true);
+      const token = sessionStorage.getItem('ims_token');
+      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/employee/search?q=${search}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data.employees || []);
+        setLoadingUsers(false);
+      })
+      .catch(() => setLoadingUsers(false));
+    } else {
+      setUsers([]);
+    }
+  }, [search]);
+
+  const addEmployee = (emp) => {
+    if (!mdResponsibleEmployees.find(e => e.id === emp.id)) {
+      setMdResponsibleEmployees([...mdResponsibleEmployees, { ...emp, needs_training: false }]);
+    }
+    setSearch('');
+    setUsers([]);
+  };
+
+  const removeEmployee = (id) => {
+    setMdResponsibleEmployees(mdResponsibleEmployees.filter(e => e.id !== id));
+  };
+
+  const toggleTraining = (id) => {
+    setMdResponsibleEmployees(mdResponsibleEmployees.map(e => e.id === id ? { ...e, needs_training: !e.needs_training } : e));
+  };
+
   return (
     <Modal open={show} onClose={onClose} title="Final Decision & Close Incident" size="lg"
       footer={<>
@@ -92,22 +131,62 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
           <label className="field-label field-required">Corrective Actions</label>
           <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe the corrective actions taken or recommended…" />
         </div>
-        <div className="pt-2 border-t border-slate-100">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={mdRequireTraining}
-              onChange={e => setMdRequireTraining(e.target.checked)}
-              className="w-4 h-4 accent-blue-600 rounded"
+        
+        <div className="pt-3 border-t border-slate-100">
+          <label className="field-label">Responsible Employees (Optional)</label>
+          <div className="relative mb-3">
+            <input 
+              type="text" 
+              value={search} 
+              onChange={e => setSearch(e.target.value)} 
+              className="input" 
+              placeholder="Search employee by name or ID to assign responsibility..."
             />
-            <span className="text-sm font-semibold text-slate-800">
-              Mandatory Training Required for Responsible Employee
-            </span>
-          </label>
-          <p className="text-xs text-slate-500 mt-1 pl-7">
-            If checked, this employee will be flagged for mandatory training, and the IMC authority will be assigned to verify training completion.
-          </p>
+            {loadingUsers && <Spinner size={14} className="absolute right-3 top-3 text-slate-400" />}
+            {users.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                {users.map(u => (
+                  <button
+                    key={u.id}
+                    onClick={() => addEmployee(u)}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">{u.full_name}</div>
+                      <div className="text-xs text-slate-500">{u.employee_id} • {u.department}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {mdResponsibleEmployees.length > 0 && (
+            <div className="space-y-2 mt-2">
+              {mdResponsibleEmployees.map(emp => (
+                <div key={emp.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <div>
+                    <div className="text-sm font-medium text-slate-800">{emp.full_name}</div>
+                    <div className="text-xs text-slate-500">{emp.employee_id} • {emp.department}</div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={emp.needs_training} 
+                        onChange={() => toggleTraining(emp.id)}
+                        className="w-4 h-4 accent-amber-600 rounded"
+                      />
+                      <span className="text-sm font-semibold text-amber-700">Needs Training</span>
+                    </label>
+                    <button onClick={() => removeEmployee(emp.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+        
         <FileUploadArea files={mdAttachments} setFiles={setMdAttachments} />
       </div>
     </Modal>
@@ -357,6 +436,77 @@ export function FilePreviewModal({ previewFile, onClose }) {
           )}
         </div>
       )}
+    </Modal>
+  );
+}
+
+export function AssignInvestigatorModal({ show, onClose, mutate, isPending }) {
+  const [imcMembers, setImcMembers] = React.useState([]);
+  const [selectedIds, setSelectedIds] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (show) {
+      setLoading(true);
+      const token = sessionStorage.getItem('ims_token');
+      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/auth/committee-members`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setImcMembers(data.members || []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+    } else {
+      setSelectedIds([]);
+    }
+  }, [show]);
+
+  const toggleMember = (id) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  return (
+    <Modal open={show} onClose={onClose} title="Assign Investigator(s)" size="md"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={() => mutate(selectedIds)} disabled={selectedIds.length === 0 || isPending} className="btn-primary">
+          {isPending && <Spinner size={15} className="text-white" />} Assign Selected
+        </button>
+      </>}
+    >
+      <div className="space-y-4">
+        <Alert type="info" message="Select one or more IMC members to act as investigators for this incident. They will be notified immediately." />
+        
+        <div>
+          <label className="field-label mb-2">IMC Members</label>
+          {loading ? (
+            <div className="flex items-center gap-2 text-slate-500 py-4"><Spinner size={16} /> Loading members...</div>
+          ) : imcMembers.length === 0 ? (
+            <p className="text-sm text-slate-500 py-4">No IMC members found.</p>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+              {imcMembers.map(member => (
+                <label key={member.id} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(member.id)}
+                    onChange={() => toggleMember(member.id)}
+                    className="w-4 h-4 accent-indigo-600 rounded"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-slate-800">{member.full_name}</div>
+                    <div className="text-xs text-slate-500">{member.designation} • {member.department}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </Modal>
   );
 }

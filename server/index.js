@@ -13,6 +13,7 @@ const fs = require('fs');
 const { Server } = require('socket.io');
 const http = require('http');
 const AppError = require('./utils/AppError');
+require('./services/cronService'); // Initialize cron jobs
 
 const app = express();
 const server = http.createServer(app);

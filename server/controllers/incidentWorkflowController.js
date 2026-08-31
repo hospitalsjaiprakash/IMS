@@ -258,9 +258,18 @@ exports.submitMdDecision = async (req, res) => {
     await client.query('BEGIN');
 
     const { id } = req.params;
-    let { faultType, correctiveActions, requireTraining } = req.body;
+    let { faultType, correctiveActions, requireTraining, responsibleEmployees } = req.body;
     
-    requireTraining = requireTraining === 'true' || requireTraining === true;
+    // responsibleEmployees expected to be JSON string of array if from FormData
+    if (typeof responsibleEmployees === 'string') {
+      try { responsibleEmployees = JSON.parse(responsibleEmployees); } catch(e) {}
+    }
+    
+    if (!Array.isArray(responsibleEmployees)) {
+      responsibleEmployees = [];
+    }
+    
+    requireTraining = requireTraining === 'true' || requireTraining === true || responsibleEmployees.some(e => e.needs_training);
 
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -291,8 +300,28 @@ exports.submitMdDecision = async (req, res) => {
       }
     }
 
+    // Insert responsible employees
+    if (responsibleEmployees.length > 0) {
+      for (const emp of responsibleEmployees) {
+        // Find department ID if missing
+        let deptId = emp.department_id;
+        if (!deptId && emp.department) {
+           const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
+           if (dRes.rows.length) deptId = dRes.rows[0].id;
+        }
+        await client.query(
+          `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [id, emp.id, deptId || null, emp.needs_training ? true : false, req.user.id]
+        );
+      }
+      
+      // Update incident to mark it has responsible person
+      await client.query(`UPDATE incidents SET has_responsible_person = TRUE WHERE id = $1`, [id]);
+    }
+
     // Determine new status: pending_training or resolved
-    const newStatus = (requireTraining && incident.has_responsible_person) ? 'pending_training' : 'resolved';
+    const newStatus = (requireTraining && responsibleEmployees.length > 0) ? 'pending_training' : 'resolved';
     const resolvedAt = newStatus === 'resolved' ? 'NOW()' : 'NULL';
 
     await client.query(
@@ -316,6 +345,28 @@ exports.submitMdDecision = async (req, res) => {
       if (reporter?.email) {
         sendEmail(reporter.email, templates.trainingRequired(incident, reporter)).catch(() => {});
       }
+      
+      // Notify responsible employees and their HODs
+      for (const emp of responsibleEmployees) {
+        if (emp.needs_training) {
+          // Notify employee
+          await createNotification(emp.id, id, 'Training Mandated',
+            `You have been marked as needing training for incident ${incident.reference_id}.`, 'training_mandated');
+            
+          // Notify their HOD
+          const hodRes = await client.query(
+            `SELECT u.id, u.email FROM users u 
+             JOIN departments d ON d.hod_user_id = u.id OR d.incharge_user_id = u.id 
+             WHERE LOWER(d.name) = LOWER($1) OR d.id = $2`,
+            [emp.department || '', emp.department_id || 0]
+          );
+          for (const hod of hodRes.rows) {
+            await createNotification(hod.id, id, 'Employee Training Required',
+              `Your department employee has been marked for training in incident ${incident.reference_id}. Please instruct them.`, 'hod_training_alert');
+          }
+        }
+      }
+
       // Notify IMC to verify training
       const imcMembers = await query("SELECT id, email, full_name FROM users WHERE role = 'imc'");
       for (const m of imcMembers.rows) {

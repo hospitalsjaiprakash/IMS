@@ -6,13 +6,40 @@ import { Settings, Save, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CONFIG_FIELDS = [
-
   {
-    key: 'hod_feedback_days',
-    label: 'HOD Feedback Time Limit (Days)',
-    description: 'Maximum days allowed for HOD to provide feedback after an incident is reported.',
+    key: 'hod_reminder_1_days',
+    label: 'HOD 1st Reminder (Days)',
+    description: 'Send the first automated reminder email to HOD (Default: 5 days)',
     type: 'number',
     min: 1, max: 30,
+  },
+  {
+    key: 'hod_reminder_2_days',
+    label: 'HOD Last Day Deadline (Days)',
+    description: 'Deadline to provide feedback, sends final reminder (Default: 7 days)',
+    type: 'number',
+    min: 1, max: 30,
+  },
+  {
+    key: 'hod_escalation_1_days',
+    label: 'HOD Overdue Reminder (Days)',
+    description: 'Sends an overdue notification to the HOD (Default: 14 days)',
+    type: 'number',
+    min: 1, max: 60,
+  },
+  {
+    key: 'hod_escalation_2_days',
+    label: 'HOD Escalation to IMC (Days)',
+    description: 'Escalates the pending incident to the IMC committee (Default: 21 days)',
+    type: 'number',
+    min: 1, max: 60,
+  },
+  {
+    key: 'hod_escalation_3_days',
+    label: 'HOD Escalation to Mgmt & IMC (Days)',
+    description: 'Escalates the incident to Management and IMC (Default: 28 days)',
+    type: 'number',
+    min: 1, max: 90,
   },
   {
     key: 'imc_feedback_days',

@@ -570,9 +570,9 @@ exports.committeeLogin = async (req, res) => {
 // =============================================
 exports.switchRole = async (req, res) => {
   try {
-    const { password, targetRole } = req.body;
-    if (!password || !targetRole) {
-      return res.status(400).json({ error: 'Password and target role are required' });
+    const { targetRole } = req.body;
+    if (!targetRole) {
+      return res.status(400).json({ error: 'Target role is required' });
     }
 
     const userRes = await query('SELECT * FROM users WHERE id = $1', [req.user.id]);
@@ -586,9 +586,18 @@ exports.switchRole = async (req, res) => {
       return res.status(401).json({ error: 'Account deactivated.' });
     }
 
-    const passwordValid = await bcrypt.compare(password, user.password_hash);
-    if (!passwordValid) {
-      return res.status(401).json({ error: 'Incorrect login password.' });
+    // Validate that the user actually holds the permissions for the target role
+    if (targetRole === 'system_admin' && !user.is_system_admin) {
+      return res.status(403).json({ error: 'Not authorized for System Admin role.' });
+    }
+    if (targetRole === 'imc' && !user.is_imc_member) {
+      return res.status(403).json({ error: 'Not authorized for IMC role.' });
+    }
+    if (targetRole === 'head_management' && !user.is_management_member) {
+      return res.status(403).json({ error: 'Not authorized for Management role.' });
+    }
+    if (targetRole === 'hod' && !isUserHod(user)) {
+      return res.status(403).json({ error: 'Not authorized for HOD role.' });
     }
 
     const validRoles = ['employee', 'system_admin', 'imc', 'head_management', 'hod'];

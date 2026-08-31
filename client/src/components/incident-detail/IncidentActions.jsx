@@ -18,13 +18,14 @@ export default function IncidentActions({
   setShowRedirectModal,
   setShowMdModal,
   setShowReopenModal,
+  setShowAssignInvestigatorModal,
   openEditIncident,
   escalateMutation,
   remindHodMutation
 }) {
   const isEmployeeReporter = user?.id === incident.reporter_id && incident.status === 'submitted';
 
-  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter) {
+  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canAssignInvestigator) {
     return null;
   }
 
@@ -43,6 +44,11 @@ export default function IncidentActions({
       {canHodFeedback && (
         <button onClick={() => setShowFeedbackModal(true)} className="btn-primary btn-sm">
           <MessageSquare size={14} /> Submit Feedback
+        </button>
+      )}
+      {canAssignInvestigator && (
+        <button onClick={() => setShowAssignInvestigatorModal(true)} className="btn-secondary btn-sm border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+          <Pencil size={14} /> Assign Investigator(s)
         </button>
       )}
       {canRequestRedirect && (

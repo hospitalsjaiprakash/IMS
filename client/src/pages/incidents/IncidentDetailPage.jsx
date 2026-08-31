@@ -23,7 +23,8 @@ import {
   RejectRedirectModal,
   EditFeedbackModal,
   EditIncidentModal,
-  FilePreviewModal
+  FilePreviewModal,
+  AssignInvestigatorModal
 } from '../../components/incident-detail/modals';
 
 const TIMELINE_STAGES = [
@@ -66,6 +67,7 @@ export default function IncidentDetailPage() {
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [showRedirectModal, setShowRedirectModal] = useState(false);
   const [showRejectRedirectModal, setShowRejectRedirectModal] = useState(false);
+  const [showAssignInvestigatorModal, setShowAssignInvestigatorModal] = useState(false);
 
   const [editFbModal, setEditFbModal] = useState(null); // { feedbackType, currentText }
   const [editFbText, setEditFbText] = useState('');
@@ -79,6 +81,7 @@ export default function IncidentDetailPage() {
   const [mdFaultType, setMdFaultType] = useState('');
   const [mdActions, setMdActions] = useState('');
   const [mdRequireTraining, setMdRequireTraining] = useState(false);
+  const [mdResponsibleEmployees, setMdResponsibleEmployees] = useState([]);
   const [reopenReason, setReopenReason] = useState('');
   const [hodAcknowledged, setHodAcknowledged] = useState(false);
   const [redirectReason, setRedirectReason] = useState('');
@@ -99,6 +102,7 @@ export default function IncidentDetailPage() {
         setShowReopenModal(false);
         setShowRedirectModal(false);
         setShowRejectRedirectModal(false);
+        setShowAssignInvestigatorModal(false);
         setShowEditIncModal(false);
         setEditFbModal(null);
       }
@@ -147,10 +151,11 @@ export default function IncidentDetailPage() {
       fd.append('faultType', mdFaultType);
       fd.append('correctiveActions', mdActions);
       fd.append('requireTraining', mdRequireTraining);
+      fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
       mdAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.mdDecision(id, fd);
     },
-    onSuccess: () => { toast.success('Incident closed.'); setShowMdModal(false); setMdAttachments([]); setMdFaultType(''); setMdActions(''); refetch(); }
+    onSuccess: () => { toast.success('Incident closed.'); setShowMdModal(false); setMdAttachments([]); setMdFaultType(''); setMdActions(''); setMdResponsibleEmployees([]); refetch(); }
   });
 
   const reopenMutation = useMutation({
@@ -167,6 +172,12 @@ export default function IncidentDetailPage() {
     mutationFn: () => incidentsApi.remindHod(id),
     onSuccess: (res) => { toast.success(res.data?.message || 'Reminder sent!'); refetch(); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to send reminder')
+  });
+
+  const assignInvestigatorMutation = useMutation({
+    mutationFn: (investigatorIds) => incidentsApi.assignInvestigator(id, { investigatorIds }),
+    onSuccess: () => { toast.success('Investigators assigned successfully.'); setShowAssignInvestigatorModal(false); refetch(); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to assign investigators')
   });
 
   const editFeedbackMutation = useMutation({
@@ -234,6 +245,7 @@ export default function IncidentDetailPage() {
   const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && incident.status === 'resolved';
   const canEscalate = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && incident.status !== 'resolved' && incident.status !== 'withdrawn' && !incident.priority_escalated_by;
   const canRemindHod = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && incident.status !== 'resolved' && incident.status !== 'withdrawn' && !feedbacks?.some(fb => fb.role === 'hod');
+  const canAssignInvestigator = user?.role === 'imc' && user?.is_imc_lead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
 
   return (
     <>
@@ -265,11 +277,13 @@ export default function IncidentDetailPage() {
             canReopen={canReopen}
             canEscalate={canEscalate}
             canRemindHod={canRemindHod}
+            canAssignInvestigator={canAssignInvestigator}
             setShowWithdrawModal={setShowWithdrawModal}
             setShowFeedbackModal={setShowFeedbackModal}
             setShowRedirectModal={setShowRedirectModal}
             setShowMdModal={setShowMdModal}
             setShowReopenModal={setShowReopenModal}
+            setShowAssignInvestigatorModal={setShowAssignInvestigatorModal}
             openEditIncident={openEditIncident}
             escalateMutation={escalateMutation}
             remindHodMutation={remindHodMutation}
@@ -596,10 +610,18 @@ export default function IncidentDetailPage() {
         setMdActions={setMdActions}
         mdRequireTraining={mdRequireTraining}
         setMdRequireTraining={setMdRequireTraining}
+        mdResponsibleEmployees={mdResponsibleEmployees}
+        setMdResponsibleEmployees={setMdResponsibleEmployees}
         mdAttachments={mdAttachments}
         setMdAttachments={setMdAttachments}
         mutate={() => mdMutation.mutate()}
         isPending={mdMutation.isPending}
+      />
+      <AssignInvestigatorModal
+        show={showAssignInvestigatorModal}
+        onClose={() => setShowAssignInvestigatorModal(false)}
+        mutate={(ids) => assignInvestigatorMutation.mutate(ids)}
+        isPending={assignInvestigatorMutation.isPending}
       />
       <ReopenModal
         show={showReopenModal}

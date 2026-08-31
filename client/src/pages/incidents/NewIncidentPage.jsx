@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi } from '../../api';
-import { INCIDENT_CATEGORY_MAPPING, INCIDENT_CATEGORIES, OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../utils/helpers';
+import { INCIDENT_CATEGORY_MAPPING, INCIDENT_CATEGORIES, OCCURRED_TO_OPTIONS } from '../../utils/helpers';
 import { Alert, Spinner, Modal, SearchableMultiSelect, SearchableSelect } from '../../components/ui';
 import {
   ChevronRight, ChevronLeft, Check, MapPin, Calendar,
@@ -37,7 +37,6 @@ export default function NewIncidentPage() {
     mainLocationId: '',
     subLocationText: '',
     occurredTo: '',
-    severity: '',
     description: '',
     hasResponsiblePerson: false,
     responsiblePersonName: '',
@@ -110,7 +109,6 @@ export default function NewIncidentPage() {
 
     if (step === 5) {
       if (!form.occurredTo)              e.occurredTo  = 'Required';
-      if (!form.severity)                e.severity    = 'Required';
       if (!form.description.trim())      e.description = 'Description is required';
       if (form.description.length > 2000) e.description = 'Maximum 2000 characters';
     }
@@ -138,7 +136,6 @@ export default function NewIncidentPage() {
     formData.append('mainLocationId', form.mainLocationId);
     formData.append('subLocationText', form.subLocationText);
     formData.append('occurredTo', form.occurredTo);
-    formData.append('severity', form.severity);
     formData.append('incidentCategory', categories[0] || '');
     formData.append('incidentType', types[0] || '');
     formData.append('description', form.description);
@@ -336,19 +333,7 @@ export default function NewIncidentPage() {
                   </select>
                   {errors.occurredTo && <p className="field-error">{errors.occurredTo}</p>}
                 </div>
-                <div>
-                  <label className="field-label field-required">Severity</label>
-                  <select value={form.severity} onChange={e => set('severity', e.target.value)} className={`select ${errors.severity ? 'input-error' : ''}`}>
-                    <option value="">Select…</option>
-                    {SEVERITY_OPTIONS.map(o => <option key={o}>{o}</option>)}
-                  </select>
-                  {errors.severity && <p className="field-error">{errors.severity}</p>}
-                </div>
               </div>
-
-              {form.severity === 'Grave' && (
-                <Alert type="warning" title="Grave Severity" message="This incident will be reviewed simultaneously by HOD and IMC to expedite resolution." />
-              )}
 
               <div>
                 <label className="field-label field-required">
@@ -491,7 +476,6 @@ export default function NewIncidentPage() {
                   value={`${(meta?.mainLocations || []).find(l => l.id == form.mainLocationId)?.name || ''} › ${(meta?.subLocations || []).find(s => s.id == form.subLocationId)?.name || form.subLocationId}`}
                 />
                 <ReviewRow label="Occurred To" value={form.occurredTo} />
-                <ReviewRow label="Severity" value={form.severity} highlight={form.severity === 'Grave'} />
                 <ReviewRow label="Description" value={form.description} multiline />
                 <ReviewRow
                   label="Responsible Person"

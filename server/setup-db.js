@@ -24,6 +24,10 @@ const migrations = [
   '006_password_auth.sql',
   '007_office_portal_mock.sql',
   '008_department_mappings.sql',
+  '009_user_deactivation.sql',
+  '010_broadcast_notifications.sql',
+  '010_communication_logs.sql',
+  '012_workflow_updates.sql',
 ];
 
 function splitSqlStatements(sql) {

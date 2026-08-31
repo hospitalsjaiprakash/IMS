@@ -61,10 +61,10 @@ export const useAuthStore = create((set) => ({
     }
   },
 
-  switchRole: async (credentials) => {
+  switchRole: async ({ targetRole }) => {
     set({ loading: true, error: null });
     try {
-      const { data } = await authApi.switchRole(credentials);
+      const { data } = await authApi.switchRole({ targetRole });
       queryClient.clear();
       sessionStorage.removeItem('ims_query_cache');
       sessionStorage.setItem('ims_token', data.token);
@@ -73,7 +73,7 @@ export const useAuthStore = create((set) => ({
       return { success: true, user: data.user };
     } catch (err) {
       const errData = err.response?.data?.error;
-      const error = typeof errData === 'string' ? errData : (errData?.message || 'Role switch failed. Incorrect password.');
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Role switch failed.');
       set({ error, loading: false });
       return { success: false, error };
     }

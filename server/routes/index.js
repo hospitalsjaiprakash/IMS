@@ -210,19 +210,53 @@ router.post('/management/incidents/:id/remind-hod', authenticate, authorize('hea
 router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { investigatorId } = req.body;
-    const eligibleDesignations = ['Supervisor', 'Senior', 'HOD'];
-    const inv = await query(
-      'SELECT * FROM users WHERE id = $1 AND (role = $2 OR designation ILIKE ANY($3))',
-      [investigatorId, 'imc', eligibleDesignations]
-    );
-    if (!inv.rows.length) {
-      return res.status(400).json({ error: 'Investigator must be an IMC member or have Supervisor/Senior/HOD designation.' });
+    const { investigatorIds } = req.body; // Expecting an array
+
+    // Only IMC Chairman/Convenor (is_imc_lead) can assign investigator
+    if (!req.user.is_imc_lead) {
+      return res.status(403).json({ error: 'Only IMC Chairman/Convenor can assign investigators.' });
     }
-    await query(
-      `INSERT INTO investigators (incident_id, investigator_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-      [id, investigatorId, req.user.id]
+
+    if (!Array.isArray(investigatorIds) || investigatorIds.length === 0) {
+      return res.status(400).json({ error: 'Please select at least one investigator.' });
+    }
+
+    // Investigator must be an IMC member
+    const invRes = await query(
+      'SELECT * FROM users WHERE id = ANY($1) AND role = $2',
+      [investigatorIds, 'imc']
     );
+    if (invRes.rows.length !== investigatorIds.length) {
+      return res.status(400).json({ error: 'All assigned investigators must be valid IMC members.' });
+    }
+
+    // Insert each investigator
+    for (const inv of invRes.rows) {
+      await query(
+        `INSERT INTO investigators (incident_id, investigator_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [id, inv.id, req.user.id]
+      );
+    }
+
+    // Notify investigators
+    const { createNotification } = require('../utils/notifications');
+    const { sendEmail, templates } = require('../utils/emailService');
+    const incResult = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
+    const refId = incResult.rows[0]?.reference_id || 'Unknown';
+
+    for (const inv of invRes.rows) {
+      await createNotification(inv.id, id, 'Assigned as Investigator',
+        `You have been assigned as an investigator for incident ${refId}.`,
+        'investigator_assigned'
+      );
+      if (inv.email) {
+        sendEmail(inv.email, {
+          subject: `Assigned as Investigator for Incident ${refId}`,
+          html: `<p>Dear ${inv.full_name},</p><p>You have been chosen by the IMC Chairman to investigate incident <b>${refId}</b>.</p>`
+        }).catch(() => {});
+      }
+    }
+
     res.json({ success: true });
   } catch (e) { console.error('[POST /incidents/:id/assign-investigator] error:', e); res.status(500).json({ error: 'Failed to assign investigator' }); }
 });

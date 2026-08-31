@@ -11,7 +11,6 @@ import { notificationsApi, authApi, attachmentsApi } from '../../api';
 import { useQuery } from '@tanstack/react-query';
 import { timeAgo } from '../../utils/helpers';
 import { Spinner, AttachmentViewerModal } from '../ui';
-import CommitteeLoginModal from '../auth/CommitteeLoginModal';
 import logoImg from '../../assets/logo.webp';
 
 const getRoleDashboard = (role) => {
@@ -26,6 +25,11 @@ const getNavItems = (role) => {
     { to: getRoleDashboard(role), icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/incidents', icon: FileText, label: 'Incidents' },
   ];
+  if (role === 'hod') {
+    base.push(
+      { to: '/incidents?viewMode=my_team', icon: Users, label: 'My Team', matchSearch: '?viewMode=my_team' }
+    );
+  }
   if (role === 'imc') {
     base.push(
       { to: '/imc/dashboard?tab=analytics', icon: BarChart3, label: 'Dept. Analytics', matchSearch: '?tab=analytics' },
@@ -119,12 +123,14 @@ export default function AppLayout() {
     return <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${cls}`}>{label}</span>;
   };
 
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [adminTargetRole, setAdminTargetRole] = useState('imc');
-
-  const openAdminLogin = (role) => {
-    setAdminTargetRole(role);
-    setAdminModalOpen(true);
+  const openAdminLogin = async (role) => {
+    const result = await useAuthStore.getState().switchRole({ targetRole: role });
+    if (result.success) {
+      if (role === 'imc') navigate('/imc/dashboard');
+      else if (role === 'head_management') navigate('/management/dashboard');
+      else if (role === 'system_admin') navigate('/admin/dashboard');
+      else navigate('/dashboard');
+    }
   };
 
   const renderSidebarContent = () => {
@@ -382,12 +388,6 @@ export default function AppLayout() {
           </AnimatePresence>
         </main>
       </div>
-
-      <CommitteeLoginModal
-        open={adminModalOpen}
-        onClose={() => setAdminModalOpen(false)}
-        targetRole={adminTargetRole}
-      />
 
       <AttachmentViewerModal
         open={viewerOpen}

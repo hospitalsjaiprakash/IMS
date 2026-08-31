@@ -45,7 +45,7 @@ exports.createIncident = async (req, res) => {
     let {
       departmentIds, incidentDate, incidentTime,
       mainLocationId, subLocationText,
-      occurredTo, severity, incidentCategory, incidentType, description,
+      occurredTo, incidentCategory, incidentType, description,
       hasResponsiblePerson, responsiblePersonName, incidentCategories
     } = req.body;
 
@@ -101,13 +101,13 @@ exports.createIncident = async (req, res) => {
 
     // Determine initial status
     let status = 'with_hod';
+    const severity = 'Pending';
     const configResult = await client.query(
       "SELECT value FROM system_config WHERE key = 'parallel_grave_review'"
     );
     const parallelGrave = configResult.rows[0]?.value === 'true';
-    if (severity === 'Grave' && parallelGrave) {
-      status = 'with_hod_and_imc';
-    }
+    // Since severity is Pending at creation, it will not trigger parallel grave review.
+    // IMC will set severity later and status can be updated then if needed.
 
     // Insert incident
     const incidentResult = await client.query(
@@ -266,6 +266,21 @@ exports.getIncidents = async (req, res) => {
     if (role === 'employee' || (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_incidents')) {
       whereClause += ` AND i.reporter_id = $${paramIdx++}`;
       params.push(userId);
+    } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_team') {
+      const userDept = department || '';
+      whereClause += ` AND EXISTS (
+        SELECT 1 FROM incident_responsible_employees ire
+        JOIN users ru ON ru.id = ire.employee_id
+        LEFT JOIN departments d ON LOWER(d.name) = LOWER(ru.department) OR d.id = ire.department_id
+        WHERE ire.incident_id = i.id AND (
+          d.hod_user_id = $${paramIdx} OR
+          d.incharge_user_id = $${paramIdx} OR
+          d.asst_coo_user_id = $${paramIdx} OR
+          (LOWER(d.name) = LOWER($${paramIdx + 1}))
+        )
+      )`;
+      params.push(userId, userDept);
+      paramIdx += 2;
     } else if (['hod', 'asst_coo', 'coo'].includes(role)) {
       const userDept = department || '';
       whereClause += ` AND EXISTS (
