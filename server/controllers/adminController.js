@@ -166,14 +166,19 @@ exports.assignUserRole = async (req, res) => {
     const prevRole = user.role;
 
     let updateSql = `UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`;
+    let actualRole = targetRole;
+
     if (targetRole === 'imc') {
-      updateSql = `UPDATE users SET role = $1, is_imc_member = TRUE, updated_at = NOW() WHERE id = $2`;
+      updateSql = `UPDATE users SET role = $1, is_imc_member = TRUE, is_imc_lead = FALSE, updated_at = NOW() WHERE id = $2`;
+    } else if (targetRole === 'imc_convenor') {
+      actualRole = 'imc';
+      updateSql = `UPDATE users SET role = $1, is_imc_member = TRUE, is_imc_lead = TRUE, updated_at = NOW() WHERE id = $2`;
     } else if (targetRole === 'head_management') {
       updateSql = `UPDATE users SET role = $1, is_management_member = TRUE, updated_at = NOW() WHERE id = $2`;
     } else if (targetRole === 'system_admin') {
       updateSql = `UPDATE users SET role = $1, is_system_admin = TRUE, updated_at = NOW() WHERE id = $2`;
     }
-    await query(updateSql, [targetRole, user.id]);
+    await query(updateSql, [actualRole, user.id]);
 
     if (targetRole === 'hod' && departmentId) {
       await query(`UPDATE departments SET hod_user_id = $1 WHERE id = $2`, [user.id, departmentId]);
@@ -183,11 +188,11 @@ exports.assignUserRole = async (req, res) => {
     await query(
       `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
        VALUES ($1, $2, $3, $4)`,
-      [user.id, prevRole, targetRole, req.user.id]
+      [user.id, prevRole, actualRole, req.user.id]
     );
 
     await auditLog(req.user.id, 'ROLE_ASSIGNED', null, {
-      targetEmployee: user.employee_id, prevRole, newRole: targetRole, departmentId
+      targetEmployee: user.employee_id, prevRole, newRole: actualRole, targetRoleRequested: targetRole, departmentId
     }, req.ip);
 
     res.json({ success: true });
@@ -398,21 +403,73 @@ exports.toggleUserActiveStatus = async (req, res) => {
     if (!id) return res.status(400).json({ error: 'User ID is required' });
 
     const userRes = await query('SELECT is_active FROM users WHERE id = $1', [id]);
-    if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (!userRes.rows.length) return res.status(404).json({ error: 'User not found' });
 
     const newStatus = !userRes.rows[0].is_active;
 
-    await query(
-      'UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2',
-      [newStatus, id]
+    await query('UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2', [newStatus, id]);
+
+    await auditLog(req.user.id, 'USER_STATUS_TOGGLED', null, { targetUser: id, newStatus }, req.ip);
+
+    res.json({ success: true, is_active: newStatus });
+  } catch (error) {
+    console.error('[POST /admin/users/:id/toggle-status] error:', error);
+    res.status(500).json({ error: 'Failed to toggle status' });
+  }
+};
+
+exports.getUserProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Validate user exists
+    const userRes = await query('SELECT * FROM users WHERE id = $1', [id]);
+    if (!userRes.rows.length) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const user = userRes.rows[0];
+
+    // Fetch reported incidents
+    const reportedRes = await query(
+      `SELECT id, reference_id, incident_date, status, severity, incident_type, created_at 
+       FROM incidents WHERE reporter_id = $1 ORDER BY created_at DESC`,
+      [id]
     );
 
-    await auditLog(req.user.id, newStatus ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', null, { targetUserId: id }, req.ip);
+    // Fetch responsible incidents (investigator or training required)
+    const responsibleRes = await query(
+      `SELECT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, 'Investigator' as role_type, i.created_at
+       FROM incidents i JOIN investigators inv ON inv.incident_id = i.id WHERE inv.investigator_id = $1
+       UNION
+       SELECT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, 'Training Required' as role_type, i.created_at
+       FROM incidents i JOIN training_records tr ON tr.incident_id = i.id WHERE tr.employee_id = $1
+       ORDER BY created_at DESC`,
+      [id]
+    );
 
-    res.json({ success: true, is_active: newStatus, message: newStatus ? 'Account activated.' : 'Account deactivated.' });
+    // Fetch department incidents if HOD/Incharge
+    let departmentIncidents = [];
+    if (user.role === 'hod' || user.is_management_member) {
+       const deptRes = await query(
+         `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, d.name as dept_name, i.created_at
+          FROM incidents i
+          JOIN incident_departments idp ON idp.incident_id = i.id
+          JOIN departments d ON d.id = idp.department_id
+          WHERE d.hod_user_id = $1 OR d.incharge_user_id = $1
+          ORDER BY i.created_at DESC`,
+         [id]
+       );
+       departmentIncidents = deptRes.rows;
+    }
+
+    res.json({
+      reportedIncidents: reportedRes.rows,
+      responsibleIncidents: responsibleRes.rows,
+      departmentIncidents
+    });
   } catch (error) {
-    console.error('Error toggling user status:', error);
-    res.status(500).json({ error: 'Failed to toggle user status' });
+    console.error('[GET /admin/users/:id/profile] error:', error);
+    res.status(500).json({ error: 'Failed to fetch user profile' });
   }
 };
 
@@ -627,7 +684,7 @@ exports.searchEmployeeProfile = async (req, res) => {
 
     // Fetch reported incidents
     const incidentsResult = await query(
-      `SELECT id, reference_id, incident_date, incident_type, severity, status, created_at 
+      `SELECT id, reference_id, incident_date, incident_category, incident_type, severity, status, created_at 
        FROM incidents 
        WHERE reporter_id = $1 
        ORDER BY created_at DESC 

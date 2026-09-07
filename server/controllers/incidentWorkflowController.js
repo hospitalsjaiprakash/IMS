@@ -195,6 +195,10 @@ exports.submitImcFeedback = async (req, res) => {
     const { id } = req.params;
     let { feedbackText, forwardToMd, severity } = req.body;
     
+    if (!req.user.is_imc_lead) {
+      return res.status(403).json({ error: 'Only the IMC Convenor can submit feedback.' });
+    }
+
     forwardToMd = forwardToMd === 'true' || forwardToMd === true;
 
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);

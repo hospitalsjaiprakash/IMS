@@ -2,6 +2,9 @@
 const generateReferenceId = async (client) => {
   const year = new Date().getFullYear();
   
+  // Lock the table to prevent race conditions from concurrent incident submissions
+  await client.query('LOCK TABLE incidents IN EXCLUSIVE MODE');
+
   // Get next sequence number for this year
   const result = await client.query(
     `SELECT COALESCE(MAX(seq_number), 0) + 1 as next_seq 

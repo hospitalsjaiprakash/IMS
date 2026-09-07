@@ -89,7 +89,6 @@ export default function AppLayout() {
     const handleKey = (e) => {
       if (e.key === 'Escape') {
         setNotifOpen(false);
-        setAdminModalOpen(false);
       }
     };
     document.addEventListener('mousedown', handler);

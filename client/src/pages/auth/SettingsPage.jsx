@@ -1,15 +1,23 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { authApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
-import { Alert, Spinner } from '../../components/ui';
+import { Alert, Spinner, SkeletonDetail } from '../../components/ui';
 import { User, Bell, Shield, Info, KeyRound, Lock, Send, Eye, EyeOff, CheckCircle2, AlertCircle, Edit2, Save, X, Phone, MessageSquare, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function SettingsPage() {
   const { user, refreshUser, logout } = useAuthStore();
   const navigate = useNavigate();
+
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Artificial delay to show consistent loading skeleton transition
+    const timer = setTimeout(() => setIsLoading(false), 300);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Profile editing state
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -113,6 +121,8 @@ export default function SettingsPage() {
     head_management: 'You make final decisions on incidents and generate official reports.',
     system_admin: 'You have full access to all system settings, users, and analytics.',
   };
+
+  if (isLoading) return <SkeletonDetail />;
 
   return (
     <div className="max-w-2xl space-y-6">

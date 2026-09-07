@@ -7,6 +7,7 @@ const incidentWorkflowController = require('../controllers/incidentWorkflowContr
 const incidentActionsController = require('../controllers/incidentActionsController');
 const notificationsController = require('../controllers/notificationsController');
 const adminController = require('../controllers/adminController');
+const masterEmployeesRoutes = require('./masterEmployeesRoutes');
 const { query } = require('../config/database');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
@@ -396,6 +397,7 @@ router.get('/admin/audit-logs/export', authenticate, authorize('system_admin'), 
 router.get('/admin/audit-logs', authenticate, authorize('system_admin'), adminController.getAuditLogs);
 router.get('/admin/analytics', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
 router.get('/admin/users', authenticate, authorize('system_admin'), adminController.getAllUsers);
+router.get('/admin/users/:id/profile', authenticate, authorize('system_admin'), adminController.getUserProfile);
 router.post('/admin/users/:id/toggle-status', authenticate, authorize('system_admin'), adminController.toggleUserActiveStatus);
 router.get('/admin/role-audit', authenticate, authorize('system_admin'), adminController.getRoleAudit);
 router.get('/admin/management-members', authenticate, authorize('system_admin'), adminController.getManagementMembers);
@@ -408,7 +410,7 @@ router.get('/admin/communication-logs', authenticate, authorize('system_admin'),
 // ─── EMPLOYEE SEARCH & DIRECTORY ───────────────────
 router.get('/employee/search', authenticate, authorize('imc', 'head_management', 'system_admin'), adminController.searchEmployeeProfile);
 router.get('/employees/directory', authenticate, authorize('imc', 'head_management', 'system_admin'), adminController.getAllUsers);
-
+router.use('/master-employees', require('./masterEmployeesRoutes'));
 
 // ─── IMC QUEUE ────────────────────────────────────
 router.get('/imc/queue', authenticate, authorize('imc'), async (req, res) => {
@@ -479,5 +481,7 @@ router.post('/training/:id/complete', authenticate, authorize('hod', 'imc'), asy
     res.json({ success: true });
   } catch (e) { console.error('[POST /training/:id/complete] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
+
+router.use('/master-employees', masterEmployeesRoutes);
 
 module.exports = router;

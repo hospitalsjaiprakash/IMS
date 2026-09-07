@@ -129,7 +129,7 @@ exports.register = async (req, res) => {
       // Hash password and update record
       const passwordHash = await bcrypt.hash(password, 12);
 
-      const portalCheck = await query('SELECT phone FROM office_portal_employees WHERE employee_id = $1', [record.employee_id]).catch(() => ({ rows: [] }));
+      const portalCheck = await query('SELECT phone FROM master_employees WHERE employee_id = $1', [record.employee_id]).catch(() => ({ rows: [] }));
       const portalPhone = portalCheck.rows[0]?.phone || null;
 
       const updatedUser = await query(
@@ -162,36 +162,18 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Employee ID NOT in DB — try Office Portal API
+    // Employee ID NOT in DB — check Master Employee database
     let portalData = null;
-    if (process.env.OFFICE_PORTAL_API_URL) {
-      try {
-        const response = await require('axios').post(
-          `${process.env.OFFICE_PORTAL_API_URL}/validate-employee`,
-          { name: fullName, employeeId },
-          { timeout: parseInt(process.env.OFFICE_PORTAL_API_TIMEOUT || '5000') }
-        );
-        if (response.data?.valid) {
-          portalData = response.data.data;
-        }
-      } catch (err) {
-        // Portal unavailable — fall through to error
+    try {
+      const masterRes = await query(
+        'SELECT employee_id, name, email, phone, department, designation, role FROM master_employees WHERE employee_id = $1',
+        [employeeId.trim()]
+      );
+      if (masterRes.rows.length > 0) {
+        portalData = masterRes.rows[0];
       }
-    }
-
-    // If external portal failed or not running, check local Office Portal DB table
-    if (!portalData) {
-      try {
-        const mockRes = await query(
-          'SELECT employee_id, name, email, phone, department, designation, role FROM office_portal_employees WHERE employee_id = $1',
-          [employeeId.trim()]
-        );
-        if (mockRes.rows.length > 0) {
-          portalData = mockRes.rows[0];
-        }
-      } catch (mockErr) {
-        // Fallback table check failed
-      }
+    } catch (err) {
+      console.error('Error fetching from master_employees:', err);
     }
 
     if (!portalData) {

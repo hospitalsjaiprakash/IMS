@@ -264,8 +264,8 @@ export default function IncidentDetailPage() {
   const { incident, feedbacks, attachments, finalReport } = data;
 
   const canWithdraw = user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status);
-  const canHodFeedback = user?.role === 'hod' && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
-  const canRequestRedirect = user?.role === 'hod' && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
+  const canHodFeedback = user?.role === 'hod' && incident.is_target_hod && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
+  const canRequestRedirect = user?.role === 'hod' && incident.is_target_hod && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
   const canImcAct = user?.role === 'imc' && user?.id !== incident.reporter_id && (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training'].includes(incident.status) || (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
   const canMdAct = user?.role === 'head_management' && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
   const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
@@ -431,43 +431,53 @@ export default function IncidentDetailPage() {
                         </button>
                       </div>
                     )}
-                    <div className="space-y-4">
-                      <div>
-                        <label className="field-label mb-1">Your Review & Findings</label>
-                        <textarea
-                          value={feedbackText}
-                          onChange={e => setFeedbackText(e.target.value)}
-                          placeholder="Enter quality assessment, root cause observation, or corrective action recommendations..."
-                          className="textarea"
-                          rows={3}
-                        />
-                        <FileUploadArea files={imcAttachments} setFiles={setImcAttachments} />
+                    {user?.is_imc_lead ? (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="field-label mb-1">Your Review & Findings</label>
+                          <textarea
+                            value={feedbackText}
+                            onChange={e => setFeedbackText(e.target.value)}
+                            placeholder="Enter quality assessment, root cause observation, or corrective action recommendations..."
+                            className="textarea"
+                            rows={3}
+                          />
+                          <FileUploadArea files={imcAttachments} setFiles={setImcAttachments} />
+                        </div>
+                        <div>
+                          <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
+                          <select
+                            value={imcSeverity}
+                            onChange={(e) => setImcSeverity(e.target.value)}
+                            className="select w-full"
+                            required
+                          >
+                            <option value="">Select Severity...</option>
+                            <option value="Minor">Minor</option>
+                            <option value="Major">Major</option>
+                            <option value="Grave">Grave</option>
+                          </select>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => imcFeedbackMutation.mutate(true)}
+                            disabled={!feedbackText.trim() || !imcSeverity || imcFeedbackMutation.isPending}
+                            className="btn-primary btn-sm"
+                          >
+                            {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
+                            Forward to Management
+                          </button>
+                        </div>
                       </div>
-                      <div>
-                        <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
-                        <select
-                          value={imcSeverity}
-                          onChange={(e) => setImcSeverity(e.target.value)}
-                          className="select w-full"
-                          required
-                        >
-                          <option value="">Select Severity...</option>
-                          <option value="Minor">Minor</option>
-                          <option value="Major">Major</option>
-                          <option value="Grave">Grave</option>
-                        </select>
+                    ) : (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center">
+                        <MessageSquare className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                        <h3 className="text-sm font-bold text-slate-700">Awaiting Convenor Action</h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          The IMC Convenor is responsible for submitting the quality review and assigning investigators.
+                        </p>
                       </div>
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => imcFeedbackMutation.mutate(true)}
-                          disabled={!feedbackText.trim() || !imcSeverity || imcFeedbackMutation.isPending}
-                          className="btn-primary btn-sm"
-                        >
-                          {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
-                          Forward to Management
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </>
                 )}
               </div>
@@ -580,9 +590,13 @@ export default function IncidentDetailPage() {
                   
                   let stageLabel = stage.label;
                   if (i === 1) {
-                    stageLabel = done ? 'HOD Reviewed' : 'Awaiting HOD Feedback';
+                    stageLabel = done 
+                      ? (feedbacks?.some(f => f.role === 'hod') ? 'HOD Reviewed' : 'HOD Bypassed') 
+                      : 'Awaiting HOD Feedback';
                   } else if (i === 2) {
-                    stageLabel = done ? 'IMC Reviewed' : 'Awaiting IMC Feedback';
+                    stageLabel = done 
+                      ? (feedbacks?.some(f => f.role === 'imc') ? 'IMC Reviewed' : 'IMC Bypassed') 
+                      : 'Awaiting IMC Feedback';
                   } else if (i === 3) {
                     stageLabel = done ? 'Mgmt Reviewed' : 'Awaiting Mgmt Decision';
                   } else if (i === 4) {

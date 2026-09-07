@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, metaApi } from '../../api';
+import api from '../../api';
 import { Spinner, Modal, Alert, Pagination } from '../../components/ui';
 import {
   Search, Plus, ShieldCheck, UserMinus, AlertTriangle, ShieldX,
   Users, Award, Building2, CheckCircle2, Edit3, ShieldAlert,
-  UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send
+  UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, Upload, Copy, FileUp, ArrowLeft
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
+import * as XLSX from 'xlsx';
 
 export default function AdminUsersPage() {
   const qc = useQueryClient();
@@ -22,18 +24,34 @@ export default function AdminUsersPage() {
   // Modal States
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignForm, setAssignForm] = useState({ employeeId: '', targetRole: 'system_admin', departmentId: '' });
+  const [assignSearchTerm, setAssignSearchTerm] = useState('');
 
   const [showStopModal, setShowStopModal] = useState(false);
   const [stopTarget, setStopTarget] = useState({ id: '', employeeId: '', fullName: '', type: 'imc' });
 
   const [showMapModal, setShowMapModal] = useState(false);
   const [mapForm, setMapForm] = useState({ departmentId: '', leaderType: 'hod', employeeId: '' });
+  const [mapSearchTerm, setMapSearchTerm] = useState('');
+
+  const [selectedProfileUser, setSelectedProfileUser] = useState(null);
 
   // Queries
   const { data: usersData, isLoading: isLoadingUsers } = useQuery({
     queryKey: ['admin-users', search, roleFilter, page],
     queryFn: () => adminApi.getUsers({ search, role: roleFilter, page, limit: 20 }).then(r => r.data),
+    enabled: activeCard !== 'employee',
   });
+
+  const { data: masterEmployees = [], isLoading: isLoadingMaster } = useQuery({
+    queryKey: ['master-employees'],
+    queryFn: () => api.get('/master-employees').then(r => r.data.data),
+  });
+
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef(null);
+  const [addForm, setAddForm] = useState({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
 
   const { data: departments = [], isLoading: isLoadingDepts } = useQuery({
     queryKey: ['departments'],
@@ -54,7 +72,11 @@ export default function AdminUsersPage() {
     queryKey: ['management-members'],
     queryFn: () => adminApi.getManagementMembers().then(r => r.data),
   });
-
+  const { data: userProfileData, isLoading: isLoadingProfile } = useQuery({
+    queryKey: ['user-profile', selectedProfileUser?.id],
+    queryFn: () => adminApi.getUserProfile(selectedProfileUser.id).then(r => r.data),
+    enabled: !!selectedProfileUser?.id,
+  });
 
   // Mutations
   const assignMutation = useMutation({
@@ -71,6 +93,94 @@ export default function AdminUsersPage() {
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to update user role'),
   });
+
+  const addMutation = useMutation({
+    mutationFn: (data) => api.post('/master-employees', data),
+    onSuccess: () => {
+      toast.success('Employee added to Directory');
+      qc.invalidateQueries({ queryKey: ['master-employees'] });
+      setIsAddModalOpen(false);
+      setAddForm({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to add employee')
+  });
+
+  const bulkAddMutation = useMutation({
+    mutationFn: (employees) => api.post('/master-employees/bulk', { employees }),
+    onSuccess: (res) => {
+      const msgs = [];
+      if (res.data.alreadyExists && res.data.alreadyExists.length > 0) {
+        msgs.push(`Skipped existing: ${res.data.alreadyExists.join(', ')}`);
+      }
+      if (res.data.invalidData && res.data.invalidData.length > 0) {
+        msgs.push(`Skipped invalid formats: ${res.data.invalidData.join(', ')}`);
+      }
+      
+      if (msgs.length > 0) {
+        toast.error(`Upload complete with skips.\n${msgs.join('\n')}`, { duration: 8000 });
+      } else {
+        toast.success(res.data.message || 'Bulk upload successful');
+      }
+      qc.invalidateQueries({ queryKey: ['master-employees'] });
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to process upload')
+  });
+
+  const handleFileUpload = (e) => {
+    e.preventDefault();
+    const file = e.target?.files?.[0] || e.dataTransfer?.files?.[0];
+    if (!file) return;
+
+    const validExts = ['csv', 'xlsx', 'xls'];
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!validExts.includes(ext)) {
+      toast.error('Only CSV or Excel files are allowed.');
+      e.target.value = null;
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws);
+        
+        if (data.length === 0) {
+          toast.error("Excel sheet is empty.");
+          return;
+        }
+
+        const requiredHeaders = ['employee name', 'employee id', 'designation', 'department', 'mobile number', 'email'];
+        const actualHeaders = Object.keys(data[0]).map(k => k.toLowerCase().trim());
+        
+        const hasAll = requiredHeaders.every(h => actualHeaders.includes(h));
+        if (!hasAll) {
+          toast.error("This excel sheet is not complete show read the congiguartion first then upload exact data");
+          return;
+        }
+
+        const mappedEmployees = data.map(row => {
+          const getVal = (key) => row[Object.keys(row).find(k => k.toLowerCase().trim() === key)] || '';
+          return {
+            employeeId: getVal('employee id'),
+            name: getVal('employee name'),
+            department: getVal('department'),
+            designation: getVal('designation'),
+            phone: getVal('mobile number'),
+            email: getVal('email')
+          };
+        }).filter(e => e.employeeId && e.name);
+
+        if (mappedEmployees.length === 0) return toast.error("Could not parse employees. Data might be empty.");
+        bulkAddMutation.mutate(mappedEmployees);
+        setShowBulkUploadModal(false);
+      } catch (err) { toast.error('Error parsing Excel file'); }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = null;
+  };
 
   const removeMutation = useMutation({
     mutationFn: (target) => {
@@ -137,7 +247,168 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-6 pb-14 w-full">
-      {/* Header Toolbar */}
+      {selectedProfileUser ? (
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800 font-display">Personnel Profile & Analytics</h1>
+              <p className="text-sm text-slate-500">View detailed profile, active permissions, and incident history.</p>
+            </div>
+            <button 
+              onClick={() => setSelectedProfileUser(null)}
+              className="btn btn-secondary bg-white flex items-center gap-2 shadow-sm border-slate-200"
+            >
+              <ArrowLeft size={16} /> Back to Directory
+            </button>
+          </div>
+          
+          <div className="space-y-6 bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm">
+            {/* Header / Badges */}
+            <div className="flex items-start gap-5 p-6 bg-gradient-to-br from-blue-50/50 to-indigo-50/30 rounded-2xl border border-blue-100/50">
+              <div className="w-20 h-20 rounded-2xl bg-white text-blue-600 flex items-center justify-center text-4xl font-black shadow-md border border-blue-100 flex-shrink-0">
+                {selectedProfileUser.full_name?.charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 truncate">{selectedProfileUser.full_name}</h3>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className="font-mono text-sm font-bold bg-slate-100 px-2 py-0.5 rounded text-slate-700">ID: {selectedProfileUser.employee_id}</span>
+                      {selectedProfileUser.is_active ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-600 uppercase bg-emerald-100 px-2.5 py-0.5 rounded-md border border-emerald-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Active
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-rose-600 uppercase bg-rose-100 px-2.5 py-0.5 rounded-md border border-rose-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Inactive
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <span className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-white text-slate-700 border-slate-200 shadow-sm inline-flex items-center gap-2">
+                      <Briefcase size={14} className="text-slate-400" /> {selectedProfileUser.designation || 'Staff'}
+                    </span>
+                    <span className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-white text-slate-700 border-slate-200 shadow-sm inline-flex items-center gap-2">
+                      <Building2 size={14} className="text-slate-400" /> {selectedProfileUser.department || 'No Dept'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Statistics & Analytics */}
+            {isLoadingProfile ? (
+              <div className="py-24 flex flex-col items-center justify-center gap-4">
+                <Spinner size={36} className="text-blue-500" />
+                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Loading Analytics...</p>
+              </div>
+            ) : userProfileData ? (
+              <div className="space-y-8">
+                
+                {/* Stats Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col items-center text-center group hover:border-slate-300 transition-colors">
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><UserCheck size={14}/> Reported</p>
+                    <p className="text-4xl font-black text-slate-900 group-hover:scale-110 transition-transform">{userProfileData.reportedIncidents?.length || 0}</p>
+                    <p className="text-[11px] font-bold text-slate-500 mt-2">Personal Incidents</p>
+                  </div>
+                  <div className="bg-amber-50/30 border border-amber-200/60 rounded-2xl p-5 shadow-sm flex flex-col items-center text-center group hover:border-amber-300/80 transition-colors">
+                    <p className="text-xs font-black text-amber-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><AlertTriangle size={14}/> Responsible</p>
+                    <p className="text-4xl font-black text-amber-700 group-hover:scale-110 transition-transform">{userProfileData.responsibleIncidents?.length || 0}</p>
+                    <p className="text-[11px] font-bold text-amber-600/80 mt-2">Investigator / Training</p>
+                  </div>
+                  {(selectedProfileUser.role === 'hod' || selectedProfileUser.is_management_member) && (
+                    <div className="bg-indigo-50/30 border border-indigo-200/60 rounded-2xl p-5 shadow-sm flex flex-col items-center text-center group hover:border-indigo-300/80 transition-colors">
+                      <p className="text-xs font-black text-indigo-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Building2 size={14}/> Department</p>
+                      <p className="text-4xl font-black text-indigo-700 group-hover:scale-110 transition-transform">{userProfileData.departmentIncidents?.length || 0}</p>
+                      <p className="text-[11px] font-bold text-indigo-600/80 mt-2">Received Incidents</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lists Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {userProfileData.responsibleIncidents?.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                        <AlertTriangle size={16} className="text-amber-500" /> Incidents Responsible For
+                      </h4>
+                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                        {userProfileData.responsibleIncidents.map(inc => (
+                          <div key={inc.id + inc.role_type} className="p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                            <div>
+                              <p className="font-bold text-sm text-slate-800 hover:text-blue-600 cursor-pointer">{inc.reference_id || 'Pending Ref'}</p>
+                              <p className="text-[11px] font-medium text-slate-500 mt-1">{new Date(inc.incident_date).toLocaleDateString()} • {inc.incident_type}</p>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {inc.role_type}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {userProfileData.departmentIncidents?.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                        <Building2 size={16} className="text-indigo-500" /> Department Received Incidents
+                      </h4>
+                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                        {userProfileData.departmentIncidents.map(inc => (
+                          <div key={inc.id} className="p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                            <div>
+                              <p className="font-bold text-sm text-slate-800 hover:text-blue-600 cursor-pointer">{inc.reference_id || 'Pending Ref'}</p>
+                              <p className="text-[11px] font-medium text-slate-500 mt-1">{inc.dept_name}</p>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                              {inc.status?.replace(/_/g, ' ').toUpperCase() || 'UNKNOWN'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {userProfileData.reportedIncidents?.length > 0 && (
+                    <div className="space-y-3 lg:col-span-2">
+                      <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                        <UserCheck size={16} className="text-emerald-500" /> Personally Reported Incidents
+                      </h4>
+                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                        {userProfileData.reportedIncidents.map(inc => (
+                          <div key={inc.id} className="p-4 hover:bg-slate-50 transition-colors flex flex-col gap-2">
+                            <div className="flex justify-between items-start">
+                              <p className="font-bold text-sm text-slate-800 hover:text-blue-600 cursor-pointer">{inc.reference_id || 'Pending Ref'}</p>
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                {inc.status?.replace(/_/g, ' ').toUpperCase() || 'UNKNOWN'}
+                              </span>
+                            </div>
+                            <p className="text-xs font-medium text-slate-500">{new Date(inc.incident_date).toLocaleDateString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {(!userProfileData.reportedIncidents?.length && !userProfileData.responsibleIncidents?.length && !userProfileData.departmentIncidents?.length) && (
+                  <div className="py-16 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 mt-6">
+                    <ShieldCheck size={32} className="text-slate-400 mx-auto mb-3" />
+                    <p className="text-sm font-bold text-slate-600">No incident history</p>
+                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">This personnel is currently not associated with any active or historical incidents.</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="py-16 text-center text-red-500 text-sm font-bold">Failed to load analytics</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Header Toolbar */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-2">
         {/* Simple Segmented Control for Tabs */}
         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto w-full xl:w-auto max-w-full">
@@ -190,6 +461,17 @@ export default function AdminUsersPage() {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+          {activeCard === 'employee' && (
+            <>
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
+              <button onClick={() => setShowBulkUploadModal(true)} disabled={bulkAddMutation.isPending} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
+                {bulkAddMutation.isPending ? <Spinner size={14} /> : <Upload size={14} />} Bulk Upload
+              </button>
+              <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
+                <Plus size={14} /> Add Employee
+              </button>
+            </>
+          )}
           <button
             onClick={() => {
               setMapForm({ departmentId: departments[0]?.id || '', leaderType: 'hod', employeeId: '' });
@@ -242,7 +524,7 @@ export default function AdminUsersPage() {
                       <span>Hospital Personnel Directory</span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Search, filter, and inspect governance permissions across all {usersData?.total || 0} registered staff members
+                      Search, filter, and inspect governance permissions across all {masterEmployees.length || 0} registered staff members
                     </p>
                   </div>
                   <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
@@ -285,14 +567,21 @@ export default function AdminUsersPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {(usersData?.users || []).length === 0 ? (
-                            <tr><td colSpan={7} className="text-center py-14 text-slate-400 font-medium">No personnel found matching your filter criteria. Verify backend is running.</td></tr>
-                          ) : (usersData?.users || []).map(u => {
+                          {isLoadingMaster ? <tr><td colSpan={7} className="text-center py-14"><Spinner size={24} /></td></tr> : (
+                            masterEmployees.filter(emp => 
+                              emp.full_name?.toLowerCase().includes(search.toLowerCase()) || 
+                              emp.employee_id?.toLowerCase().includes(search.toLowerCase())
+                            ).length === 0 ? (
+                              <tr><td colSpan={7} className="text-center py-14 text-slate-400 font-medium">No personnel found matching your filter criteria.</td></tr>
+                            ) : masterEmployees.filter(emp => 
+                              emp.full_name?.toLowerCase().includes(search.toLowerCase()) || 
+                              emp.employee_id?.toLowerCase().includes(search.toLowerCase())
+                            ).map(u => {
                             const hasImcAccess = u.role === 'imc' || u.is_imc_member || u.is_imc_lead;
                             const hasMgmtAccess = u.role === 'head_management' || u.is_management_member;
                             const isSysAdmin = u.role === 'system_admin' || u.is_system_admin;
                             return (
-                              <tr key={u.id} className="hover:bg-blue-50/30 transition-colors group">
+                              <tr key={u.id} onClick={() => setSelectedProfileUser(u)} className="hover:bg-blue-50/30 transition-colors group cursor-pointer">
                                 <td className="pl-6 py-4">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 border border-slate-300/80 flex items-center justify-center flex-shrink-0 shadow-2xs font-bold text-slate-700">
@@ -310,29 +599,37 @@ export default function AdminUsersPage() {
                                 <td className="text-xs font-semibold text-slate-700 py-4">{u.department || '—'}</td>
                                 <td className="text-xs text-slate-600 py-4">{u.designation || '—'}</td>
                                 <td className="py-4">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${roleColorMap[u.role] || 'bg-slate-100 text-slate-700'}`}>
-                                      {u.role?.replace(/_/g, ' ').toUpperCase()}
+                                  {u.is_registered ? (
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${roleColorMap[u.role] || 'bg-slate-100 text-slate-700'}`}>
+                                        {u.role?.replace(/_/g, ' ').toUpperCase()}
+                                      </span>
+                                      {isSysAdmin && u.role !== 'system_admin' && (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200">
+                                          ★ SYSTEM ADMIN
+                                        </span>
+                                      )}
+                                      {hasImcAccess && u.role !== 'imc' && (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                          + IMC COMMITTEE
+                                        </span>
+                                      )}
+                                      {hasMgmtAccess && u.role !== 'head_management' && (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                          + MANAGEMENT
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold border bg-slate-100 text-slate-500 border-slate-200">
+                                      NO IMS ACCOUNT
                                     </span>
-                                    {isSysAdmin && u.role !== 'system_admin' && (
-                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200">
-                                        ★ SYSTEM ADMIN
-                                      </span>
-                                    )}
-                                    {hasImcAccess && u.role !== 'imc' && (
-                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
-                                        + IMC COMMITTEE
-                                      </span>
-                                    )}
-                                    {hasMgmtAccess && u.role !== 'head_management' && (
-                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                                        + MANAGEMENT
-                                      </span>
-                                    )}
-                                  </div>
+                                  )}
                                 </td>
                                 <td className="py-4">
-                                  {u.is_active ? (
+                                  {!u.is_registered ? (
+                                    <span className="text-xs text-slate-400 font-medium">Unregistered</span>
+                                  ) : u.is_active ? (
                                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
                                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Active
                                     </span>
@@ -344,25 +641,30 @@ export default function AdminUsersPage() {
                                 </td>
                                 <td className="pr-6 py-4 text-right">
                                   <button
-                                    onClick={() => {
+                                    disabled={!u.is_registered}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setAssignForm({ employeeId: u.employee_id, targetRole: u.role !== 'employee' ? u.role : 'imc', departmentId: '' });
                                       setShowAssignModal(true);
                                     }}
-                                    className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1"
+                                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : 'bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700'}`}
                                   >
                                     <Edit3 size={13} /> Configure
                                   </button>
                                   <button
-                                    onClick={async () => {
+                                    disabled={!u.is_registered}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
                                       try {
                                         await adminApi.toggleUserStatus(u.id);
                                         toast.success(`User account ${u.is_active ? 'deactivated' : 'activated'} successfully.`);
                                         qc.invalidateQueries({ queryKey: ['admin-users'] });
+                                        qc.invalidateQueries({ queryKey: ['master-employees'] });
                                       } catch (error) {
                                         toast.error(error.response?.data?.error || 'Failed to change user status');
                                       }
                                     }}
-                                    className={`ml-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${u.is_active
+                                    className={`ml-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : u.is_active
                                         ? 'bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200'
                                         : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white border border-emerald-200'
                                       }`}
@@ -373,12 +675,9 @@ export default function AdminUsersPage() {
                                 </td>
                               </tr>
                             );
-                          })}
+                          }))}
                         </tbody>
                       </table>
-                    </div>
-                    <div className="p-4 border-t border-slate-200 bg-slate-50/40">
-                      <Pagination page={page} totalPages={usersData?.totalPages || 1} onPageChange={setPage} />
                     </div>
                   </>
                 )}
@@ -819,15 +1118,99 @@ export default function AdminUsersPage() {
           </div>
 
           <div>
-            <label className="field-label field-required font-bold">Hospital Employee ID</label>
-            <input
-              value={mapForm.employeeId}
-              onChange={e => setMapForm(f => ({ ...f, employeeId: e.target.value }))}
-              placeholder="e.g. 13574"
-              className="input font-mono font-bold text-sm"
-              autoFocus
-            />
-            <p className="text-[11px] text-slate-500 mt-1">Enter the exact Employee ID of the personnel taking this role.</p>
+            {!mapForm.employeeId ? (
+              <>
+                <label className="field-label field-required font-bold">Search Employee</label>
+                <div className="relative mt-1">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={mapSearchTerm}
+                    onChange={e => setMapSearchTerm(e.target.value)}
+                    placeholder="Type name or Employee ID..."
+                    className="input pl-9 font-bold text-sm w-full"
+                    autoFocus
+                  />
+                  
+                  {mapSearchTerm && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(mapSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(mapSearchTerm.toLowerCase())).map(emp => (
+                          <div 
+                            key={emp.id} 
+                            className="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
+                            onClick={() => {
+                              setMapForm(f => ({ ...f, employeeId: emp.employee_id }));
+                              setMapSearchTerm('');
+                            }}
+                          >
+                            <p className="font-bold text-sm text-slate-800">{emp.full_name}</p>
+                            <p className="text-xs text-slate-500">ID: {emp.employee_id} • {emp.department || 'No Dept'}</p>
+                          </div>
+                       ))}
+                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(mapSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(mapSearchTerm.toLowerCase())).length === 0 && (
+                          <div className="p-3 text-sm text-slate-500 text-center">No employees found.</div>
+                       )}
+                    </div>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">Search and select the exact personnel taking this role.</p>
+              </>
+            ) : (
+              <div>
+                <label className="field-label field-required font-bold">Selected Employee</label>
+                {masterEmployees?.find(e => e.employee_id === mapForm.employeeId) ? (() => {
+                  const emp = masterEmployees.find(e => e.employee_id === mapForm.employeeId);
+                  return (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-1 animate-in fade-in zoom-in duration-200">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-black text-lg flex-shrink-0">
+                            {emp.full_name?.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-black text-slate-900 leading-tight">{emp.full_name}</p>
+                            <p className="text-xs font-mono font-bold text-slate-600 mt-0.5">ID: {emp.employee_id}</p>
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
+                            </p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
+                              <span className="font-black text-amber-700 uppercase px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-md text-[10px]">
+                                {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setMapForm(f => ({ ...f, employeeId: '' }));
+                            setMapSearchTerm('');
+                          }}
+                          className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
+                        >
+                          <Edit3 size={13} /> Change
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-1 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-red-900">Unknown Employee</p>
+                      <p className="text-xs text-red-700 font-mono mt-0.5">ID: {mapForm.employeeId}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setMapForm(f => ({ ...f, employeeId: '' }));
+                        setMapSearchTerm('');
+                      }}
+                      className="text-xs text-red-700 hover:text-red-900 font-bold px-2.5 py-1.5 bg-red-100 hover:bg-red-200 rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      <Edit3 size={13} /> Change
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </Modal>
@@ -853,46 +1236,128 @@ export default function AdminUsersPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="field-label field-required font-bold">Hospital Employee ID</label>
-            <input
-              value={assignForm.employeeId}
-              onChange={e => setAssignForm(f => ({ ...f, employeeId: e.target.value }))}
-              placeholder="e.g. 13574"
-              className="input font-mono font-bold text-sm"
-              autoFocus
-            />
+            {!assignForm.employeeId ? (
+              <>
+                <label className="field-label field-required font-bold">Search Employee</label>
+                <div className="relative mt-1">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={assignSearchTerm}
+                    onChange={e => setAssignSearchTerm(e.target.value)}
+                    placeholder="Type name or Employee ID..."
+                    className="input pl-9 font-bold text-sm w-full"
+                    autoFocus
+                  />
+                  
+                  {assignSearchTerm && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(assignSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(assignSearchTerm.toLowerCase())).map(emp => (
+                          <div 
+                            key={emp.id} 
+                            className="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
+                            onClick={() => {
+                              setAssignForm(f => ({ ...f, employeeId: emp.employee_id }));
+                              setAssignSearchTerm('');
+                            }}
+                          >
+                            <p className="font-bold text-sm text-slate-800">{emp.full_name}</p>
+                            <p className="text-xs text-slate-500">ID: {emp.employee_id} • {emp.department || 'No Dept'}</p>
+                          </div>
+                       ))}
+                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(assignSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(assignSearchTerm.toLowerCase())).length === 0 && (
+                          <div className="p-3 text-sm text-slate-500 text-center">No employees found.</div>
+                       )}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="field-label field-required font-bold">Selected Employee</label>
+                {masterEmployees?.find(e => e.employee_id === assignForm.employeeId) ? (() => {
+                  const emp = masterEmployees.find(e => e.employee_id === assignForm.employeeId);
+                  return (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-1 animate-in fade-in zoom-in duration-200">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-black text-lg flex-shrink-0">
+                            {emp.full_name?.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-black text-slate-900 leading-tight">{emp.full_name}</p>
+                            <p className="text-xs font-mono font-bold text-slate-600 mt-0.5">ID: {emp.employee_id}</p>
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
+                            </p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
+                              <span className="font-black text-blue-700 uppercase px-2 py-0.5 bg-blue-100 border border-blue-200 rounded-md text-[10px]">
+                                {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setAssignForm(f => ({ ...f, employeeId: '' }));
+                            setAssignSearchTerm('');
+                          }}
+                          className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
+                        >
+                          <Edit3 size={13} /> Change
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-1 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-amber-900">Unknown Employee</p>
+                      <p className="text-xs text-amber-700 font-mono mt-0.5">ID: {assignForm.employeeId}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setAssignForm(f => ({ ...f, employeeId: '' }));
+                        setAssignSearchTerm('');
+                      }}
+                      className="text-xs text-amber-700 hover:text-amber-900 font-bold px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      <Edit3 size={13} /> Change
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div>
             <label className="field-label field-required font-bold">Portal Access Role</label>
-            <div className="space-y-2 mt-1">
-              {[
-                { id: 'system_admin', label: 'System Administrator', desc: 'Full administrative root control over users, configs, and system audit' },
-                { id: 'imc', label: 'IMC Committee Member', desc: 'Quality verification, claim investigation & review portal' },
-                { id: 'head_management', label: 'Executive Management', desc: 'Final decision sign-off, executive oversight & priority escalation' },
-                { id: 'hod', label: 'Department HOD', desc: 'Department incident reviews and mandatory employee training' },
-                { id: 'employee', label: 'Regular Employee', desc: 'Standard access to report incidents and view own cases' }
-              ].map(opt => (
-                <div
-                  key={opt.id}
-                  onClick={() => setAssignForm(f => ({ ...f, targetRole: opt.id }))}
-                  className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-3 ${assignForm.targetRole === opt.id
-                      ? 'border-blue-600 bg-blue-50/60 ring-2 ring-blue-500/15 font-bold text-slate-900'
-                      : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                    }`}
-                >
-                  <div className={`w-4 h-4 rounded-full mt-0.5 border-2 flex items-center justify-center ${assignForm.targetRole === opt.id ? 'border-blue-600 bg-blue-600' : 'border-slate-300'
-                    }`}>
-                    {assignForm.targetRole === opt.id && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                  </div>
-                  <div>
-                    <p className="text-xs font-black">{opt.label}</p>
-                    <p className="text-[11px] text-slate-500 font-normal mt-0.5">{opt.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <select
+              value={['imc', 'imc_convenor'].includes(assignForm.targetRole) ? 'imc' : assignForm.targetRole}
+              onChange={e => setAssignForm(f => ({ ...f, targetRole: e.target.value }))}
+              className="select w-full font-semibold mt-1"
+            >
+              <option value="system_admin">System Administrator</option>
+              <option value="imc">IMC Committee</option>
+              <option value="head_management">Executive Management</option>
+              <option value="hod">Department HOD</option>
+              <option value="employee">Regular Employee</option>
+            </select>
           </div>
+
+          {['imc', 'imc_convenor'].includes(assignForm.targetRole) && (
+            <div className="animate-in fade-in duration-200">
+              <label className="field-label field-required font-bold">IMC Role Type</label>
+              <select
+                value={assignForm.targetRole}
+                onChange={e => setAssignForm(f => ({ ...f, targetRole: e.target.value }))}
+                className="select w-full font-semibold mt-1"
+              >
+                <option value="imc">IMC Member Only</option>
+                <option value="imc_convenor">IMC Convenor</option>
+              </select>
+            </div>
+          )}
 
           {assignForm.targetRole === 'hod' && (
             <div>
@@ -969,6 +1434,123 @@ export default function AdminUsersPage() {
           )}
         </div>
       </Modal>
+
+      {/* Bulk Upload Instructions Modal */}
+      <Modal open={showBulkUploadModal} onClose={() => setShowBulkUploadModal(false)} title="Bulk Upload Employees">
+        <div className="space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-black text-blue-900 flex items-center gap-2">
+                <Upload size={16} /> Data Formatting Guide
+              </h3>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText("Employee Name\tEmployee ID\tDesignation\tDepartment\tMobile Number\tEmail");
+                  toast.success("Headers copied to clipboard!");
+                }}
+                className="text-xs flex items-center gap-1.5 font-bold bg-white text-blue-600 px-2.5 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-all shadow-sm"
+              >
+                <Copy size={14} /> Copy Headers
+              </button>
+            </div>
+            <p className="text-xs text-blue-800 mb-3 leading-relaxed">
+              Please ensure your CSV or Excel file contains the exact headers listed below (case-insensitive).
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-blue-900">
+              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Employee Name
+              </div>
+              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Employee ID
+              </div>
+              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Designation
+              </div>
+              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Department
+              </div>
+              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Mobile Number
+              </div>
+              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Email
+              </div>
+            </div>
+          </div>
+          
+          <div 
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+            onDrop={(e) => { 
+              e.preventDefault(); 
+              setIsDragging(false); 
+              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                handleFileUpload(e);
+              }
+            }}
+            onClick={() => fileInputRef.current.click()}
+            className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all ${
+              isDragging ? 'border-blue-500 bg-blue-50 scale-[0.98]' : 'border-slate-300 hover:border-blue-400 bg-slate-50 hover:bg-slate-100/50'
+            }`}
+          >
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-colors ${isDragging ? 'bg-blue-200 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
+              <FileUp size={24} />
+            </div>
+            <p className="text-sm font-bold text-slate-700 mb-1">
+              {isDragging ? 'Drop your Excel file here' : 'Click or drag file to this area to upload'}
+            </p>
+            <p className="text-xs text-slate-500">Supports .csv and .xlsx files</p>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button onClick={() => setShowBulkUploadModal(false)} className="px-4 py-2 rounded-lg font-bold text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all">Cancel</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Single Employee Modal */}
+      <Modal open={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Add Staff Member to Master DB">
+        <form onSubmit={(e) => { e.preventDefault(); addMutation.mutate(addForm); }} className="space-y-4 pt-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label text-xs font-bold text-slate-700 mb-1 block">Employee ID <span className="text-red-500">*</span></label>
+              <input type="text" pattern="[0-9]{5}" title="Exactly 5 digits" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" required value={addForm.employeeId} onChange={e => setAddForm({...addForm, employeeId: e.target.value})} />
+            </div>
+            <div>
+              <label className="label text-xs font-bold text-slate-700 mb-1 block">Full Name <span className="text-red-500">*</span></label>
+              <input type="text" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" required value={addForm.name} onChange={e => setAddForm({...addForm, name: e.target.value})} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label text-xs font-bold text-slate-700 mb-1 block">Department</label>
+              <input type="text" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.department} onChange={e => setAddForm({...addForm, department: e.target.value})} />
+            </div>
+            <div>
+              <label className="label text-xs font-bold text-slate-700 mb-1 block">Designation</label>
+              <input type="text" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.designation} onChange={e => setAddForm({...addForm, designation: e.target.value})} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label text-xs font-bold text-slate-700 mb-1 block">Email</label>
+              <input type="email" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.email} onChange={e => setAddForm({...addForm, email: e.target.value})} />
+            </div>
+            <div>
+              <label className="label text-xs font-bold text-slate-700 mb-1 block">Mobile Number</label>
+              <input type="text" pattern="[0-9]{10}" title="Exactly 10 digits" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.phone} onChange={e => setAddForm({...addForm, phone: e.target.value})} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+            <button type="button" className="px-4 py-2 rounded-lg font-bold text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
+            <button type="submit" className="px-4 py-2 rounded-lg font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white transition-all flex items-center justify-center gap-2" disabled={addMutation.isPending}>
+              {addMutation.isPending ? <Spinner size={14} /> : 'Save Employee'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+        </>
+      )}
     </div>
   );
 }

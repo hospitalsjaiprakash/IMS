@@ -283,18 +283,36 @@ exports.getIncidents = async (req, res) => {
       paramIdx += 2;
     } else if (['hod', 'asst_coo', 'coo'].includes(role)) {
       const userDept = department || '';
-      whereClause += ` AND EXISTS (
-        SELECT 1 FROM incident_departments id2
-        JOIN departments d ON d.id = id2.department_id
-        WHERE id2.incident_id = i.id AND (
-          d.hod_user_id = $${paramIdx} OR
-          d.incharge_user_id = $${paramIdx} OR
-          d.asst_coo_user_id = $${paramIdx} OR
-          (LOWER(d.name) = LOWER($${paramIdx + 1}))
-        )
-      )`;
-      params.push(userId, userDept);
-      paramIdx += 2;
+      
+      if (teamMemberId) {
+        // If viewing a specific team member, ensure the team member belongs to the HOD's department,
+        // but do not restrict the incidents to the HOD's department (they can see incidents reported by their team to any department).
+        whereClause += ` AND EXISTS (
+          SELECT 1 FROM users tm
+          LEFT JOIN departments d ON LOWER(d.name) = LOWER(tm.department)
+          WHERE tm.id = $${paramIdx} AND (
+            d.hod_user_id = $${paramIdx+1} OR
+            d.incharge_user_id = $${paramIdx+1} OR
+            d.asst_coo_user_id = $${paramIdx+1} OR
+            LOWER(tm.department) = LOWER($${paramIdx+2})
+          )
+        )`;
+        params.push(teamMemberId, userId, userDept);
+        paramIdx += 3;
+      } else {
+        whereClause += ` AND EXISTS (
+          SELECT 1 FROM incident_departments id2
+          JOIN departments d ON d.id = id2.department_id
+          WHERE id2.incident_id = i.id AND (
+            d.hod_user_id = $${paramIdx} OR
+            d.incharge_user_id = $${paramIdx} OR
+            d.asst_coo_user_id = $${paramIdx} OR
+            (LOWER(d.name) = LOWER($${paramIdx + 1}))
+          )
+        )`;
+        params.push(userId, userDept);
+        paramIdx += 2;
+      }
     }
     
     if (teamMemberId && teamMemberName) {
@@ -577,8 +595,26 @@ exports.getIncident = async (req, res) => {
       );
     }
 
+    // Check if current user is authorized as the Target HOD for this incident
+    let isTargetHod = false;
+    if (['hod', 'asst_coo', 'coo'].includes(role)) {
+      const userDept = req.user.department || '';
+      const targetHodCheck = await query(
+        `SELECT 1 FROM incident_departments id2
+         JOIN departments d ON d.id = id2.department_id
+         WHERE id2.incident_id = $1 AND (
+           d.hod_user_id = $2 OR
+           d.incharge_user_id = $2 OR
+           d.asst_coo_user_id = $2 OR
+           (LOWER(d.name) = LOWER($3))
+         )`,
+         [incident.id, userId, userDept]
+      );
+      isTargetHod = targetHodCheck.rows.length > 0;
+    }
+
     res.json({
-      incident: { ...incident, departments: depts.rows },
+      incident: { ...incident, departments: depts.rows, is_target_hod: isTargetHod },
       feedbacks: feedbacks.rows,
       attachments: attachments.rows,
       finalReport: finalReport.rows[0] || null

@@ -70,11 +70,13 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
   return (
     <div ref={ref} className="relative">
       {/* Trigger */}
-      <button
+      <div
         ref={triggerRef}
-        type="button"
+        role="button"
+        tabIndex={0}
         onClick={handleOpen}
-        className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2 text-sm text-left flex flex-wrap items-center gap-1.5 focus:outline-none focus:ring-2 transition-colors duration-150 ${error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleOpen(); }}
+        className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2 text-sm text-left flex flex-wrap items-center gap-1.5 focus:outline-none focus:ring-2 transition-colors duration-150 cursor-pointer ${error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
           }`}
       >
         {value.length === 0 ? (
@@ -88,7 +90,7 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
           ))
         )}
         <ChevronDown size={14} className={`ml-auto flex-shrink-0 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-      </button>
+      </div>
 
       {/* Dropdown */}
       {open && (

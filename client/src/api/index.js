@@ -150,6 +150,7 @@ export const adminApi = {
   getAuditLogs: (params) => api.get('/admin/audit-logs', { params }),
   getAnalytics: () => api.get('/admin/analytics'),
   getUsers: (params) => api.get('/admin/users', { params }),
+  getUserProfile: (id) => api.get(`/admin/users/${id}/profile`),
   getRoleAudit: () => api.get('/admin/role-audit'),
   getManagementMembers: () => api.get('/admin/management-members'),
   removeManagement: (id) => api.delete(`/admin/management-members/${id}`),

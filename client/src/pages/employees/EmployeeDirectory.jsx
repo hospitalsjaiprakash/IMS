@@ -1,52 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '../../store/authStore';
 import { employeeApi } from '../../api';
-import { Spinner, EmptyState, Pagination } from '../../components/ui';
-import { Search, Users, Phone, Building, Briefcase, FileText, ArrowLeft } from 'lucide-react';
+import api from '../../api';
+import { Spinner, EmptyState, Modal } from '../../components/ui';
+import { Search, Users, Phone, Building, Briefcase, FileText, ArrowLeft, Plus, Upload, CheckCircle, XCircle } from 'lucide-react';
 import { formatDate, getStatusClass, getStatusLabel } from '../../utils/helpers';
 import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 
 export default function EmployeeDirectory() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [search, setSearch] = useState(searchParams.get('q') || '');
-  const [page, setPage] = useState(1);
-  const [debouncedSearch, setDebouncedSearch] = useState(searchParams.get('q') || '');
-  const [selectedEmpId, setSelectedEmpId] = useState('');
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'system_admin';
+  const queryClient = useQueryClient();
 
-  // Debounce search input
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
+  const [selectedEmpId, setSelectedEmpId] = useState('');
+  
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const fileInputRef = useRef(null);
+  const [formData, setFormData] = useState({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
+
+  // Update URL so it can be refreshed/bookmarked
   React.useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(1); // Reset to first page on new search
-      
-      // Update URL so it can be refreshed/bookmarked
-      if (search) {
-        setSearchParams({ q: search }, { replace: true });
+      if (searchTerm) {
+        setSearchParams({ q: searchTerm }, { replace: true });
       } else {
         setSearchParams({}, { replace: true });
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [search, setSearchParams]);
+  }, [searchTerm, setSearchParams]);
 
-  // Query for directory list
-  const { data: directoryData, isLoading: isDirectoryLoading, isError: isDirectoryError } = useQuery({
-    queryKey: ['employeeDirectory', debouncedSearch, page],
-    queryFn: () => employeeApi.getDirectory({ search: debouncedSearch, page, limit: 15 }).then(res => res.data),
-    keepPreviousData: true,
+  // Query for master employees (The Directory List)
+  const { data: employees = [], isLoading: isDirectoryLoading, isError: isDirectoryError } = useQuery({
+    queryKey: ['master-employees'],
+    queryFn: () => api.get('/api/master-employees').then(res => res.data.data),
     enabled: !selectedEmpId,
   });
 
-  // Query for selected employee details
-  const { data: detailData, isLoading: isDetailLoading, isError: isDetailError } = useQuery({
+  // Query for selected employee details (Detail View)
+  const { data: detailData, isLoading: isDetailLoading } = useQuery({
     queryKey: ['employeeDetails', selectedEmpId],
     queryFn: () => employeeApi.search(selectedEmpId).then(res => res.data),
     enabled: !!selectedEmpId,
     retry: false,
     onError: (err) => {
       if (err.response?.status === 404) {
-        toast.error('No employee found matching your search.');
+        toast.error('This employee has not created an IMS account yet so they have no profile or incidents.');
       } else {
         toast.error('Failed to load employee details.');
       }
@@ -54,27 +58,132 @@ export default function EmployeeDirectory() {
     }
   });
 
+  // Admin Mutations
+  const addMutation = useMutation({
+    mutationFn: (data) => api.post('/api/master-employees', data),
+    onSuccess: () => {
+      toast.success('Employee added to Directory');
+      queryClient.invalidateQueries({ queryKey: ['master-employees'] });
+      setIsAddModalOpen(false);
+      setFormData({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.error || 'Failed to add employee');
+    }
+  });
+
+  const bulkAddMutation = useMutation({
+    mutationFn: (employees) => api.post('/api/master-employees/bulk', { employees }),
+    onSuccess: (res) => {
+      toast.success(res.data.message || 'Bulk upload successful');
+      queryClient.invalidateQueries({ queryKey: ['master-employees'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.error || 'Failed to process upload');
+    }
+  });
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+
+        const mappedEmployees = data.map(row => {
+          const getVal = (key) => {
+            const found = Object.keys(row).find(k => k.toLowerCase().replace(/[^a-z]/g, '') === key.toLowerCase());
+            return found ? row[found] : '';
+          };
+          return {
+            employeeId: getVal('employeeid') || getVal('empid') || getVal('id'),
+            name: getVal('name') || getVal('fullname'),
+            department: getVal('department') || getVal('dept'),
+            designation: getVal('designation') || getVal('desig'),
+            phone: getVal('phone') || getVal('mobile') || getVal('contact'),
+            email: getVal('email') || getVal('emailid')
+          };
+        }).filter(e => e.employeeId && e.name);
+
+        if (mappedEmployees.length === 0) {
+          toast.error("Could not parse employees. Ensure columns 'Employee ID' and 'Name' exist.");
+          return;
+        }
+
+        bulkAddMutation.mutate(mappedEmployees);
+      } catch (err) {
+        console.error(err);
+        toast.error('Error parsing Excel file');
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = null;
+  };
+
+  const filteredEmployees = employees.filter(emp => 
+    emp.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    emp.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (emp.department && emp.department.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
   const emp = detailData?.selectedEmployee;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="page-header flex justify-between items-center">
+      <div className="page-header flex justify-between items-end">
         <div>
-          <h1 className="page-title">{selectedEmpId ? 'Employee Profile' : 'Employee Directory'}</h1>
+          <h1 className="page-title flex items-center gap-2">
+            <Users className="text-indigo-600" /> 
+            {selectedEmpId ? 'Employee Profile' : 'Staff Directory'}
+          </h1>
           <p className="page-subtitle">
             {selectedEmpId ? 'View detailed profile and reported incidents' : 'Search and browse all hospital staff members'}
           </p>
         </div>
-        {selectedEmpId && (
-          <button 
-            onClick={() => setSelectedEmpId('')}
-            className="btn btn-secondary bg-white flex items-center gap-2"
-          >
-            <ArrowLeft size={16} />
-            Back to Directory
-          </button>
-        )}
+        <div className="flex gap-2">
+          {selectedEmpId ? (
+            <button 
+              onClick={() => setSelectedEmpId('')}
+              className="btn-secondary bg-white flex items-center gap-2"
+            >
+              <ArrowLeft size={16} />
+              Back to Directory
+            </button>
+          ) : isAdmin ? (
+            <>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                className="hidden" 
+                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" 
+              />
+              <button 
+                type="button"
+                className="btn-secondary"
+                onClick={() => fileInputRef.current.click()}
+                disabled={bulkAddMutation.isPending}
+              >
+                {bulkAddMutation.isPending ? <Spinner size={16} className="mr-2" /> : <Upload size={16} className="mr-2" />}
+                Upload Excel
+              </button>
+              <button 
+                type="button"
+                className="btn-primary" 
+                onClick={() => setIsAddModalOpen(true)}
+              >
+                <Plus size={16} className="mr-2" /> Add Employee
+              </button>
+            </>
+          ) : null}
+        </div>
       </div>
 
       {selectedEmpId ? (
@@ -187,111 +296,145 @@ export default function EmployeeDirectory() {
       ) : (
         /* DIRECTORY VIEW */
         <div className="space-y-6 animate-fade-in">
-          {/* Search Bar */}
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="relative max-w-lg">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-slate-400" />
+          <div className="card p-0 overflow-hidden">
+            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <div className="relative max-w-sm w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search by ID, Name or Department..."
+                  className="input pl-10 bg-white"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
-              <input
-                type="text"
-                className="input pl-10 w-full"
-                placeholder="Search by name, employee ID, or department..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+              <div className="text-sm text-slate-500">
+                Total Employees: <span className="font-bold text-slate-700">{employees.length}</span>
+              </div>
             </div>
-          </div>
 
-          {/* Main Content */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            {isDirectoryLoading && !directoryData ? (
+            {isDirectoryLoading && !employees.length ? (
               <div className="flex justify-center items-center h-64">
                 <Spinner size={32} />
               </div>
             ) : isDirectoryError ? (
               <div className="p-8 text-center text-red-500">Failed to load employees. Please try again.</div>
-            ) : directoryData?.users?.length === 0 ? (
+            ) : filteredEmployees.length === 0 ? (
               <EmptyState
                 icon={Users}
                 title="No employees found"
-                message={debouncedSearch ? `No staff matching "${debouncedSearch}"` : "The directory is empty."}
+                message={searchTerm ? `No staff matching "${searchTerm}"` : "The directory is empty."}
               />
             ) : (
-              <div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr>
-                        <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Employee</th>
-                        <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
-                        <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Department</th>
-                        <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Contact</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {directoryData?.users?.map((user) => (
-                        <tr 
-                          key={user.id} 
-                          onClick={() => setSelectedEmpId(user.employee_id)}
-                          className="hover:bg-slate-50 transition-colors cursor-pointer group"
-                        >
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-700 font-bold text-sm uppercase">
-                                {user.full_name?.charAt(0)}
-                              </div>
-                              <div>
-                                <div className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">
-                                  {user.full_name}
-                                </div>
-                                <div className="text-xs text-slate-500">{user.designation}</div>
-                              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Employee</th>
+                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
+                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Department</th>
+                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">IMS Account Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredEmployees.map((emp) => (
+                      <tr 
+                        key={emp.id} 
+                        onClick={() => {
+                          if (!emp.is_registered) {
+                            toast.error('This user has not created their IMS account yet. No profile to view.');
+                          } else {
+                            setSelectedEmpId(emp.employee_id);
+                          }
+                        }}
+                        className="hover:bg-slate-50 transition-colors cursor-pointer group"
+                      >
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-700 font-bold text-sm uppercase">
+                              {emp.name?.charAt(0)}
                             </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className="font-mono text-sm text-slate-600 bg-slate-100 px-2 py-1 rounded">
-                              {user.employee_id}
+                            <div>
+                              <div className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                                {emp.name}
+                              </div>
+                              <div className="text-xs text-slate-500">{emp.designation || '—'}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="font-mono text-sm text-slate-600 bg-slate-100 px-2 py-1 rounded">
+                            {emp.employee_id}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1.5 text-sm text-slate-700">
+                            <Building size={14} className="text-slate-400" />
+                            {emp.department || '—'}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          {emp.is_registered ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                              <CheckCircle size={14} /> Registered
                             </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-1.5 text-sm text-slate-700">
-                              <Building size={14} className="text-slate-400" />
-                              {user.department || '—'}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex flex-col gap-1 text-xs">
-                              {user.phone ? (
-                                <div className="flex items-center gap-1.5 text-slate-600">
-                                  <Phone size={13} className="text-slate-400" />
-                                  {user.phone}
-                                </div>
-                              ) : (
-                                <span className="text-slate-400 italic">No phone</span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination footer */}
-                {directoryData?.totalPages > 1 && (
-                  <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50">
-                    <div className="text-sm text-slate-500">
-                      Showing <span className="font-medium text-slate-700">{directoryData.users.length}</span> of <span className="font-medium text-slate-700">{directoryData.total}</span> employees
-                    </div>
-                    <Pagination page={page} totalPages={directoryData.totalPages} onPageChange={setPage} />
-                  </div>
-                )}
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                              <XCircle size={14} /> Not Registered
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
         </div>
       )}
+
+      {/* Add Single Employee Modal (Only accessible to Admins) */}
+      <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Add Staff Member">
+        <form onSubmit={(e) => { e.preventDefault(); addMutation.mutate(formData); }} className="space-y-4 pt-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Employee ID <span className="text-red-500">*</span></label>
+              <input type="text" className="input" required value={formData.employeeId} onChange={e => setFormData({...formData, employeeId: e.target.value})} />
+            </div>
+            <div>
+              <label className="label">Full Name <span className="text-red-500">*</span></label>
+              <input type="text" className="input" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Department</label>
+              <input type="text" className="input" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} />
+            </div>
+            <div>
+              <label className="label">Designation</label>
+              <input type="text" className="input" value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Email</label>
+              <input type="email" className="input" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+            </div>
+            <div>
+              <label className="label">Phone</label>
+              <input type="text" className="input" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+            <button type="button" className="btn-secondary" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={addMutation.isPending}>
+              {addMutation.isPending ? <Spinner size={16} /> : 'Save Employee'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
