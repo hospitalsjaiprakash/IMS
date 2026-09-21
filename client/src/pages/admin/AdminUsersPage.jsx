@@ -6,11 +6,14 @@ import { Spinner, Modal, Alert, Pagination } from '../../components/ui';
 import {
   Search, Plus, ShieldCheck, UserMinus, AlertTriangle, ShieldX,
   Users, Award, Building2, CheckCircle2, Edit3, ShieldAlert,
-  UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, Upload, Copy, FileUp, ArrowLeft
+  UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, Upload, Copy, FileUp, ArrowLeft,
+  Mail, Phone, User, FileText, AlertCircle, Building
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
 import * as XLSX from 'xlsx';
+import { Link } from 'react-router-dom';
+import { getStatusClass, getStatusLabel, formatDate } from '../../utils/helpers';
 
 export default function AdminUsersPage() {
   const qc = useQueryClient();
@@ -34,6 +37,7 @@ export default function AdminUsersPage() {
   const [mapSearchTerm, setMapSearchTerm] = useState('');
 
   const [selectedProfileUser, setSelectedProfileUser] = useState(null);
+  const [profileViewTab, setProfileViewTab] = useState('personal'); // 'personal' | 'department'
 
   // Queries
   const { data: usersData, isLoading: isLoadingUsers } = useQuery({
@@ -248,167 +252,174 @@ export default function AdminUsersPage() {
   return (
     <div className="space-y-6 pb-14 w-full">
       {selectedProfileUser ? (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="flex items-center justify-between mb-6">
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-slate-800 font-display">Personnel Profile & Analytics</h1>
               <p className="text-sm text-slate-500">View detailed profile, active permissions, and incident history.</p>
             </div>
             <button 
-              onClick={() => setSelectedProfileUser(null)}
+              onClick={() => { setSelectedProfileUser(null); setProfileViewTab('personal'); }}
               className="btn btn-secondary bg-white flex items-center gap-2 shadow-sm border-slate-200"
             >
               <ArrowLeft size={16} /> Back to Directory
             </button>
           </div>
           
-          <div className="space-y-6 bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm">
-            {/* Header / Badges */}
-            <div className="flex items-start gap-5 p-6 bg-gradient-to-br from-blue-50/50 to-indigo-50/30 rounded-2xl border border-blue-100/50">
-              <div className="w-20 h-20 rounded-2xl bg-white text-blue-600 flex items-center justify-center text-4xl font-black shadow-md border border-blue-100 flex-shrink-0">
+          {/* Profile Card */}
+          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+            <div className="flex items-start gap-5">
+              <div className="w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-700 font-bold text-2xl uppercase shadow-inner">
                 {selectedProfileUser.full_name?.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="text-2xl font-black text-slate-900 truncate">{selectedProfileUser.full_name}</h3>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="font-mono text-sm font-bold bg-slate-100 px-2 py-0.5 rounded text-slate-700">ID: {selectedProfileUser.employee_id}</span>
-                      {selectedProfileUser.is_active ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-600 uppercase bg-emerald-100 px-2.5 py-0.5 rounded-md border border-emerald-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Active
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-rose-600 uppercase bg-rose-100 px-2.5 py-0.5 rounded-md border border-rose-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Inactive
-                        </span>
-                      )}
-                    </div>
+                <h3 className="text-2xl font-bold text-slate-800 truncate">{selectedProfileUser.full_name}</h3>
+                <div className="text-sm font-mono text-slate-500 mb-4 inline-block bg-slate-100 px-2 py-0.5 rounded">{selectedProfileUser.employee_id}</div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                  <div className="flex items-center gap-2 text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100 truncate">
+                    <Briefcase size={16} className="text-slate-400 flex-shrink-0" />
+                    <span className="font-medium truncate">{selectedProfileUser.designation || 'N/A'}</span>
                   </div>
-                  <div className="flex flex-wrap gap-2 justify-end">
-                    <span className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-white text-slate-700 border-slate-200 shadow-sm inline-flex items-center gap-2">
-                      <Briefcase size={14} className="text-slate-400" /> {selectedProfileUser.designation || 'Staff'}
-                    </span>
-                    <span className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-white text-slate-700 border-slate-200 shadow-sm inline-flex items-center gap-2">
-                      <Building2 size={14} className="text-slate-400" /> {selectedProfileUser.department || 'No Dept'}
-                    </span>
+                  <div className="flex items-center gap-2 text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100 truncate">
+                    <Building size={16} className="text-slate-400 flex-shrink-0" />
+                    <span className="font-medium truncate">{selectedProfileUser.department || 'N/A'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100 truncate">
+                    <Phone size={16} className="text-slate-400 flex-shrink-0" />
+                    <span className="font-medium truncate">{selectedProfileUser.phone || 'N/A'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 font-semibold text-indigo-700 bg-indigo-50 p-2.5 rounded-lg border border-indigo-100 truncate">
+                    <FileText size={16} className="flex-shrink-0" />
+                    Incidents Given: {userProfileData?.reportedIncidents?.length || 0}
                   </div>
                 </div>
               </div>
             </div>
-
-            {/* Statistics & Analytics */}
-            {isLoadingProfile ? (
-              <div className="py-24 flex flex-col items-center justify-center gap-4">
-                <Spinner size={36} className="text-blue-500" />
-                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Loading Analytics...</p>
-              </div>
-            ) : userProfileData ? (
-              <div className="space-y-8">
-                
-                {/* Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col items-center text-center group hover:border-slate-300 transition-colors">
-                    <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><UserCheck size={14}/> Reported</p>
-                    <p className="text-4xl font-black text-slate-900 group-hover:scale-110 transition-transform">{userProfileData.reportedIncidents?.length || 0}</p>
-                    <p className="text-[11px] font-bold text-slate-500 mt-2">Personal Incidents</p>
-                  </div>
-                  <div className="bg-amber-50/30 border border-amber-200/60 rounded-2xl p-5 shadow-sm flex flex-col items-center text-center group hover:border-amber-300/80 transition-colors">
-                    <p className="text-xs font-black text-amber-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><AlertTriangle size={14}/> Responsible</p>
-                    <p className="text-4xl font-black text-amber-700 group-hover:scale-110 transition-transform">{userProfileData.responsibleIncidents?.length || 0}</p>
-                    <p className="text-[11px] font-bold text-amber-600/80 mt-2">Investigator / Training</p>
-                  </div>
-                  {(selectedProfileUser.role === 'hod' || selectedProfileUser.is_management_member) && (
-                    <div className="bg-indigo-50/30 border border-indigo-200/60 rounded-2xl p-5 shadow-sm flex flex-col items-center text-center group hover:border-indigo-300/80 transition-colors">
-                      <p className="text-xs font-black text-indigo-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Building2 size={14}/> Department</p>
-                      <p className="text-4xl font-black text-indigo-700 group-hover:scale-110 transition-transform">{userProfileData.departmentIncidents?.length || 0}</p>
-                      <p className="text-[11px] font-bold text-indigo-600/80 mt-2">Received Incidents</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Lists Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {userProfileData.responsibleIncidents?.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                        <AlertTriangle size={16} className="text-amber-500" /> Incidents Responsible For
-                      </h4>
-                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                        {userProfileData.responsibleIncidents.map(inc => (
-                          <div key={inc.id + inc.role_type} className="p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
-                            <div>
-                              <p className="font-bold text-sm text-slate-800 hover:text-blue-600 cursor-pointer">{inc.reference_id || 'Pending Ref'}</p>
-                              <p className="text-[11px] font-medium text-slate-500 mt-1">{new Date(inc.incident_date).toLocaleDateString()} • {inc.incident_type}</p>
-                            </div>
-                            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              {inc.role_type}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {userProfileData.departmentIncidents?.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                        <Building2 size={16} className="text-indigo-500" /> Department Received Incidents
-                      </h4>
-                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                        {userProfileData.departmentIncidents.map(inc => (
-                          <div key={inc.id} className="p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
-                            <div>
-                              <p className="font-bold text-sm text-slate-800 hover:text-blue-600 cursor-pointer">{inc.reference_id || 'Pending Ref'}</p>
-                              <p className="text-[11px] font-medium text-slate-500 mt-1">{inc.dept_name}</p>
-                            </div>
-                            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                              {inc.status?.replace(/_/g, ' ').toUpperCase() || 'UNKNOWN'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {userProfileData.reportedIncidents?.length > 0 && (
-                    <div className="space-y-3 lg:col-span-2">
-                      <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                        <UserCheck size={16} className="text-emerald-500" /> Personally Reported Incidents
-                      </h4>
-                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                        {userProfileData.reportedIncidents.map(inc => (
-                          <div key={inc.id} className="p-4 hover:bg-slate-50 transition-colors flex flex-col gap-2">
-                            <div className="flex justify-between items-start">
-                              <p className="font-bold text-sm text-slate-800 hover:text-blue-600 cursor-pointer">{inc.reference_id || 'Pending Ref'}</p>
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                                {inc.status?.replace(/_/g, ' ').toUpperCase() || 'UNKNOWN'}
-                              </span>
-                            </div>
-                            <p className="text-xs font-medium text-slate-500">{new Date(inc.incident_date).toLocaleDateString()}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {(!userProfileData.reportedIncidents?.length && !userProfileData.responsibleIncidents?.length && !userProfileData.departmentIncidents?.length) && (
-                  <div className="py-16 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 mt-6">
-                    <ShieldCheck size={32} className="text-slate-400 mx-auto mb-3" />
-                    <p className="text-sm font-bold text-slate-600">No incident history</p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">This personnel is currently not associated with any active or historical incidents.</p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="py-16 text-center text-red-500 text-sm font-bold">Failed to load analytics</div>
-            )}
           </div>
+
+          {isLoadingProfile ? (
+             <div className="flex items-center justify-center py-20"><Spinner size={32} /></div>
+          ) : userProfileData ? (
+            <>
+              {/* Tab Toggle (Only visible if they manage departments) */}
+              {userProfileData?.managedDepartments?.length > 0 && (
+                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto w-fit">
+                  <button
+                    onClick={() => setProfileViewTab('personal')}
+                    className={`px-6 py-2 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2 whitespace-nowrap ${profileViewTab === 'personal'
+                        ? 'bg-white text-blue-600 shadow-sm border border-slate-200/50'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                      }`}
+                  >
+                    <UserCheck size={14} /> Personal View
+                  </button>
+                  <button
+                    onClick={() => setProfileViewTab('department')}
+                    className={`px-6 py-2 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2 whitespace-nowrap ${profileViewTab === 'department'
+                        ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                      }`}
+                  >
+                    <Building2 size={14} /> Department / HOD View
+                  </button>
+                </div>
+              )}
+
+              {profileViewTab === 'personal' && (
+                <>
+                  {/* Reported Section */}
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+                    <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50">
+                      <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <AlertCircle size={18} className="text-slate-400" />
+                        Reported Incidents ({userProfileData.reportedIncidents?.length || 0})
+                      </h4>
+                    </div>
+                    
+                    {userProfileData.reportedIncidents?.length > 0 ? (
+                      <IncidentDetailedTable incidents={userProfileData.reportedIncidents} />
+                    ) : (
+                      <div className="text-center p-12 bg-white">
+                        <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
+                          <FileText size={24} className="text-slate-300" />
+                        </div>
+                        <p className="text-sm font-medium text-slate-600">No incidents reported</p>
+                        <p className="text-xs text-slate-400 mt-1">This personnel has not submitted any incident reports.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Responsible Section */}
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+                    <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50">
+                      <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <User size={18} className="text-slate-400" />
+                        Assigned / Responsible Incidents ({userProfileData.responsibleIncidents?.length || 0})
+                      </h4>
+                    </div>
+                    
+                    {userProfileData.responsibleIncidents?.length > 0 ? (
+                      <IncidentDetailedTable incidents={userProfileData.responsibleIncidents} />
+                    ) : (
+                      <div className="text-center p-12 bg-white">
+                        <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
+                          <User size={24} className="text-slate-300" />
+                        </div>
+                        <p className="text-sm font-medium text-slate-600">No assigned incidents</p>
+                        <p className="text-xs text-slate-400 mt-1">This personnel is not marked as responsible for any incidents.</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Department Section (Only if they manage departments) */}
+              {profileViewTab === 'department' && userProfileData.managedDepartments && userProfileData.managedDepartments.length > 0 && (
+                <div className="space-y-6 mt-6">
+                  {userProfileData.managedDepartments.map((deptName) => {
+                    const deptIncidents = (userProfileData.departmentIncidents || []).filter(i => i.dept_name === deptName);
+                    const activeCount = deptIncidents.filter(i => i.status !== 'resolved' && i.status !== 'withdrawn').length;
+                    const solvedCount = deptIncidents.filter(i => i.status === 'resolved').length;
+                    
+                    return (
+                      <div key={deptName} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex flex-wrap items-center justify-between gap-4">
+                          <h4 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <Building size={18} className="text-slate-400" />
+                            {deptName} Received Incidents
+                          </h4>
+                          <div className="flex items-center gap-3 text-xs font-bold">
+                            <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md border border-slate-200">Total: {deptIncidents.length}</span>
+                            <span className="px-2.5 py-1 bg-rose-50 text-rose-700 rounded-md border border-rose-200">Active: {activeCount}</span>
+                            <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-200">Solved: {solvedCount}</span>
+                          </div>
+                        </div>
+                        
+                        {deptIncidents.length > 0 ? (
+                           <IncidentDetailedTable incidents={deptIncidents} />
+                        ) : (
+                          <div className="text-center p-12 bg-white">
+                            <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
+                              <Building size={24} className="text-slate-300" />
+                            </div>
+                            <p className="text-sm font-medium text-slate-600">No incidents received</p>
+                            <p className="text-xs text-slate-400 mt-1">This department has not received any incidents yet.</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="py-16 text-center text-red-500 text-sm font-bold">Failed to load analytics</div>
+          )}
         </div>
       ) : (
-        <>
-          {/* Header Toolbar */}
+          <>
+            {/* Header Toolbar */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-2">
         {/* Simple Segmented Control for Tabs */}
         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto w-full xl:w-auto max-w-full">
@@ -581,7 +592,7 @@ export default function AdminUsersPage() {
                             const hasMgmtAccess = u.role === 'head_management' || u.is_management_member;
                             const isSysAdmin = u.role === 'system_admin' || u.is_system_admin;
                             return (
-                              <tr key={u.id} onClick={() => setSelectedProfileUser(u)} className="hover:bg-blue-50/30 transition-colors group cursor-pointer">
+                              <tr key={u.id} onClick={() => { setSelectedProfileUser(u); setProfileViewTab('personal'); }} className="hover:bg-blue-50/30 transition-colors group cursor-pointer">
                                 <td className="pl-6 py-4">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 border border-slate-300/80 flex items-center justify-center flex-shrink-0 shadow-2xs font-bold text-slate-700">
@@ -1551,6 +1562,70 @@ export default function AdminUsersPage() {
       </Modal>
         </>
       )}
+    </div>
+  );
+}
+
+function IncidentDetailedTable({ incidents }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left border-collapse">
+        <thead className="bg-slate-50 border-b border-slate-200">
+          <tr>
+            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Ref ID</th>
+            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category & Type</th>
+            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Severity</th>
+            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {incidents.map(inc => (
+            <tr key={inc.id + (inc.role_type || '')} className="hover:bg-slate-50 transition-colors group">
+              <td className="py-3 px-6 text-sm font-mono text-slate-700">
+                <Link to={`/incidents/${inc.id}`} className="text-indigo-600 hover:text-indigo-800 font-medium hover:underline">
+                  {inc.reference_id || 'Pending Ref'}
+                </Link>
+                {inc.role_type && (
+                  <div className="mt-1">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                      {inc.role_type}
+                    </span>
+                  </div>
+                )}
+                {inc.dept_name && (
+                  <div className="mt-1">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                      {inc.dept_name}
+                    </span>
+                  </div>
+                )}
+              </td>
+              <td className="py-3 px-6 text-sm text-slate-600 whitespace-nowrap">{formatDate(inc.incident_date || inc.created_at)}</td>
+              <td className="py-3 px-6 text-sm text-slate-800">
+                {inc.incident_category && <div className="font-medium text-slate-700">{inc.incident_category}</div>}
+                <div className="text-xs text-slate-500 line-clamp-1" title={inc.incident_type}>{inc.incident_type || 'Unknown'}</div>
+              </td>
+              <td className="py-3 px-6">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                  inc.severity === 'Grave' ? 'bg-purple-100 text-purple-700' :
+                  inc.severity === 'Major' ? 'bg-orange-100 text-orange-700' :
+                  inc.severity === 'Moderate' ? 'bg-amber-100 text-amber-700' :
+                  inc.severity === 'Minor' ? 'bg-blue-100 text-blue-700' :
+                  'bg-green-100 text-green-700'
+                }`}>
+                  {inc.severity || 'Pending'}
+                </span>
+              </td>
+              <td className="py-3 px-6">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${getStatusClass(inc.status || 'unknown')}`}>
+                  {getStatusLabel(inc.status || 'unknown')}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

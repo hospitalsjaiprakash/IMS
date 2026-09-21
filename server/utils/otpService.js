@@ -1,19 +1,10 @@
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const transporter = require('../config/mail');
+
 
 // In-memory OTP store: Map<employeeId_action, { otp: string, expiresAt: number }>
 const otpStore = new Map();
-
-// Configure nodemailer transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: process.env.SMTP_PORT || 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
 
 /**
  * Generate and send a 6-digit OTP
@@ -35,7 +26,7 @@ exports.sendOtp = async (employeeId, email, action) => {
     });
 
     const mailOptions = {
-      from: process.env.FROM_EMAIL || 'JPHRC IMS <noreply@jaiprakashhospital.com>',
+      from: process.env.FROM_EMAIL || 'JPHRC IMS <digitalmarketing@jaiprakashhospitals.com>',
       to: email,
       subject: 'JPHRC IMS - Your Security OTP',
       html: `

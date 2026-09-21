@@ -263,6 +263,78 @@ exports.rejectRedirect = async (req, res) => {
   }
 };
 
+// ── VERIFY EMPLOYEE TRAINING (HOD) ──────────────────────────────────────────
+exports.verifyEmployeeTraining = async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { employeeId } = req.body;
+
+    if (!employeeId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Employee ID is required.' });
+    }
+
+    const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
+    if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    const incident = incResult.rows[0];
+
+    // Check if employee is part of the incident and needs training
+    const empCheck = await client.query('SELECT * FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2 AND needs_training = TRUE', [id, employeeId]);
+    if (!empCheck.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Employee does not require training for this incident.' });
+    }
+    const emp = empCheck.rows[0];
+
+    // Verify HOD access
+    if (req.user.role === 'hod') {
+      const deptRes = await client.query('SELECT * FROM departments WHERE id = $1', [emp.department_id]);
+      if (deptRes.rows.length) {
+        const d = deptRes.rows[0];
+        if (d.hod_user_id !== req.user.id && d.incharge_user_id !== req.user.id && d.asst_coo_user_id !== req.user.id) {
+           await client.query('ROLLBACK');
+           return res.status(403).json({ error: 'You are not the HOD for this employee’s department.' });
+        }
+      }
+    }
+
+    await client.query(
+      `UPDATE incident_responsible_employees 
+       SET training_completed = TRUE, training_verified_at = NOW(), training_verified_by = $1
+       WHERE incident_id = $2 AND employee_id = $3`,
+      [req.user.id, id, employeeId]
+    );
+
+    // Check if all trainings are completed
+    const pendingTrainings = await client.query(
+      'SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE AND (training_completed IS NULL OR training_completed = FALSE)',
+      [id]
+    );
+
+    await client.query('COMMIT');
+
+    if (parseInt(pendingTrainings.rows[0].count) === 0) {
+      const imcMembers = await query("SELECT id FROM users WHERE role = 'imc' AND is_imc_lead = TRUE");
+      for (const imc of imcMembers.rows) {
+        await createNotification(imc.id, id, 'All Training Verified',
+          `All mandated training for incident ${incident.reference_id} has been verified by HODs. You can now close the incident.`,
+          'training_all_verified');
+      }
+    }
+
+    await auditLog(req.user.id, 'EMPLOYEE_TRAINING_VERIFIED', id, { employeeId }, req.ip);
+    res.json({ success: true, message: 'Employee training verified.' });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e);
+    res.status(500).json({ error: 'Failed to verify employee training.' });
+  } finally {
+    client.release();
+  }
+};
+
 // ── VERIFY TRAINING (IMC) ──────────────────────────────────────────────────
 exports.verifyTraining = async (req, res) => {
   const client = await getClient();

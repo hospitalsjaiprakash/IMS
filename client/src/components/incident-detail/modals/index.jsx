@@ -73,7 +73,7 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
   );
 }
 
-export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFaultType, mdActions, setMdActions, mdRequireTraining, setMdRequireTraining, mdResponsibleEmployees, setMdResponsibleEmployees, mdAttachments, setMdAttachments, mutate, isPending }) {
+export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFaultType, mdActions, setMdActions, mdRequireTraining, setMdRequireTraining, mdResponsibleEmployees, setMdResponsibleEmployees, mdAttachments, setMdAttachments, mdProposedOutcome, setMdProposedOutcome, incidentProposedOutcome, mutate, isPending }) {
   const [search, setSearch] = React.useState('');
   const [users, setUsers] = React.useState([]);
   const [loadingUsers, setLoadingUsers] = React.useState(false);
@@ -82,6 +82,10 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
   React.useEffect(() => {
     if (!show) {
       setDecision('AGREE');
+    } else {
+      if (!mdProposedOutcome && incidentProposedOutcome) {
+        setMdProposedOutcome(incidentProposedOutcome);
+      }
     }
   }, [show]);
 
@@ -124,7 +128,7 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
     <Modal open={show} onClose={onClose} title="Management Action" size="lg"
       footer={<>
         <button onClick={onClose} className="btn-secondary">Cancel</button>
-        <button onClick={() => mutate(decision)} disabled={isPending || (decision !== 'DISAGREE_REINVESTIGATE' && (!mdFaultType || !mdActions.trim()))} className="btn-primary">
+        <button onClick={() => mutate(decision)} disabled={isPending || (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision) ? !mdActions.trim() : (!mdFaultType || !mdActions.trim()))} className="btn-primary">
           {isPending && <Spinner size={15} className="text-white" />} Submit Decision
         </button>
       </>}
@@ -136,16 +140,45 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
             <option value="AGREE">Approve / Agree with IMC</option>
             <option value="DISAGREE_MODIFY">Modify Proposed Outcomes</option>
             <option value="DISAGREE_REINVESTIGATE">Reject & Re-investigate</option>
+            <option value="DISAGREE_REVISE_FEEDBACK">Reject & Request Revised Feedback</option>
           </select>
         </div>
 
-        {decision === 'DISAGREE_REINVESTIGATE' ? (
+        {(decision === 'DISAGREE_REINVESTIGATE' || decision === 'DISAGREE_REVISE_FEEDBACK') ? (
           <div>
-            <label className="field-label field-required">Re-investigation Notes / Reason</label>
-            <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe why this incident needs re-investigation..." />
+            <label className="field-label field-required">{decision === 'DISAGREE_REINVESTIGATE' ? 'Re-investigation' : 'Revision'} Notes / Reason</label>
+            <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe why this incident needs further review..." />
           </div>
         ) : (
           <>
+            {decision === 'DISAGREE_MODIFY' && (
+              <div>
+                <label className="field-label field-required">Modified Proposed Outcome</label>
+                <select
+                  value={mdProposedOutcome}
+                  onChange={(e) => setMdProposedOutcome(e.target.value)}
+                  className="select w-full"
+                >
+                  <option value="">Select Relevant Option</option>
+                  <option value="No Action">No Action</option>
+                  <option value="Counselling / Education / Training">Counselling / Education / Training</option>
+                  <option value="Issue a Warning Letter">Issue a Warning Letter</option>
+                  <option value="Issue an Advisory Letter">Issue an Advisory Letter</option>
+                  <option value="Financial Penalty">Financial Penalty</option>
+                  <option value="Suspension for a Stipulated Period">Suspension for a Stipulated Period</option>
+                  <option value="Transfer to Other Dept.">Transfer to Other Dept.</option>
+                  <option value="Demotion">Demotion</option>
+                  <option value="Termination">Termination</option>
+                  <option value="Legal Action">Legal Action</option>
+                  <option value="Disciplinary Committee">Disciplinary Committee</option>
+                  <option value="Conflict Resolution Committee">Conflict Resolution Committee</option>
+                  <option value="New Protocol and Process Flow">New Protocol and Process Flow</option>
+                  <option value="Modifying Protocol and Process Flow">Modifying Protocol and Process Flow</option>
+                  <option value="Inappropriate Complaint">Inappropriate Complaint</option>
+                  <option value="Others">Others</option>
+                </select>
+              </div>
+            )}
             <div>
               <label className="field-label field-required">Fault Type</label>
               <input value={mdFaultType} onChange={e => setMdFaultType(e.target.value)} className="input" placeholder="e.g. System Failure, Human Error, Process Gap…" />
@@ -452,7 +485,7 @@ export function FilePreviewModal({ previewFile, onClose }) {
         <div className="flex justify-between w-full">
           {previewFile ? (
             <a
-              href={`${UPLOADS_URL}/${previewFile.stored_filename}`}
+              href={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`}
               download={previewFile.original_filename}
               className="btn-primary flex items-center gap-2"
             >
@@ -466,15 +499,15 @@ export function FilePreviewModal({ previewFile, onClose }) {
       {previewFile && (
         <div className="flex justify-center bg-slate-900 rounded-xl overflow-hidden" style={{ minHeight: '50vh', maxHeight: '80vh' }}>
           {previewFile.mime_type?.startsWith('image/') || previewFile.original_filename?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-            <img src={`${UPLOADS_URL}/${previewFile.stored_filename}`} alt="Preview" className="w-full h-full object-contain" />
+            <img src={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`} alt="Preview" className="w-full h-full object-contain" />
           ) : previewFile.mime_type === 'application/pdf' || previewFile.original_filename?.endsWith('.pdf') ? (
-            <iframe src={`${UPLOADS_URL}/${previewFile.stored_filename}`} className="w-full h-[80vh]" title="PDF Preview" />
+            <iframe src={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`} className="w-full h-[80vh]" title="PDF Preview" />
           ) : (
             <div className="p-8 text-center bg-white w-full flex flex-col items-center justify-center">
               <FileText size={48} className="mx-auto text-slate-300 mb-3" />
               <p className="text-slate-600 font-medium mb-2">Preview not available</p>
               <a
-                href={`${UPLOADS_URL}/${previewFile.stored_filename}`}
+                href={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`}
                 download={previewFile.original_filename}
                 className="btn-primary inline-flex mt-2"
               >

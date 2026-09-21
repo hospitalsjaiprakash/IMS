@@ -193,7 +193,7 @@ exports.submitImcFeedback = async (req, res) => {
     await client.query('BEGIN');
 
     const { id } = req.params;
-    let { feedbackText, forwardToMd, severity } = req.body;
+    let { feedbackText, forwardToMd, severity, proposedOutcome } = req.body;
     
     if (!req.user.is_imc_lead) {
       return res.status(403).json({ error: 'Only the IMC Convenor can submit feedback.' });
@@ -222,8 +222,11 @@ exports.submitImcFeedback = async (req, res) => {
       }
     }
 
-    if (severity) {
-      await client.query(`UPDATE incidents SET severity = $1, updated_at = NOW() WHERE id = $2`, [severity, id]);
+    if (severity || proposedOutcome) {
+      await client.query(
+        `UPDATE incidents SET severity = COALESCE($1, severity), proposed_outcome = COALESCE($2, proposed_outcome), updated_at = NOW() WHERE id = $3`,
+        [severity || null, proposedOutcome || null, id]
+      );
     }
 
     if (forwardToMd) {
@@ -268,9 +271,9 @@ exports.submitManagementAction = async (req, res) => {
     await client.query('BEGIN');
 
     const { id } = req.params;
-    let { decision, notes, faultType, correctiveActions, requireTraining, responsibleEmployees } = req.body;
+    let { decision, notes, faultType, correctiveActions, requireTraining, responsibleEmployees, proposedOutcome } = req.body;
     
-    if (!['AGREE', 'DISAGREE_MODIFY', 'DISAGREE_REINVESTIGATE'].includes(decision)) {
+    if (!['AGREE', 'DISAGREE_MODIFY', 'DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision)) {
       return res.status(400).json({ error: 'Invalid decision type' });
     }
 
@@ -286,14 +289,24 @@ exports.submitManagementAction = async (req, res) => {
       );
     }
 
-    if (decision === 'DISAGREE_REINVESTIGATE') {
+    if (proposedOutcome) {
+      await client.query(`UPDATE incidents SET proposed_outcome = $1 WHERE id = $2`, [proposedOutcome, id]);
+    }
+
+    if (decision === 'DISAGREE_REINVESTIGATE' || decision === 'DISAGREE_REVISE_FEEDBACK') {
+      let nextStatus = 'with_imc';
+      if (decision === 'DISAGREE_REINVESTIGATE') {
+        const invCheck = await client.query(`SELECT id FROM investigators WHERE incident_id = $1`, [id]);
+        nextStatus = invCheck.rows.length > 0 ? 'with_imc_review' : 'with_imc';
+      }
+      
       await client.query(
-        `UPDATE incidents SET status = 'with_imc', management_decision = $1, management_notes = $2, updated_at = NOW() WHERE id = $3`,
-        [decision, notes, id]
+        `UPDATE incidents SET status = $1, management_decision = $2, management_notes = $3, updated_at = NOW() WHERE id = $4`,
+        [nextStatus, decision, notes, id]
       );
       await client.query('COMMIT');
-      await auditLog(req.user.id, 'MANAGEMENT_REINVESTIGATE', id, {}, req.ip);
-      return res.json({ success: true, message: 'Reverted to IMC for reinvestigation.' });
+      await auditLog(req.user.id, 'MANAGEMENT_RETURNED', id, { decision, nextStatus }, req.ip);
+      return res.json({ success: true, message: 'Reverted to IMC.' });
     }
 
     if (typeof responsibleEmployees === 'string') {
@@ -459,5 +472,96 @@ exports.closeIncident = async (req, res) => {
     res.json({ success: true, message: 'Incident officially closed.' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to close incident' });
+  }
+};
+
+// =============================================
+// SUBMIT INVESTIGATOR REPORT
+// =============================================
+exports.submitInvestigatorReport = async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { reportText } = req.body;
+
+    const invCheck = await client.query('SELECT * FROM investigators WHERE incident_id = $1 AND investigator_id = $2 AND status != \'completed\'', [id, req.user.id]);
+    if (!invCheck.rows.length) return res.status(403).json({ error: 'You are not assigned as an active investigator for this incident.' });
+
+    await client.query(
+      `UPDATE investigators SET report_text = $1, status = 'completed', completed_at = NOW() WHERE incident_id = $2 AND investigator_id = $3 AND status != 'completed'`,
+      [reportText, id, req.user.id]
+    );
+
+    await client.query(
+      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text) VALUES ($1, $2, 'investigator', $3)`,
+      [id, req.user.id, reportText]
+    );
+
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        await client.query(
+          `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type) VALUES ($1, $2, 'investigator_report', $3, $4, $5, $6)`,
+          [id, req.user.id, file.originalname, (file.filename || file.key), file.size, file.mimetype]
+        );
+      }
+    }
+
+    await client.query(`UPDATE incidents SET status = 'with_imc_review', updated_at = NOW() WHERE id = $1`, [id]);
+
+    await client.query('COMMIT');
+
+    const imcMembers = await client.query(`SELECT id, email, full_name FROM users WHERE role = 'imc' AND is_imc_lead = TRUE`);
+    const { createNotification } = require('../utils/notifications');
+    for (const member of imcMembers.rows) {
+      await createNotification(member.id, id, 'Investigator Report Submitted', 'An investigator has submitted their findings.', 'investigator_report_submitted');
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Failed to submit report' });
+  } finally {
+    client.release();
+  }
+};
+
+// =============================================
+// REJECT INVESTIGATOR REPORT
+// =============================================
+exports.rejectInvestigatorReport = async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { action, newInvestigatorId, feedbackText } = req.body;
+    
+    if (!req.user.is_imc_lead) return res.status(403).json({ error: 'Only IMC Convenor can do this' });
+    
+    if (feedbackText) {
+      await client.query(
+        `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text) VALUES ($1, $2, 'imc', $3)`,
+        [id, req.user.id, feedbackText]
+      );
+    }
+    
+    if (action === 'reinvestigate') {
+      const invCheck = await client.query(`SELECT id FROM investigators WHERE incident_id = $1 AND status = 'completed' ORDER BY completed_at DESC LIMIT 1`, [id]);
+      if (invCheck.rows.length) {
+        await client.query(`UPDATE investigators SET status = 'assigned' WHERE id = $1`, [invCheck.rows[0].id]);
+      }
+    } else if (action === 'reassign' && newInvestigatorId) {
+      await client.query(`INSERT INTO investigators (incident_id, investigator_id, assigned_by) VALUES ($1, $2, $3)`, [id, newInvestigatorId, req.user.id]);
+    }
+    
+    await client.query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
+    
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Failed to reject report' });
+  } finally {
+    client.release();
   }
 };

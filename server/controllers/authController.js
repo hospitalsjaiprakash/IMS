@@ -16,7 +16,8 @@ const syncHodDepartment = async (user) => {
     if (user && isUserHod(user) && user.department) {
       await query(
         `UPDATE departments SET hod_user_id = $1
-         WHERE LOWER(name) = LOWER($2) AND (hod_user_id IS NULL OR hod_user_id != $1)`,
+         WHERE (LOWER(name) = LOWER($2) OR LOWER(name) LIKE LOWER($2) || '%' OR LOWER($2) LIKE LOWER(name) || '%') 
+         AND (hod_user_id IS NULL OR hod_user_id != $1)`,
         [user.id, user.department.trim()]
       );
     }
@@ -313,6 +314,8 @@ exports.login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
+
+    await auditLog(user.id, 'LOGIN', null, { role: activeRole }, req.ip);
 
     // Update last_sync
     await query('UPDATE users SET last_sync = NOW() WHERE id = $1', [user.id]);

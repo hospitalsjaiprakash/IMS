@@ -1,6 +1,7 @@
 import React from 'react';
-import { Building, Users, AlertTriangle, FileText, User, CheckCircle } from 'lucide-react';
+import { Building, Users, AlertTriangle, FileText, User, CheckCircle, Paperclip } from 'lucide-react';
 import { formatDate, formatDateTime, getStatusLabel } from '../../utils/helpers';
+import { UPLOADS_URL } from '../../api';
 
 function DetailRow({ icon: Icon, label, value }) {
   return (
@@ -14,7 +15,9 @@ function DetailRow({ icon: Icon, label, value }) {
   );
 }
 
-export default function IncidentDetailsCard({ incident, finalReport, feedbacks }) {
+export default function IncidentDetailsCard({ incident, finalReport, feedbacks, attachments, onViewAttachment }) {
+  const submissionAtts = (attachments || []).filter(a => a.stage === 'submission');
+
   return (
     <>
       {/* --- PRINT TEMPLATE SPECIFIC CONTENT --- */}
@@ -82,6 +85,9 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks }
           <DetailRow icon={Building} label="Departments" value={(incident.departments || []).map(d => typeof d === 'string' ? d : d.name).join(', ') || '—'} />
           <DetailRow icon={Users} label="Occurred To" value={incident.occurred_to} />
           <DetailRow icon={AlertTriangle} label="Severity" value={incident.severity} />
+          {incident.proposed_outcome && (
+            <DetailRow icon={FileText} label="Proposed Outcome" value={incident.proposed_outcome} />
+          )}
           <DetailRow icon={FileText} label="Category" value={incident.incident_category} />
           <DetailRow icon={FileText} label="Type" value={incident.incident_type} />
           {incident.has_responsible_person && (
@@ -103,6 +109,30 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks }
           <p className="text-xs font-medium text-slate-500 mb-2">Description</p>
           <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{incident.description}</p>
         </div>
+        
+        {submissionAtts.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <p className="text-xs font-medium text-slate-500 mb-2">Attachments ({submissionAtts.length})</p>
+            <div className="flex flex-wrap gap-2">
+              {submissionAtts.map(att => (
+                <button
+                  type="button"
+                  key={att.id}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (onViewAttachment) onViewAttachment(att);
+                    else window.open(`${UPLOADS_URL}/${att.stored_filename}`, '_blank');
+                  }}
+                  title={att.original_filename}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-blue-700 font-medium hover:bg-blue-50 hover:border-blue-300 transition-colors shadow-sm max-w-[200px]"
+                >
+                  <Paperclip size={12} className="flex-shrink-0" />
+                  <span className="truncate">{att.original_filename}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

@@ -1,19 +1,7 @@
 const nodemailer = require('nodemailer');
 const { query } = require('../config/database');
+const transporter = require('../config/mail');
 
-// ─── Transporter ──────────────────────────────────────────────────────────────
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_PORT === '465',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    tls: { rejectUnauthorized: false },
-  });
-};
 
 // ─── Base HTML Template ───────────────────────────────────────────────────────
 const baseTemplate = (content, title = 'JPHRC Incident Management System') => `
@@ -58,7 +46,7 @@ const baseTemplate = (content, title = 'JPHRC Incident Management System') => `
             <td style="background:#f8fafc; border-top:1px solid #e2e8f0; padding: 20px 36px;">
               <p style="margin:0; color:#94a3b8; font-size:12px; line-height:1.6;">
                 This is an automated notification from <strong>JPHRC Incident Management System</strong>.<br />
-                Do not reply to this email. For assistance, contact <a href="mailto:admin@jaiprakashhospital.com" style="color:#059669; text-decoration:none;">admin@jaiprakashhospital.com</a>
+                Do not reply to this email. For assistance, contact <a href="mailto:digitalmarketing@jaiprakashhospitals.com" style="color:#059669; text-decoration:none;">admin@jaiprakashhospital.com</a>
               </p>
               <p style="margin:8px 0 0; color:#cbd5e1; font-size:11px;">
                 © ${new Date().getFullYear()} Jaiprakash Hospital & Research Centre. All rights reserved.
@@ -210,9 +198,9 @@ const templates = {
       <div style="background:${approved ? '#ecfdf5' : '#fef2f2'}; border:1px solid ${approved ? '#a7f3d0' : '#fca5a5'}; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:${approved ? '#065f46' : '#991b1b'}; font-size:13px;">
           ${approved
-            ? `✅ IMC has approved the redirect. The incident has been forwarded to <strong>${newDept}</strong>.`
-            : `❌ IMC has rejected the redirect request. The incident has been returned to your queue for action.`
-          }
+        ? `✅ IMC has approved the redirect. The incident has been forwarded to <strong>${newDept}</strong>.`
+        : `❌ IMC has rejected the redirect request. The incident has been returned to your queue for action.`
+      }
         </p>
         ${imcReason ? `<p style="margin:8px 0 0; color:#475569; font-size:12px; font-style:italic;">"${imcReason}"</p>` : ''}
       </div>
@@ -311,7 +299,7 @@ const sendEmail = async (to, templateData) => {
     console.log(`Subject: ${templateData.subject}`);
     console.log(`Note: SMTP not configured with real credentials in .env. Email simulated.`);
     console.log(`===========================================================\n`);
-    
+
     try {
       const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
       await query(
@@ -322,12 +310,11 @@ const sendEmail = async (to, templateData) => {
     } catch (dbErr) {
       console.warn('[Email Log Error]', dbErr.message);
     }
-    
+
     return true;
   }
 
   try {
-    const transporter = createTransporter();
     const info = await transporter.sendMail({
       from: process.env.FROM_EMAIL || `"JPHRC IMS" <${process.env.SMTP_USER}>`,
       to,
@@ -335,7 +322,7 @@ const sendEmail = async (to, templateData) => {
       html: templateData.html,
     });
     console.log(`[Email SENT] To: ${to} | Subject: ${templateData.subject} | ID: ${info.messageId}`);
-    
+
     try {
       const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
       await query(
@@ -350,7 +337,7 @@ const sendEmail = async (to, templateData) => {
     return true;
   } catch (err) {
     console.error(`[Email FAILED] To: ${to} | Error: ${err.message}`);
-    
+
     try {
       const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
       await query(

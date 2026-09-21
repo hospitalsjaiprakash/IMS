@@ -447,25 +447,50 @@ exports.getUserProfile = async (req, res) => {
       [id]
     );
 
-    // Fetch department incidents if HOD/Incharge
+    // Fetch department incidents if HOD/Incharge/Mgmt
     let departmentIncidents = [];
-    if (user.role === 'hod' || user.is_management_member) {
-       const deptRes = await query(
-         `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, d.name as dept_name, i.created_at
-          FROM incidents i
-          JOIN incident_departments idp ON idp.incident_id = i.id
-          JOIN departments d ON d.id = idp.department_id
-          WHERE d.hod_user_id = $1 OR d.incharge_user_id = $1
-          ORDER BY i.created_at DESC`,
+    let managedDepartments = [];
+    if (user.role === 'hod' || user.role === 'head_management' || user.is_management_member) {
+       const managedDeptRes = await query(
+         `SELECT name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1 OR asst_coo_user_id = $1`,
          [id]
        );
-       departmentIncidents = deptRes.rows;
+       managedDepartments = managedDeptRes.rows.map(r => r.name);
+
+       let deptRes;
+       if (managedDepartments.length > 0) {
+         deptRes = await query(
+           `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, d.name as dept_name, i.created_at
+            FROM incidents i
+            JOIN incident_departments idp ON idp.incident_id = i.id
+            JOIN departments d ON d.id = idp.department_id
+            WHERE d.hod_user_id = $1 OR d.incharge_user_id = $1 OR d.asst_coo_user_id = $1
+            ORDER BY i.created_at DESC`,
+           [id]
+         );
+       } else if ((user.role === 'hod' || user.role === 'incharge') && user.department) {
+         managedDepartments.push(user.department);
+         deptRes = await query(
+           `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, d.name as dept_name, i.created_at
+            FROM incidents i
+            JOIN incident_departments idp ON idp.incident_id = i.id
+            JOIN departments d ON d.id = idp.department_id
+            WHERE d.name = $1
+            ORDER BY i.created_at DESC`,
+           [user.department]
+         );
+       }
+       
+       if (deptRes) {
+         departmentIncidents = deptRes.rows;
+       }
     }
 
     res.json({
       reportedIncidents: reportedRes.rows,
       responsibleIncidents: responsibleRes.rows,
-      departmentIncidents
+      departmentIncidents,
+      managedDepartments
     });
   } catch (error) {
     console.error('[GET /admin/users/:id/profile] error:', error);

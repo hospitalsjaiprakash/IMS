@@ -20,6 +20,11 @@ const ACTION_COLORS = {
   ROLE_ASSIGNED_IMC: 'badge-purple',
   IMC_ACCESS_STOPPED: 'badge-red',
   CONFIG_UPDATED: 'badge-red',
+  EMPLOYEE_ADDED: 'badge-blue',
+  EMPLOYEES_BULK_ADDED: 'badge-blue',
+  ACCOUNT_REGISTERED: 'badge-green',
+  COMMITTEE_LOGIN: 'badge-green',
+  ROLE_SWITCH: 'badge-purple',
 };
 
 export default function AdminAuditPage() {
@@ -42,9 +47,10 @@ export default function AdminAuditPage() {
   });
 
   const ACTIONS = [
-    'LOGIN', 'INCIDENT_CREATED', 'INCIDENT_RESOLVED', 'INCIDENT_WITHDRAWN',
+    'LOGIN', 'ACCOUNT_REGISTERED', 'COMMITTEE_LOGIN', 'ROLE_SWITCH', 'INCIDENT_CREATED', 'INCIDENT_RESOLVED', 'INCIDENT_WITHDRAWN',
     'HOD_FEEDBACK_SUBMITTED', 'IMC_FEEDBACK_SUBMITTED', 'IMC_CLAIM',
     'ROLE_ASSIGNED', 'ROLE_ASSIGNED_IMC', 'IMC_ACCESS_STOPPED', 'CONFIG_UPDATED',
+    'EMPLOYEE_ADDED', 'EMPLOYEES_BULK_ADDED',
   ];
 
   const handleExport = async () => {

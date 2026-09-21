@@ -1,4 +1,5 @@
 const { query } = require('../config/database');
+const { auditLog } = require('../middleware/auth');
 
 // GET all master employees and check if they have created an IMS account
 exports.getAllEmployees = async (req, res) => {
@@ -65,6 +66,14 @@ exports.addEmployee = async (req, res) => {
        RETURNING *`,
       [employeeId.trim(), name.trim(), email, phone, department, designation, role || 'employee']
     );
+
+    await auditLog(req.user.id, 'EMPLOYEE_ADDED', null, {
+      employeeId: employeeId.trim(),
+      name: name.trim(),
+      department,
+      designation,
+      role
+    }, req.ip);
 
     res.status(201).json({
       success: true,
@@ -144,6 +153,13 @@ exports.bulkAddEmployees = async (req, res) => {
         errorCount++;
       }
     }
+
+    await auditLog(req.user.id, 'EMPLOYEES_BULK_ADDED', null, {
+      addedCount,
+      errorCount,
+      alreadyExistsCount: alreadyExists.length,
+      invalidDataCount: invalidData.length
+    }, req.ip);
 
     res.json({
       success: true,

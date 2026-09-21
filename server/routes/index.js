@@ -149,25 +149,26 @@ router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod'), (req,
 router.post('/hod/incidents/:id/redirect', authenticate, authorize('hod'), incidentActionsController.requestRedirect);
 
 // IMC: claim, feedback, approve/reject redirect, verify training, assign investigator
-router.post('/incidents/:id/claim', authenticate, authorize('imc'), incidentWorkflowController.claimIncident);
-router.post('/incidents/:id/imc-feedback', authenticate, authorize('imc'), (req, _, next) => { req._uploadStage = 'imc_feedback'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitImcFeedback);
-router.post('/incidents/:id/approve-redirect', authenticate, authorize('imc'), incidentActionsController.approveRedirect);
-router.post('/incidents/:id/reject-redirect', authenticate, authorize('imc'), incidentActionsController.rejectRedirect);
-router.post('/incidents/:id/verify-training', authenticate, authorize('imc'), incidentActionsController.verifyTraining);
+router.post('/incidents/:id/claim', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.claimIncident);
+router.post('/incidents/:id/imc-feedback', authenticate, authorize('imc', 'system_admin'), (req, _, next) => { req._uploadStage = 'imc_feedback'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitImcFeedback);
+router.post('/incidents/:id/approve-redirect', authenticate, authorize('imc', 'system_admin'), incidentActionsController.approveRedirect);
+router.post('/incidents/:id/reject-redirect', authenticate, authorize('imc', 'system_admin'), incidentActionsController.rejectRedirect);
+router.post('/incidents/:id/verify-training', authenticate, authorize('imc', 'system_admin', 'hod'), incidentActionsController.verifyTraining);
+router.post('/incidents/:id/verify-employee-training', authenticate, authorize('imc', 'system_admin', 'hod'), incidentActionsController.verifyEmployeeTraining);
 
 // ─── MODULAR IMC ALIASES (Chapter 7 Specification) ───
-router.get('/imc/dashboard', authenticate, authorize('imc'), incidentsController.getDashboardStats);
-router.get('/imc/incidents', authenticate, authorize('imc'), incidentsController.getIncidents);
-router.get('/imc/incidents/export', authenticate, authorize('imc'), incidentsController.exportIncidents);
-router.get('/imc/incidents/:id', authenticate, authorize('imc'), incidentsController.getIncident);
-router.post('/imc/incidents/:id/claim', authenticate, authorize('imc'), incidentWorkflowController.claimIncident);
-router.post('/imc/incidents/:id/feedback', authenticate, authorize('imc'), (req, _, next) => { req._uploadStage = 'imc_feedback'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitImcFeedback);
-router.post('/imc/incidents/:id/redirect/approve', authenticate, authorize('imc'), incidentActionsController.approveRedirect);
-router.post('/imc/incidents/:id/redirect/reject', authenticate, authorize('imc'), incidentActionsController.rejectRedirect);
-router.post('/imc/incidents/:id/verify-training', authenticate, authorize('imc'), incidentActionsController.verifyTraining);
-router.post('/imc/incidents/:id/remind-hod', authenticate, authorize('imc'), incidentActionsController.remindHod);
-router.post('/imc/incidents/:id/report', authenticate, authorize('imc'), (req, _, next) => { req._uploadStage = 'imc_report'; next(); }, upload.array('attachments', 10), incidentWorkflowController.generateImcReport);
-router.post('/imc/incidents/:id/close', authenticate, authorize('imc'), incidentWorkflowController.closeIncident);
+router.get('/imc/dashboard', authenticate, authorize('imc', 'system_admin'), incidentsController.getDashboardStats);
+router.get('/imc/incidents', authenticate, authorize('imc', 'system_admin'), incidentsController.getIncidents);
+router.get('/imc/incidents/export', authenticate, authorize('imc', 'system_admin'), incidentsController.exportIncidents);
+router.get('/imc/incidents/:id', authenticate, authorize('imc', 'system_admin'), incidentsController.getIncident);
+router.post('/imc/incidents/:id/claim', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.claimIncident);
+router.post('/imc/incidents/:id/feedback', authenticate, authorize('imc', 'system_admin'), (req, _, next) => { req._uploadStage = 'imc_feedback'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitImcFeedback);
+router.post('/imc/incidents/:id/redirect/approve', authenticate, authorize('imc', 'system_admin'), incidentActionsController.approveRedirect);
+router.post('/imc/incidents/:id/redirect/reject', authenticate, authorize('imc', 'system_admin'), incidentActionsController.rejectRedirect);
+router.post('/imc/incidents/:id/verify-training', authenticate, authorize('imc', 'system_admin'), incidentActionsController.verifyTraining);
+router.post('/imc/incidents/:id/remind-hod', authenticate, authorize('imc', 'system_admin'), incidentActionsController.remindHod);
+router.post('/imc/incidents/:id/report', authenticate, authorize('imc', 'system_admin'), (req, _, next) => { req._uploadStage = 'imc_report'; next(); }, upload.array('attachments', 10), incidentWorkflowController.generateImcReport);
+router.post('/imc/incidents/:id/close', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.closeIncident);
 
 // IMC/Management: escalate priority
 router.post('/incidents/:id/escalate-priority', authenticate, authorize('imc', 'head_management'), incidentActionsController.escalatePriority);
@@ -211,7 +212,7 @@ router.post('/management/incidents/:id/remind-hod', authenticate, authorize('hea
 
 
 // IMC: assign investigator
-router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc'), async (req, res) => {
+router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc', 'system_admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const { investigatorIds } = req.body; // Expecting an array
@@ -241,6 +242,9 @@ router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc')
         [id, inv.id, req.user.id]
       );
     }
+    
+    // Change incident status
+    await query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
 
     // Notify investigators
     const { createNotification } = require('../utils/notifications');
@@ -264,6 +268,9 @@ router.post('/incidents/:id/assign-investigator', authenticate, authorize('imc')
     res.json({ success: true });
   } catch (e) { console.error('[POST /incidents/:id/assign-investigator] error:', e); res.status(500).json({ error: 'Failed to assign investigator' }); }
 });
+
+router.post('/incidents/:id/investigator-report', authenticate, authorize('imc', 'system_admin'), (req, _, next) => { req._uploadStage = 'investigator_report'; next(); }, upload.array('attachments', 10), incidentWorkflowController.submitInvestigatorReport);
+router.post('/incidents/:id/reject-investigator-report', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.rejectInvestigatorReport);
 
 // ─── NOTIFICATIONS ────────────────────────────────
 router.get('/notifications', authenticate, notificationsController.getNotifications);
@@ -367,7 +374,7 @@ router.get('/knowledge-base', authenticate, authorize('hod', 'imc', 'head_manage
   } catch (e) { console.error('[GET /knowledge-base] error:', e); res.status(500).json({ error: 'Failed' }); }
 });
 
-router.post('/knowledge-base', authenticate, authorize('imc'), async (req, res) => {
+router.post('/knowledge-base', authenticate, authorize('imc', 'system_admin'), async (req, res) => {
   try {
     const { incidentId, title, incidentType, departmentId, rootCause, preventiveActions, tags } = req.body;
     await query(
@@ -413,7 +420,7 @@ router.get('/employees/directory', authenticate, authorize('imc', 'head_manageme
 router.use('/master-employees', require('./masterEmployeesRoutes'));
 
 // ─── IMC QUEUE ────────────────────────────────────
-router.get('/imc/queue', authenticate, authorize('imc'), async (req, res) => {
+router.get('/imc/queue', authenticate, authorize('imc', 'system_admin'), async (req, res) => {
   try {
     const result = await query(
       `SELECT i.*,

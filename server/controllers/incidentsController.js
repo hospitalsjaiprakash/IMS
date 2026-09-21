@@ -565,10 +565,8 @@ exports.getIncident = async (req, res) => {
        LEFT JOIN departments d ON d.id = f.department_id
        WHERE f.incident_id = $1`;
     
-    // Employees see feedbacks only after resolution
-    if (role === 'employee' && incident.status !== 'resolved') {
-      feedbackQuery += ` AND FALSE`; // hide all feedbacks
-    }
+    // Employees can now see feedbacks at all times to track incident progress.
+    // (Restriction removed as requested)
     feedbackQuery += ` ORDER BY f.created_at ASC`;
     const feedbacks = await query(feedbackQuery, [incident.id]);
 
@@ -580,6 +578,18 @@ exports.getIncident = async (req, res) => {
        ORDER BY a.created_at ASC`,
       [incident.id]
     );
+
+    const invs = await query(`SELECT i.*, u.full_name, u.email FROM investigators i JOIN users u ON u.id = i.investigator_id WHERE i.incident_id = $1 ORDER BY i.assigned_at DESC`, [incident.id]);
+    incident.investigators = invs.rows;
+
+    const respEmps = await query(
+      `SELECT r.*, u.full_name, u.employee_id as emp_id, d.name as department_name 
+       FROM incident_responsible_employees r
+       JOIN users u ON u.id = r.employee_id
+       LEFT JOIN departments d ON d.id = r.department_id
+       WHERE r.incident_id = $1`, [incident.id]
+    );
+    incident.responsible_employees = respEmps.rows;
 
     // Get final report
     const finalReport = await query(
