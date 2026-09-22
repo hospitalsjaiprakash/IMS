@@ -127,7 +127,6 @@ Key tables:
 | `JWT_SECRET` | Min 64-char secret key |
 | `OFFICE_PORTAL_API_URL` | Hospital employee validation API |
 | `SMTP_HOST/USER/PASS` | Email notifications |
-| `TWILIO_*` | WhatsApp notifications |
 | `UPLOAD_DIR` | File attachment storage path |
 
 ### Client (`client/.env`)

@@ -29,6 +29,7 @@ const migrations = [
   '010_communication_logs.sql',
   '012_workflow_updates.sql',
   '013_full_workflow.sql',
+  '014_remove_whatsapp.sql',
 ];
 
 function splitSqlStatements(sql) {
