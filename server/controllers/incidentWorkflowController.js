@@ -565,3 +565,118 @@ exports.rejectInvestigatorReport = async (req, res) => {
     client.release();
   }
 };
+
+// =============================================
+// REOPEN INCIDENT
+// =============================================
+exports.reopenIncident = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    if (!reason) return res.status(400).json({ error: 'Reason is required to re-open an incident.' });
+    await query(
+      `UPDATE incidents SET status = 'with_imc', updated_at = NOW() WHERE id = $1 AND status = 'resolved'`,
+      [id]
+    );
+    await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason }, req.ip);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[POST /incidents/:id/reopen] error:', e);
+    res.status(500).json({ error: 'Failed to reopen' });
+  }
+};
+
+// =============================================
+// ASSIGN INVESTIGATOR
+// =============================================
+exports.assignInvestigator = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { investigatorIds } = req.body;
+
+    if (!req.user.is_imc_lead) {
+      return res.status(403).json({ error: 'Only IMC Chairman/Convenor can assign investigators.' });
+    }
+
+    if (!Array.isArray(investigatorIds) || investigatorIds.length === 0) {
+      return res.status(400).json({ error: 'Please select at least one investigator.' });
+    }
+
+    const invRes = await query(
+      'SELECT * FROM users WHERE id = ANY($1) AND role = $2',
+      [investigatorIds, 'imc']
+    );
+    if (invRes.rows.length !== investigatorIds.length) {
+      return res.status(400).json({ error: 'All assigned investigators must be valid IMC members.' });
+    }
+
+    for (const inv of invRes.rows) {
+      await query(
+        `INSERT INTO investigators (incident_id, investigator_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [id, inv.id, req.user.id]
+      );
+    }
+
+    await query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
+
+    const incResult = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
+    const refId = incResult.rows[0]?.reference_id || 'Unknown';
+
+    for (const inv of invRes.rows) {
+      await createNotification(
+        inv.id,
+        id,
+        'Assigned as Investigator',
+        `You have been assigned as an investigator for incident ${refId}.`,
+        'investigator_assigned'
+      );
+      if (inv.email) {
+        sendEmail(inv.email, {
+          subject: `Assigned as Investigator for Incident ${refId}`,
+          html: `<p>Dear ${inv.full_name},</p><p>You have been chosen by the IMC Chairman to investigate incident <b>${refId}</b>.</p>`
+        }).catch(() => {});
+      }
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[POST /incidents/:id/assign-investigator] error:', e);
+    res.status(500).json({ error: 'Failed to assign investigator' });
+  }
+};
+
+// =============================================
+// GET IMC QUEUE
+// =============================================
+exports.getImcQueue = async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT i.*,
+        u.full_name as reporter_name, u.employee_id as reporter_employee_id,
+        ml.name as main_location_name,
+        ARRAY_AGG(DISTINCT d.name) as departments,
+        ic.claimed_by as claimed_by_id,
+        cu.full_name as claimed_by_name,
+        ic.expires_at as claim_expires_at,
+        EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod') as has_hod_feedback,
+        EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc') as has_imc_feedback,
+        EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') as has_management_feedback
+       FROM incidents i
+       LEFT JOIN users u ON u.id = i.reporter_id
+       LEFT JOIN main_locations ml ON ml.id = i.main_location_id
+       LEFT JOIN incident_departments id ON id.incident_id = i.id
+       LEFT JOIN departments d ON d.id = id.department_id
+       LEFT JOIN imc_claims ic ON ic.incident_id = i.id AND ic.is_active = TRUE AND ic.expires_at > NOW()
+       LEFT JOIN users cu ON cu.id = ic.claimed_by
+       WHERE i.status IN ('with_imc', 'redirect_requested', 'with_hod_and_imc', 'pending_training')
+          OR (i.status = 'resolved' AND i.has_responsible_person = TRUE AND i.training_completed = FALSE)
+       GROUP BY i.id, u.full_name, u.employee_id, ml.name, ic.claimed_by, cu.full_name, ic.expires_at
+       ORDER BY i.created_at ASC`
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('[GET /imc/queue] error:', e);
+    res.status(500).json({ error: 'Failed to retrieve IMC queue' });
+  }
+};
+
