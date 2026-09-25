@@ -279,7 +279,7 @@ export default function LoginPage() {
                     name="employeeId"
                     value={loginForm.employeeId}
                     onChange={handleLoginChange}
-                    placeholder="e.g. 13574"
+                    placeholder="e.g. 12243"
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-green-500 focus:ring-green-500 rounded-xl text-slate-900 outline-none transition-all focus:ring-2 focus:ring-opacity-20"
                     autoComplete="username"
                   />
@@ -336,7 +336,7 @@ export default function LoginPage() {
                     name="fullName"
                     value={regForm.fullName}
                     onChange={handleRegChange}
-                    placeholder="As in hospital records (e.g. NIRMAL NAIK)"
+                    placeholder="As in hospital records (e.g. Sourav Barik)"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
@@ -347,7 +347,7 @@ export default function LoginPage() {
                     name="employeeId"
                     value={regForm.employeeId}
                     onChange={handleRegChange}
-                    placeholder="e.g. 13574"
+                    placeholder="e.g. 12243"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
@@ -360,7 +360,7 @@ export default function LoginPage() {
                     type="email"
                     value={regForm.email}
                     onChange={handleRegChange}
-                    placeholder="e.g. nirmalnaik1402@gmail.com"
+                    placeholder="e.g. sourav.barik@jphrc.org"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
@@ -409,7 +409,7 @@ export default function LoginPage() {
                     name="employeeId"
                     value={forgotForm.employeeId}
                     onChange={handleForgotChange}
-                    placeholder="e.g. 13574"
+                    placeholder="e.g. 12243"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
@@ -421,7 +421,7 @@ export default function LoginPage() {
                     type="email"
                     value={forgotForm.email}
                     onChange={handleForgotChange}
-                    placeholder="e.g. nirmalnaik1402@gmail.com"
+                    placeholder="e.g. sourav.barik@jphrc.org"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>

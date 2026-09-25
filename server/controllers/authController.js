@@ -294,9 +294,9 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Since this is the Employee Portal login (/login), if DB role is currently an administrative or committee role, default to employee view
+    // For committee members (IMC / Management), default to employee/HOD view so they report normally, but keep system_admin active
     let activeRole = user.role;
-    if (['system_admin', 'imc', 'head_management'].includes(activeRole)) {
+    if (['imc', 'head_management'].includes(activeRole)) {
       activeRole = isUserHod(user) ? 'hod' : 'employee';
       await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
       user.role = activeRole;

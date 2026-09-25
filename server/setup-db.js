@@ -30,6 +30,9 @@ const migrations = [
   '012_workflow_updates.sql',
   '013_full_workflow.sql',
   '014_remove_whatsapp.sql',
+  '015_reference_id_constraints.sql',
+  '016_master_employees.sql',
+  '017_seed_mock_data.sql',
 ];
 
 function splitSqlStatements(sql) {

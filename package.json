@@ -10,6 +10,7 @@
     "build": "cd client && npm run build",
     "install:all": "cd server && npm install && cd ../client && npm install",
     "migrate": "cd server && npm run migrate",
+    "seed": "cd server && npm run seed",
     "start": "cd server && npm start"
   },
   "devDependencies": {
