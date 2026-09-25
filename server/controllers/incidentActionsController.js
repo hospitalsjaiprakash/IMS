@@ -20,6 +20,24 @@ exports.updateIncident = async (req, res) => {
       return res.status(400).json({ error: 'Incident can only be edited while in submitted status.' });
     }
 
+    if (incidentDate) {
+      const dateParts = incidentDate.split('-').map(Number);
+      const incDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      const minAllowed = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14, 0, 0, 0, 0);
+
+      if (isNaN(incDate.getTime())) {
+        return res.status(400).json({ error: 'Invalid incident date format.' });
+      }
+      if (incDate > today) {
+        return res.status(400).json({ error: 'Incident date cannot be in the future.' });
+      }
+      if (incDate < minAllowed) {
+        return res.status(400).json({ error: 'Per hospital policy, incidents must be reported within 14 days of occurrence. Incidents exceeding 14 days cannot be accepted.' });
+      }
+    }
+
     await query(
       `UPDATE incidents SET
         description = COALESCE($1, description),
@@ -139,37 +157,54 @@ exports.approveRedirect = async (req, res) => {
   try {
     await client.query('BEGIN');
     const { id } = req.params;
-    const { targetDepartment } = req.body;
+    const { targetDepartment, targetDepartments } = req.body;
 
-    if (!targetDepartment) return res.status(400).json({ error: 'Target department is required.' });
+    let deptNames = [];
+    if (Array.isArray(targetDepartments) && targetDepartments.length > 0) {
+      deptNames = [...new Set(targetDepartments.filter(Boolean))];
+    } else if (targetDepartment) {
+      deptNames = [targetDepartment];
+    }
+
+    if (!deptNames.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'At least one target department is required for redirection.' });
+    }
 
     const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
     const incident = incResult.rows[0];
 
-    // Find target department
-    const deptRes = await client.query('SELECT id, hod_user_id FROM departments WHERE name = $1', [targetDepartment]);
-    if (!deptRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Target department not found' }); }
-    const targetDept = deptRes.rows[0];
+    // Find all target departments
+    const deptRes = await client.query('SELECT id, name, hod_user_id FROM departments WHERE name = ANY($1)', [deptNames]);
+    if (!deptRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Selected target department(s) not found.' });
+    }
+    const targetDepts = deptRes.rows;
 
     const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
 
-    // Update incident departments — remove old, add new
+    // Update incident departments — remove old, add all new
     await client.query('DELETE FROM incident_departments WHERE incident_id = $1', [id]);
-    await client.query('INSERT INTO incident_departments (incident_id, department_id) VALUES ($1, $2)', [id, targetDept.id]);
+    for (const td of targetDepts) {
+      await client.query('INSERT INTO incident_departments (incident_id, department_id) VALUES ($1, $2)', [id, td.id]);
+    }
 
     await client.query(
-      `UPDATE incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
+      `UPDATE incidents SET status = $1, redirect_reason = NULL, redirect_requested_by_dept = NULL, redirect_requested_at = NULL, updated_at = NOW() WHERE id = $2`,
       [newStatus, id]
     );
 
     await client.query('COMMIT');
 
-    // Notify new HOD, Incharge, or Assistant COO
+    // Notify new HODs of all targeted departments
+    const targetDeptIds = targetDepts.map(d => d.id);
     const newLeadersRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
        LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
-       WHERE d.id = $1 AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`, [targetDept.id]
+       WHERE d.id = ANY($1) AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+      [targetDeptIds]
     );
     for (const leader of newLeadersRes.rows) {
       await createNotification(leader.id, id, 'Incident Redirected to You',
@@ -181,27 +216,29 @@ exports.approveRedirect = async (req, res) => {
     }
 
     // Notify original HOD of approval
+    const redirectedDeptNamesStr = targetDepts.map(d => d.name).join(', ');
     if (incident.redirect_requested_by_dept) {
       const origHodRes = await query(
         `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
          LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
-         WHERE d.name = $1 AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`, [incident.redirect_requested_by_dept]
+         WHERE d.name = $1 AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+        [incident.redirect_requested_by_dept]
       );
       if (origHodRes.rows.length) {
         const origHod = origHodRes.rows[0];
         if (origHod.email) {
-          sendEmail(origHod.email, templates.redirectDecision(incident, origHod, true, targetDepartment, null)).catch(() => { });
+          sendEmail(origHod.email, templates.redirectDecision(incident, origHod, true, redirectedDeptNamesStr, null)).catch(() => { });
         }
       }
     }
 
-    await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartment }, req.ip);
+    await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartments: deptNames }, req.ip);
 
     if (req.io) {
       req.io.emit('incident_updated', { id });
     }
 
-    res.json({ success: true, message: 'Redirect approved successfully.' });
+    res.json({ success: true, message: 'Redirect approved successfully.', targetDepartments: deptNames });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to approve redirect.' });

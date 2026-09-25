@@ -5,7 +5,7 @@ import { incidentsApi, metaApi, UPLOADS_URL } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip } from 'lucide-react';
-import { Alert, Spinner, Breadcrumbs, SkeletonDetail } from '../../components/ui';
+import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
 import { formatDateTime } from '../../utils/helpers';
 
 import IncidentHeader from '../../components/incident-detail/IncidentHeader';
@@ -95,7 +95,7 @@ export default function IncidentDetailPage() {
   const [reopenReason, setReopenReason] = useState('');
   const [hodAcknowledged, setHodAcknowledged] = useState(false);
   const [redirectReason, setRedirectReason] = useState('');
-  const [redirectTargetDept, setRedirectTargetDept] = useState('');
+  const [redirectTargetDepts, setRedirectTargetDepts] = useState([]);
   const [rejectRedirectReason, setRejectRedirectReason] = useState('');
 
   const [hodAttachments, setHodAttachments] = useState([]);
@@ -264,8 +264,9 @@ export default function IncidentDetailPage() {
   });
 
   const approveRedirectMutation = useMutation({
-    mutationFn: () => incidentsApi.approveRedirect(id, { targetDepartment: redirectTargetDept }),
-    onSuccess: () => { toast.success('Incident successfully redirected.'); setRedirectTargetDept(''); refetch(); }
+    mutationFn: () => incidentsApi.approveRedirect(id, { targetDepartments: redirectTargetDepts }),
+    onSuccess: () => { toast.success('Incident successfully redirected.'); setRedirectTargetDepts([]); refetch(); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to redirect incident')
   });
 
   const rejectRedirectMutation = useMutation({
@@ -615,17 +616,18 @@ export default function IncidentDetailPage() {
 
                     <div className="space-y-4">
                       <div>
-                        <label className="field-label field-required mb-1.5 font-medium text-slate-700">Select Concern Department (Target HOD)</label>
-                        <select
-                          value={redirectTargetDept}
-                          onChange={e => setRedirectTargetDept(e.target.value)}
-                          className="select"
-                        >
-                          <option value="">-- Select Department --</option>
-                          {departmentsList.map(d => (
-                            <option key={d.id} value={d.name}>{d.name}</option>
-                          ))}
-                        </select>
+                        <label className="field-label field-required mb-1.5 font-medium text-slate-700">
+                          Select Concern Department(s) (Target HODs)
+                        </label>
+                        <SearchableMultiSelect
+                          options={departmentsList.map(d => d.name)}
+                          value={redirectTargetDepts}
+                          onChange={setRedirectTargetDepts}
+                          placeholder="Search and select one or more concern departments…"
+                        />
+                        <p className="text-xs text-slate-500 mt-1.5">
+                          You can select multiple departments. The HOD of each selected department will review and provide feedback.
+                        </p>
                       </div>
 
                       <div className="flex justify-end gap-2 pt-2">
@@ -637,11 +639,11 @@ export default function IncidentDetailPage() {
                         </button>
                         <button
                           onClick={() => approveRedirectMutation.mutate()}
-                          disabled={!redirectTargetDept || approveRedirectMutation.isPending}
+                          disabled={redirectTargetDepts.length === 0 || approveRedirectMutation.isPending}
                           className="btn-primary flex items-center gap-2 bg-orange-600 hover:bg-orange-700 border-orange-600"
                         >
                           {approveRedirectMutation.isPending && <Spinner size={14} className="text-white" />}
-                          Approve & Redirect to Concern Department
+                          Approve & Redirect to Concern Department(s)
                         </button>
                       </div>
                     </div>

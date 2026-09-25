@@ -49,6 +49,31 @@ exports.createIncident = async (req, res) => {
       hasResponsiblePerson, responsiblePersonName, incidentCategories
     } = req.body;
 
+    // Validate incident date (must be within past 14 days and not in the future)
+    if (!incidentDate) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Incident date is required.' });
+    }
+
+    const dateParts = incidentDate.split('-').map(Number);
+    const incDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const minAllowed = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14, 0, 0, 0, 0);
+
+    if (isNaN(incDate.getTime())) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid incident date format.' });
+    }
+    if (incDate > today) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Incident date cannot be in the future.' });
+    }
+    if (incDate < minAllowed) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Per hospital policy, an incident can only be reported if it occurred within the past 14 days. Incidents exceeding 14 days cannot be reported.' });
+    }
+
     // Convert empty strings or 'null' from FormData to actual null for integer columns
     const mLoc = mainLocationId && mainLocationId !== 'null' && mainLocationId !== 'Select a location' ? parseInt(mainLocationId, 10) : null;
     

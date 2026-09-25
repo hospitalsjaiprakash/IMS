@@ -96,9 +96,21 @@ export default function NewIncidentPage() {
     }
 
     if (step === 3) {
-      if (!form.incidentDate) e.incidentDate = 'Date is required';
-      if (form.incidentDate && new Date(form.incidentDate) > new Date())
-        e.incidentDate = 'Date cannot be in the future';
+      if (!form.incidentDate) {
+        e.incidentDate = 'Date is required';
+      } else {
+        const parts = form.incidentDate.split('-').map(Number);
+        const incDate = new Date(parts[0], parts[1] - 1, parts[2]);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        const minAllowed = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14, 0, 0, 0, 0);
+
+        if (incDate > today) {
+          e.incidentDate = 'Incident date cannot be in the future';
+        } else if (incDate < minAllowed) {
+          e.incidentDate = 'Incidents must be reported within 14 days of occurrence. Incidents exceeding 14 days cannot be reported.';
+        }
+      }
       if (!form.incidentTime) e.incidentTime = 'Time is required';
     }
 
@@ -269,11 +281,20 @@ export default function NewIncidentPage() {
                 <input
                   type="date"
                   value={form.incidentDate}
-                  max={new Date().toISOString().split('T')[0]}
+                  min={(() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - 14);
+                    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+                  })()}
+                  max={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]}
                   onChange={e => set('incidentDate', e.target.value)}
                   className={`input ${errors.incidentDate ? 'input-error' : ''}`}
                 />
-                {errors.incidentDate && <p className="field-error">{errors.incidentDate}</p>}
+                {errors.incidentDate ? (
+                  <p className="field-error">{errors.incidentDate}</p>
+                ) : (
+                  <p className="text-xs text-slate-500 mt-1">Per policy, incidents must be reported within 14 days of occurrence.</p>
+                )}
               </div>
               <div>
                 <label className="field-label field-required">Incident Time</label>
