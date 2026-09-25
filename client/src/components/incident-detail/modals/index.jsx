@@ -73,10 +73,7 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
   );
 }
 
-export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFaultType, mdActions, setMdActions, mdRequireTraining, setMdRequireTraining, mdResponsibleEmployees, setMdResponsibleEmployees, mdAttachments, setMdAttachments, mdProposedOutcome, setMdProposedOutcome, incidentProposedOutcome, mutate, isPending }) {
-  const [search, setSearch] = React.useState('');
-  const [users, setUsers] = React.useState([]);
-  const [loadingUsers, setLoadingUsers] = React.useState(false);
+export function ManagementDecisionModal({ show, onClose, mdActions, setMdActions, mdAttachments, setMdAttachments, mdProposedOutcome, setMdProposedOutcome, incidentProposedOutcome, mutate, isPending }) {
   const [decision, setDecision] = React.useState('AGREE');
 
   React.useEffect(() => {
@@ -89,46 +86,18 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
     }
   }, [show]);
 
-  // Quick inline search using fetch
-  React.useEffect(() => {
-    if (search.length > 2) {
-      setLoadingUsers(true);
-      const token = sessionStorage.getItem('ims_token');
-      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/employee/search?q=${search}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      .then(res => res.json())
-      .then(data => {
-        setUsers(data.employees || []);
-        setLoadingUsers(false);
-      })
-      .catch(() => setLoadingUsers(false));
-    } else {
-      setUsers([]);
-    }
-  }, [search]);
-
-  const addEmployee = (emp) => {
-    if (!mdResponsibleEmployees.find(e => e.id === emp.id)) {
-      setMdResponsibleEmployees([...mdResponsibleEmployees, { ...emp, needs_training: false }]);
-    }
-    setSearch('');
-    setUsers([]);
-  };
-
-  const removeEmployee = (id) => {
-    setMdResponsibleEmployees(mdResponsibleEmployees.filter(e => e.id !== id));
-  };
-
-  const toggleTraining = (id) => {
-    setMdResponsibleEmployees(mdResponsibleEmployees.map(e => e.id === id ? { ...e, needs_training: !e.needs_training } : e));
-  };
-
   return (
     <Modal open={show} onClose={onClose} title="Management Action" size="lg"
       footer={<>
         <button onClick={onClose} className="btn-secondary">Cancel</button>
-        <button onClick={() => mutate(decision)} disabled={isPending || (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision) ? !mdActions.trim() : (!mdFaultType || !mdActions.trim()))} className="btn-primary">
+        <button
+          onClick={() => mutate(decision)}
+          disabled={
+            isPending ||
+            (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision) ? !mdActions?.trim() : (decision === 'DISAGREE_MODIFY' && !mdProposedOutcome))
+          }
+          className="btn-primary"
+        >
           {isPending && <Spinner size={15} className="text-white" />} Submit Decision
         </button>
       </>}
@@ -180,67 +149,14 @@ export function ManagementDecisionModal({ show, onClose, mdFaultType, setMdFault
               </div>
             )}
             <div>
-              <label className="field-label field-required">Fault Type</label>
-              <input value={mdFaultType} onChange={e => setMdFaultType(e.target.value)} className="input" placeholder="e.g. System Failure, Human Error, Process Gap…" />
-            </div>
-            <div>
-              <label className="field-label field-required">Corrective Actions / Notes</label>
-              <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe the corrective actions taken or recommended…" />
-            </div>
-            
-            <div className="pt-3 border-t border-slate-100">
-              <label className="field-label">Responsible Employees (Optional)</label>
-              <div className="relative mb-3">
-                <input 
-                  type="text" 
-                  value={search} 
-                  onChange={e => setSearch(e.target.value)} 
-                  className="input" 
-                  placeholder="Search employee by name or ID to assign responsibility..."
-                />
-                {loadingUsers && <Spinner size={14} className="absolute right-3 top-3 text-slate-400" />}
-                {users.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {users.map(u => (
-                      <button
-                        key={u.id}
-                        onClick={() => addEmployee(u)}
-                        className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between"
-                      >
-                        <div>
-                          <div className="text-sm font-medium text-slate-800">{u.full_name}</div>
-                          <div className="text-xs text-slate-500">{u.employee_id} • {u.department}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {mdResponsibleEmployees.length > 0 && (
-                <div className="space-y-2 mt-2">
-                  {mdResponsibleEmployees.map(emp => (
-                    <div key={emp.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                      <div>
-                        <div className="text-sm font-medium text-slate-800">{emp.full_name}</div>
-                        <div className="text-xs text-slate-500">{emp.employee_id} • {emp.department}</div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={emp.needs_training} 
-                            onChange={() => toggleTraining(emp.id)}
-                            className="w-4 h-4 accent-amber-600 rounded"
-                          />
-                          <span className="text-sm font-semibold text-amber-700">Needs Training</span>
-                        </label>
-                        <button onClick={() => removeEmployee(emp.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">Remove</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <label className="field-label">Corrective Actions / Notes (Optional)</label>
+              <textarea
+                value={mdActions}
+                onChange={e => setMdActions(e.target.value)}
+                className="textarea"
+                rows={4}
+                placeholder="Describe any corrective actions taken, recommended, or internal notes (optional)…"
+              />
             </div>
             
             <FileUploadArea files={mdAttachments} setFiles={setMdAttachments} />

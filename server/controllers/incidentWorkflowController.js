@@ -374,34 +374,36 @@ exports.submitManagementAction = async (req, res) => {
       return res.json({ success: true, message: 'Reverted to IMC.' });
     }
 
-    if (typeof responsibleEmployees === 'string') {
-      try { responsibleEmployees = JSON.parse(responsibleEmployees); } catch(e) {}
-    }
-    if (!Array.isArray(responsibleEmployees)) {
-      responsibleEmployees = [];
-    }
-    
-    requireTraining = requireTraining === 'true' || requireTraining === true || responsibleEmployees.some(e => e.needs_training);
-
-    if (responsibleEmployees.length > 0) {
-      // Clear existing responsible employees first to handle modification
-      await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
-      
-      for (const emp of responsibleEmployees) {
-        let deptId = emp.department_id;
-        if (!deptId && emp.department) {
-           const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
-           if (dRes.rows.length) deptId = dRes.rows[0].id;
-        }
-        await client.query(
-          `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [id, emp.id, deptId || null, emp.needs_training ? true : false, req.user.id]
-        );
+    if (responsibleEmployees !== undefined) {
+      if (typeof responsibleEmployees === 'string') {
+        try { responsibleEmployees = JSON.parse(responsibleEmployees); } catch(e) {}
       }
-      await client.query(`UPDATE incidents SET has_responsible_person = TRUE WHERE id = $1`, [id]);
-    } else {
-      await client.query(`UPDATE incidents SET has_responsible_person = FALSE WHERE id = $1`, [id]);
+      if (!Array.isArray(responsibleEmployees)) {
+        responsibleEmployees = [];
+      }
+      
+      requireTraining = requireTraining === 'true' || requireTraining === true || responsibleEmployees.some(e => e.needs_training);
+
+      if (responsibleEmployees.length > 0) {
+        // Clear existing responsible employees first to handle modification
+        await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
+        
+        for (const emp of responsibleEmployees) {
+          let deptId = emp.department_id;
+          if (!deptId && emp.department) {
+             const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
+             if (dRes.rows.length) deptId = dRes.rows[0].id;
+          }
+          await client.query(
+            `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [id, emp.id, deptId || null, emp.needs_training ? true : false, req.user.id]
+          );
+        }
+        await client.query(`UPDATE incidents SET has_responsible_person = TRUE WHERE id = $1`, [id]);
+      } else {
+        await client.query(`UPDATE incidents SET has_responsible_person = FALSE WHERE id = $1`, [id]);
+      }
     }
 
     // Save final report data but mark it pending IMC official report

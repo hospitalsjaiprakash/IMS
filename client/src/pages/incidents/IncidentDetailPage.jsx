@@ -168,16 +168,22 @@ export default function IncidentDetailPage() {
     mutationFn: (decisionType) => {
       const fd = new FormData();
       fd.append('decision', decisionType);
-      fd.append('notes', mdActions); // Actually using mdActions as notes here or feedbackText? Let's use mdActions as notes for simplicity, but wait, maybe create a dedicated state for notes. For now I will leave it to be done in modal.
-      fd.append('faultType', mdFaultType);
-      fd.append('correctiveActions', mdActions);
-      fd.append('requireTraining', mdRequireTraining);
-      fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
+      if (mdActions) {
+        fd.append('notes', mdActions);
+        fd.append('correctiveActions', mdActions);
+      }
       if (mdProposedOutcome) fd.append('proposedOutcome', mdProposedOutcome);
       mdAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.managementAction(id, fd);
     },
-    onSuccess: () => { toast.success('Management action submitted.'); setShowMdModal(false); setMdAttachments([]); setMdFaultType(''); setMdActions(''); setMdResponsibleEmployees([]); setMdProposedOutcome(''); refetch(); }
+    onSuccess: () => {
+      toast.success('Management action submitted.');
+      setShowMdModal(false);
+      setMdAttachments([]);
+      setMdActions('');
+      setMdProposedOutcome('');
+      refetch();
+    }
   });
 
   const imcReportMutation = useMutation({
@@ -1049,20 +1055,14 @@ export default function IncidentDetailPage() {
       <ManagementDecisionModal
         show={showMdModal}
         onClose={() => setShowMdModal(false)}
-        mdFaultType={mdFaultType}
-        setMdFaultType={setMdFaultType}
         mdActions={mdActions}
         setMdActions={setMdActions}
-        mdRequireTraining={mdRequireTraining}
-        setMdRequireTraining={setMdRequireTraining}
-        mdResponsibleEmployees={mdResponsibleEmployees}
-        setMdResponsibleEmployees={setMdResponsibleEmployees}
         mdAttachments={mdAttachments}
         setMdAttachments={setMdAttachments}
         mdProposedOutcome={mdProposedOutcome}
         setMdProposedOutcome={setMdProposedOutcome}
         incidentProposedOutcome={incident?.proposed_outcome}
-        mutate={() => mdMutation.mutate()}
+        mutate={(decision) => mdMutation.mutate(decision)}
         isPending={mdMutation.isPending}
       />
       <AssignInvestigatorModal
