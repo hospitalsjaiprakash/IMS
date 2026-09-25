@@ -386,32 +386,57 @@ exports.verifyTraining = async (req, res) => {
 exports.editFeedback = async (req, res) => {
   try {
     const { id } = req.params;
-    const { feedbackType, feedbackText } = req.body;
+    const { feedbackType, feedbackText, feedbackId } = req.body;
     const role = req.user.role;
 
     if (!feedbackText?.trim()) return res.status(400).json({ error: 'Feedback text is required.' });
 
-    // Map feedbackType to role
-    const roleMap = { hod: 'hod', imc: 'imc', head_management: 'head_management', management: 'head_management' };
-    const fbRole = roleMap[feedbackType] || feedbackType;
+    // Locate the specific feedback
+    let fbResult;
+    if (feedbackId) {
+      fbResult = await query(
+        'SELECT * FROM feedbacks WHERE id = $1 AND incident_id = $2',
+        [feedbackId, id]
+      );
+    } else {
+      const roleMap = { hod: 'hod', imc: 'imc', head_management: 'head_management', management: 'head_management' };
+      const fbRole = roleMap[feedbackType] || feedbackType;
+      fbResult = await query(
+        'SELECT * FROM feedbacks WHERE incident_id = $1 AND author_id = $2 AND role = $3 ORDER BY created_at DESC LIMIT 1',
+        [id, req.user.id, fbRole]
+      );
+    }
 
-    // Security: can only edit own role's feedback
-    if (fbRole !== role) {
+    if (!fbResult.rows.length) {
+      return res.status(404).json({ error: 'No matching feedback found to update.' });
+    }
+
+    const fb = fbResult.rows[0];
+
+    // Rule: No one can edit the review/feedback given by any other person, except the person itself.
+    if (fb.author_id !== req.user.id) {
       return res.status(403).json({ error: 'You can only edit your own feedback.' });
+    }
+
+    // Rule: After IMC has given the feedback, the feedbacks given by the HODs of concerned department can not be modified.
+    if (fb.role === 'hod') {
+      const imcCheck = await query(
+        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role = 'imc'",
+        [id]
+      );
+      if (imcCheck.rows.length > 0) {
+        return res.status(403).json({ error: 'HOD feedback cannot be modified after IMC has submitted quality review feedback.' });
+      }
     }
 
     const result = await query(
       `UPDATE feedbacks SET feedback_text = $1, updated_at = NOW()
-       WHERE incident_id = $2 AND author_id = $3 AND role = $4
+       WHERE id = $2
        RETURNING id`,
-      [feedbackText, id, req.user.id, fbRole]
+      [feedbackText, fb.id]
     );
 
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'No matching feedback found to update.' });
-    }
-
-    await auditLog(req.user.id, 'FEEDBACK_EDITED', id, { feedbackType: fbRole }, req.ip);
+    await auditLog(req.user.id, 'FEEDBACK_EDITED', id, { feedbackId: fb.id, role: fb.role }, req.ip);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to edit feedback.' });
@@ -429,13 +454,17 @@ exports.remindHod = async (req, res) => {
     if (!incResult.rows.length) return res.status(404).json({ error: 'Incident not found' });
     const incident = incResult.rows[0];
 
-    // Find HOD(s) associated with this incident via incident_departments or department matching
+    // Find HOD(s) of concerned department(s) who haven't submitted feedback yet
     const deptRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name
        FROM incident_departments id
        JOIN departments d ON d.id = id.department_id
        JOIN users u ON (u.id = d.hod_user_id OR u.id = d.incharge_user_id OR u.id = d.asst_coo_user_id)
-       WHERE id.incident_id = $1`,
+       WHERE id.incident_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM feedbacks f
+           WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.author_id = u.id OR f.department_id = d.id)
+         )`,
       [id]
     );
 
@@ -446,13 +475,20 @@ exports.remindHod = async (req, res) => {
         `SELECT DISTINCT id, email, full_name FROM users
          WHERE role = 'hod'
            AND (department IN (SELECT d.name FROM incident_departments id JOIN departments d ON d.id = id.department_id WHERE id.incident_id = $1)
-                OR department = (SELECT department FROM users WHERE id = $2))`
+                OR department = (SELECT department FROM users WHERE id = $2))
+           AND NOT EXISTS (
+             SELECT 1 FROM feedbacks f WHERE f.incident_id = $1 AND f.role = 'hod' AND f.author_id = users.id
+           )`
       , [id, incident.reporter_id]);
       hodUsers = fallbackRes.rows;
     }
 
     if (!hodUsers.length) {
-      const allHodRes = await query(`SELECT id, email, full_name FROM users WHERE role = 'hod'`);
+      const allHodRes = await query(
+        `SELECT id, email, full_name FROM users 
+         WHERE role = 'hod' 
+           AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = $1 AND f.role = 'hod' AND f.author_id = users.id)`
+      , [id]);
       hodUsers = allHodRes.rows;
     }
 

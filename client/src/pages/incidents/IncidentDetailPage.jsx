@@ -240,8 +240,17 @@ export default function IncidentDetailPage() {
   });
 
   const editFeedbackMutation = useMutation({
-    mutationFn: ({ feedbackType, feedbackText: ft }) => incidentsApi.editFeedback(id, { feedbackType, feedbackText: ft }),
-    onSuccess: () => { toast.success('Feedback updated.'); setEditFbModal(null); setEditFbText(''); refetch(); },
+    mutationFn: ({ feedbackType, feedbackText: ft, feedbackId }) =>
+      incidentsApi.editFeedback(id, { feedbackType, feedbackText: ft, feedbackId }),
+    onSuccess: () => {
+      toast.success('Feedback updated.');
+      setEditFbModal(null);
+      setEditFbText('');
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(err?.response?.data?.error || 'Failed to update feedback.');
+    }
   });
 
   const editIncidentMutation = useMutation({
@@ -280,8 +289,8 @@ export default function IncidentDetailPage() {
   });
   const departmentsList = deptsData || [];
 
-  const openEditFeedback = (feedbackType, currentText) => {
-    setEditFbModal({ feedbackType });
+  const openEditFeedback = (feedbackType, currentText, feedbackId) => {
+    setEditFbModal({ feedbackType, feedbackId });
     setEditFbText(currentText || '');
   };
 
@@ -301,14 +310,44 @@ export default function IncidentDetailPage() {
 
   const { incident, feedbacks, attachments, finalReport } = data;
 
+  const hasImcFeedback = feedbacks?.some(f => f.role === 'imc');
   const canWithdraw = user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status);
-  const canHodFeedback = user?.role === 'hod' && incident.is_target_hod && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
-  const canRequestRedirect = user?.role === 'hod' && incident.is_target_hod && user?.id !== incident.reporter_id && ['with_hod', 'with_hod_and_imc'].includes(incident.status) && !feedbacks?.some(f => f.role === 'hod');
-  const canImcAct = user?.role === 'imc' && user?.id !== incident.reporter_id && (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training', 'with_imc_review'].includes(incident.status) || (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
+
+  // Rule 1: HOD of all concerned departments should be able to add their own feedback
+  // Rule 4: HOD feedback cannot be added after IMC has provided feedback
+  const canHodFeedback =
+    user?.role === 'hod' &&
+    incident.is_target_hod &&
+    user?.id !== incident.reporter_id &&
+    ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    !incident.user_hod_dept_submitted &&
+    !hasImcFeedback;
+
+  const canRequestRedirect =
+    user?.role === 'hod' &&
+    incident.is_target_hod &&
+    user?.id !== incident.reporter_id &&
+    ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    !incident.user_hod_dept_submitted &&
+    !hasImcFeedback;
+
+  const canImcAct =
+    user?.role === 'imc' &&
+    user?.id !== incident.reporter_id &&
+    (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training', 'with_imc_review'].includes(incident.status) ||
+      (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
+
   const canMdAct = user?.role === 'head_management' && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
   const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
   const canEscalate = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !incident.priority_escalated_by;
-  const canRemindHod = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !feedbacks?.some(fb => fb.role === 'hod');
+
+  // Remind HOD if any concerned department HOD has not yet submitted feedback
+  const canRemindHod =
+    (user?.role === 'head_management' || user?.role === 'imc') &&
+    user?.id !== incident.reporter_id &&
+    !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
+    !incident.all_hod_feedback_submitted;
+
   const canAssignInvestigator = ['imc', 'system_admin'].includes(user?.role) && user?.isImcLead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
   const canInvestigatorAct = incident.status === 'with_investigator' && incident.investigators?.some(i => i.investigator_id === user?.id && i.status !== 'completed');
   const canImcReviewInvestigator = user?.isImcLead && incident.status === 'with_imc_review';
@@ -388,10 +427,11 @@ export default function IncidentDetailPage() {
                 <h2 className="text-sm font-semibold text-slate-800 mb-4">Review History</h2>
                 <div className="space-y-4">
                   {feedbacks.map(fb => {
-                    const canEditThisFb =
-                      (fb.role === 'hod' && user?.role === 'hod') ||
-                      (fb.role === 'imc' && user?.role === 'imc') ||
-                      (fb.role === 'head_management' && user?.role === 'head_management');
+                    // Rule 2: No one can edit the review/feedback given by any other person, except the person itself.
+                    // Rule 5: After IMC has given the feedback, the feedbacks given by the HODs of concerned department can not be modified.
+                    const isAuthor = fb.author_id === user?.id;
+                    const isLockedHod = fb.role === 'hod' && hasImcFeedback;
+                    const canEditThisFb = isAuthor && !isLockedHod;
                     return (
                       <div 
                         key={fb.id} 
@@ -406,19 +446,30 @@ export default function IncidentDetailPage() {
                             </div>
                             <div>
                               <p className="text-sm font-medium text-slate-800">{fb.full_name}</p>
-                              <p className="text-[10px] text-slate-500">{fb.designation} · {fb.role?.replace('_', ' ').toUpperCase()}</p>
+                              <p className="text-[10px] text-slate-500">
+                                {fb.designation} {fb.dept_name ? `· ${fb.dept_name}` : ''} · {fb.role?.replace('_', ' ').toUpperCase()}
+                              </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-400">{formatDateTime(fb.created_at)}</span>
                             {canEditThisFb && (
                               <button
-                                onClick={() => openEditFeedback(fb.role, fb.feedback_text)}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditFeedback(fb.role, fb.feedback_text, fb.id);
+                                }}
                                 className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors"
                                 title="Edit your feedback"
                               >
                                 <Pencil size={11} /> Edit
                               </button>
+                            )}
+                            {isAuthor && isLockedHod && (
+                              <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-lg" title="HOD feedback cannot be edited after IMC has provided feedback">
+                                Locked
+                              </span>
                             )}
                           </div>
                         </div>
@@ -599,14 +650,21 @@ export default function IncidentDetailPage() {
                       <MessageSquare className="text-indigo-600" size={18} />
                       <h2 className="text-sm font-semibold text-slate-800">Quality Review (IMC)</h2>
                     </div>
-                    {!feedbacks?.some(f => f.role === 'hod') && (
+                    {!incident.all_hod_feedback_submitted && (
                       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                         <div className="flex items-start gap-2.5">
                           <Bell className="text-amber-600 flex-shrink-0 mt-0.5 animate-bounce" size={18} />
                           <div>
-                            <p className="text-xs font-bold text-amber-900 uppercase tracking-wider">HOD Feedback Pending</p>
+                            <p className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                              Concerned Department HOD Feedback Pending
+                            </p>
                             <p className="text-xs text-amber-800 mt-0.5">
-                              The Head of Department has not yet submitted feedback on this incident. You can remind them right now via email and system notification.
+                              {incident.pending_hod_departments?.length > 0 ? (
+                                <>Awaiting feedback from HOD of: <strong>{incident.pending_hod_departments.join(', ')}</strong>. </>
+                              ) : (
+                                <>Concerned HOD has not yet submitted feedback. </>
+                              )}
+                              Per hospital policy, IMC Quality Review unlocks only after all concerned HODs have submitted feedback.
                             </p>
                           </div>
                         </div>
@@ -616,7 +674,7 @@ export default function IncidentDetailPage() {
                           className="btn-secondary btn-sm flex items-center gap-1.5 border-amber-300 text-amber-900 hover:bg-amber-100 flex-shrink-0 shadow-sm font-semibold"
                         >
                           {remindHodMutation.isPending ? <Spinner size={13} /> : <Bell size={13} className="text-amber-600" />}
-                          Send Reminder to HOD
+                          Send Reminder to Pending HOD(s)
                         </button>
                       </div>
                     )}
@@ -717,8 +775,9 @@ export default function IncidentDetailPage() {
                             <div className="flex justify-end gap-2 mt-4">
                               <button
                                 onClick={() => imcFeedbackMutation.mutate(true)}
-                                disabled={!feedbackText.trim() || !imcSeverity || !imcProposedOutcome || imcFeedbackMutation.isPending}
-                                className="btn-primary btn-sm"
+                                disabled={!incident.all_hod_feedback_submitted || !feedbackText.trim() || !imcSeverity || !imcProposedOutcome || imcFeedbackMutation.isPending}
+                                className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                title={!incident.all_hod_feedback_submitted ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}` : ''}
                               >
                                 {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
                                 Forward to Management
@@ -885,8 +944,9 @@ export default function IncidentDetailPage() {
                       <div className="flex justify-end mt-2">
                         <button
                           onClick={() => imcFeedbackMutation.mutate(true)}
-                          disabled={!feedbackText.trim() || !imcSeverity || !imcProposedOutcome || imcFeedbackMutation.isPending}
-                          className="btn-primary btn-sm bg-green-600 hover:bg-green-700 border-green-600"
+                          disabled={!incident.all_hod_feedback_submitted || !feedbackText.trim() || !imcSeverity || !imcProposedOutcome || imcFeedbackMutation.isPending}
+                          className="btn-primary btn-sm bg-green-600 hover:bg-green-700 border-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title={!incident.all_hod_feedback_submitted ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}` : ''}
                         >
                           {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
                           Accept Report & Forward to Management

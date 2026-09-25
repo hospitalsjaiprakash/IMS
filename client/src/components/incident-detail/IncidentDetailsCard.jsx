@@ -82,7 +82,41 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
       <div className="card p-5 print:hidden">
         <h2 className="text-sm font-semibold text-slate-800 mb-4">Incident Details</h2>
         <div className="space-y-3 text-sm">
-          <DetailRow icon={Building} label="Departments" value={(incident.departments || []).map(d => typeof d === 'string' ? d : d.name).join(', ') || '—'} />
+          {incident.departments && incident.departments.length > 1 ? (
+            <div className="py-2 px-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
+                <span className="flex items-center gap-1.5">
+                  <Building size={14} className="text-slate-500" />
+                  Concerned Departments
+                </span>
+                <span className="text-[11px] font-bold text-slate-500">
+                  {incident.departments.filter(d => typeof d === 'object' && d.has_feedback).length} of {incident.departments.length} Responded
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {incident.departments.map(d => {
+                  const dName = typeof d === 'string' ? d : d.name;
+                  const hasFb = typeof d === 'object' ? d.has_feedback : false;
+                  return (
+                    <div key={dName} className="flex items-center justify-between py-1 px-2.5 rounded-lg bg-white border border-slate-200/80 text-xs">
+                      <span className="font-medium text-slate-800">{dName}</span>
+                      {hasFb ? (
+                        <span className="text-emerald-700 font-semibold flex items-center gap-1 text-[11px]">
+                          <CheckCircle size={12} className="text-emerald-600" /> Feedback Given
+                        </span>
+                      ) : (
+                        <span className="text-amber-700 font-semibold flex items-center gap-1 text-[11px]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" /> Pending Review
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <DetailRow icon={Building} label="Department" value={(incident.departments || []).map(d => typeof d === 'string' ? d : d.name).join(', ') || '—'} />
+          )}
           <DetailRow icon={Users} label="Occurred To" value={incident.occurred_to} />
           <DetailRow icon={AlertTriangle} label="Severity" value={incident.severity} />
           {incident.proposed_outcome && (

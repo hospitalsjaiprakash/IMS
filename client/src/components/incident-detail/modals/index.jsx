@@ -357,7 +357,7 @@ export function EditFeedbackModal({ editFbModal, onClose, editFbText, setEditFbT
           <button onClick={onClose} className="btn-secondary">Cancel</button>
           <button
             disabled={isPending || !editFbText.trim()}
-            onClick={() => mutate({ feedbackType: editFbModal.feedbackType, feedbackText: editFbText })}
+            onClick={() => mutate({ feedbackType: editFbModal.feedbackType, feedbackText: editFbText, feedbackId: editFbModal.feedbackId })}
             className="btn-primary disabled:opacity-60"
           >
             {isPending ? 'Saving…' : 'Save Changes'}

@@ -31,9 +31,18 @@ exports.submitHodFeedback = async (req, res) => {
 
     const incident = incidentResult.rows[0];
 
-    // Get HOD's department
+    // Rule: Cannot submit HOD feedback after IMC has already given feedback
+    const imcCheck = await client.query(
+      "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role = 'imc'",
+      [id]
+    );
+    if (imcCheck.rows.length > 0) {
+      return res.status(400).json({ error: 'Cannot submit HOD feedback because IMC has already submitted quality review feedback.' });
+    }
+
+    // Get HOD's department(s)
     const deptResult = await client.query(
-      'SELECT id FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1 OR asst_coo_user_id = $1 OR LOWER(name) = LOWER($2)',
+      'SELECT id, name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1 OR asst_coo_user_id = $1 OR LOWER(name) = LOWER($2)',
       [req.user.id, (req.user.department || '').trim()]
     );
 
@@ -41,16 +50,30 @@ exports.submitHodFeedback = async (req, res) => {
       return res.status(403).json({ error: 'Not authorized as HOD' });
     }
 
-    const deptId = deptResult.rows[0].id;
+    const userDeptIds = deptResult.rows.map(d => d.id);
 
-    // Check if HOD's dept is targeted
+    // Check if any of HOD's departments is targeted by this incident
     const targetCheck = await client.query(
-      'SELECT 1 FROM incident_departments WHERE incident_id = $1 AND department_id = $2',
-      [id, deptId]
+      'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = ANY($2)',
+      [id, userDeptIds]
     );
 
     if (!targetCheck.rows.length) {
       return res.status(403).json({ error: 'This incident is not targeted at your department' });
+    }
+
+    const deptId = targetCheck.rows[0].department_id;
+
+    // Check if this HOD or department has already submitted feedback
+    const existingFb = await client.query(
+      `SELECT id FROM feedbacks 
+       WHERE incident_id = $1 AND role = 'hod' 
+         AND (author_id = $2 OR department_id = $3)`,
+      [id, req.user.id, deptId]
+    );
+
+    if (existingFb.rows.length > 0) {
+      return res.status(400).json({ error: 'Feedback has already been submitted for your department. You can edit your existing feedback.' });
     }
 
     // Insert feedback
@@ -71,20 +94,28 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    // Check if all HODs have responded
-    const totalHods = await client.query(
-      `SELECT COUNT(*) FROM incident_departments id
-       JOIN departments d ON d.id = id.department_id
-       WHERE id.incident_id = $1 AND (d.hod_user_id IS NOT NULL OR d.incharge_user_id IS NOT NULL OR d.asst_coo_user_id IS NOT NULL)`,
-      [id]
-    );
+    // Check if ALL concerned departments have responded
+    const pendingDepts = await client.query(`
+      SELECT d.id, d.name
+      FROM incident_departments id_dept
+      JOIN departments d ON d.id = id_dept.department_id
+      WHERE id_dept.incident_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          LEFT JOIN users u ON u.id = f.author_id
+          WHERE f.incident_id = $1 
+            AND f.role = 'hod'
+            AND (
+              f.department_id = d.id 
+              OR f.author_id = d.hod_user_id 
+              OR f.author_id = d.incharge_user_id 
+              OR f.author_id = d.asst_coo_user_id
+              OR LOWER(u.department) = LOWER(d.name)
+            )
+        )
+    `, [id]);
 
-    const respondedHods = await client.query(
-      `SELECT COUNT(*) FROM feedbacks WHERE incident_id = $1 AND role = 'hod'`,
-      [id]
-    );
-
-    const allResponded = parseInt(respondedHods.rows[0].count) >= parseInt(totalHods.rows[0].count);
+    const allResponded = pendingDepts.rows.length === 0;
 
     // Update status
     if (redirectToImc) {
@@ -108,7 +139,7 @@ exports.submitHodFeedback = async (req, res) => {
       for (const member of imcMembers.rows) {
         await createNotification(member.id, id,
           'Incident Ready for IMC Review',
-          `Incident ${incident.reference_id} is now in the IMC queue.`,
+          `Incident ${incident.reference_id} is now in the IMC queue (all concerned HOD reviews complete).`,
           'incident_to_imc'
         );
         if (member.email) {
@@ -117,13 +148,13 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc }, req.ip);
+    await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc, deptId, allResponded }, req.ip);
 
-    res.json({ success: true });
+    res.json({ success: true, allResponded });
 
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Failed to submit feedback.' });
+    res.status(500).json({ error: error.message || 'Failed to submit feedback.' });
   } finally {
     client.release();
   }
@@ -204,6 +235,35 @@ exports.submitImcFeedback = async (req, res) => {
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
     const incident = incidentResult.rows[0];
+
+    // Rule: Only after HOD of all concerned department have given feedback, then only IMC can give feedback.
+    const pendingDepts = await client.query(`
+      SELECT d.name
+      FROM incident_departments id_dept
+      JOIN departments d ON d.id = id_dept.department_id
+      WHERE id_dept.incident_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          LEFT JOIN users u ON u.id = f.author_id
+          WHERE f.incident_id = $1 
+            AND f.role = 'hod'
+            AND (
+              f.department_id = d.id 
+              OR f.author_id = d.hod_user_id 
+              OR f.author_id = d.incharge_user_id 
+              OR f.author_id = d.asst_coo_user_id
+              OR LOWER(u.department) = LOWER(d.name)
+            )
+        )
+    `, [id]);
+
+    if (pendingDepts.rows.length > 0) {
+      const names = pendingDepts.rows.map(d => d.name).join(', ');
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Cannot submit IMC feedback yet. Awaiting HOD feedback from concerned department(s): ${names}.`
+      });
+    }
 
     await client.query(
       `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text)

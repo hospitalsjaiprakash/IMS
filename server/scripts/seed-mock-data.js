@@ -894,12 +894,13 @@ async function seed() {
       if (inc.hodFeedback) {
         const hodEmpId = inc.departmentNames[0] ? hodMappings.find(m => m.dept === inc.departmentNames[0])?.empId : null;
         const hodUserId = hodEmpId ? userMap[hodEmpId] : null;
+        const hodDeptId = inc.departmentNames[0] ? deptMap[inc.departmentNames[0]] : null;
         if (hodUserId) {
           await client.query(`
-            INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, created_at)
-            VALUES ($1, $2, 'hod', $3, NOW())
+            INSERT INTO feedbacks (incident_id, author_id, role, department_id, feedback_text, created_at)
+            VALUES ($1, $2, 'hod', $3, $4, NOW())
             ON CONFLICT DO NOTHING
-          `, [incidentId, hodUserId, inc.hodFeedback]);
+          `, [incidentId, hodUserId, hodDeptId || null, inc.hodFeedback]);
         }
       }
 

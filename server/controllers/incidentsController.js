@@ -548,27 +548,56 @@ exports.getIncident = async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get departments
+    // Get departments with per-department HOD feedback status
     const depts = await query(
-      `SELECT d.id, d.name FROM departments d
+      `SELECT d.id, d.name, d.hod_user_id,
+         EXISTS (
+           SELECT 1 FROM feedbacks f
+           LEFT JOIN users u ON u.id = f.author_id
+           WHERE f.incident_id = $1 
+             AND f.role = 'hod'
+             AND (
+               f.department_id = d.id 
+               OR f.author_id = d.hod_user_id 
+               OR f.author_id = d.incharge_user_id 
+               OR f.author_id = d.asst_coo_user_id
+               OR LOWER(u.department) = LOWER(d.name)
+             )
+         ) AS has_feedback
+       FROM departments d
        JOIN incident_departments id ON id.department_id = d.id
        WHERE id.incident_id = $1`,
       [incident.id]
     );
 
-
-
     // Get feedbacks (role-based visibility)
-    let feedbackQuery = `SELECT f.*, u.full_name, u.role, u.designation, d.name as dept_name
+    let feedbackQuery = `SELECT f.*, u.full_name, u.role, u.designation, COALESCE(d.name, u.department) as dept_name
        FROM feedbacks f
        JOIN users u ON u.id = f.author_id
        LEFT JOIN departments d ON d.id = f.department_id
        WHERE f.incident_id = $1`;
     
     // Employees can now see feedbacks at all times to track incident progress.
-    // (Restriction removed as requested)
     feedbackQuery += ` ORDER BY f.created_at ASC`;
     const feedbacks = await query(feedbackQuery, [incident.id]);
+
+    // Check HOD completion & IMC presence
+    const allHodFeedbackSubmitted = depts.rows.length === 0 || depts.rows.every(d => d.has_feedback);
+    const pendingHodDepartments = depts.rows.filter(d => !d.has_feedback).map(d => d.name);
+    const hasImcFeedback = feedbacks.rows.some(f => f.role === 'imc');
+
+    // Check if current user is an HOD whose department has already submitted feedback
+    let userHodDeptSubmitted = false;
+    if (['hod', 'asst_coo', 'coo'].includes(role)) {
+      const userDept = (req.user.department || '').trim().toLowerCase();
+      const myDept = depts.rows.find(d => 
+        d.hod_user_id === userId || 
+        (d.name && userDept && d.name.toLowerCase() === userDept)
+      );
+      if (myDept) {
+        userHodDeptSubmitted = !!myDept.has_feedback;
+      }
+    }
 
     // Get attachments
     const attachments = await query(
@@ -624,7 +653,15 @@ exports.getIncident = async (req, res) => {
     }
 
     res.json({
-      incident: { ...incident, departments: depts.rows, is_target_hod: isTargetHod },
+      incident: {
+        ...incident,
+        departments: depts.rows,
+        is_target_hod: isTargetHod,
+        all_hod_feedback_submitted: allHodFeedbackSubmitted,
+        pending_hod_departments: pendingHodDepartments,
+        user_hod_dept_submitted: userHodDeptSubmitted,
+        has_imc_feedback: hasImcFeedback
+      },
       feedbacks: feedbacks.rows,
       attachments: attachments.rows,
       finalReport: finalReport.rows[0] || null
