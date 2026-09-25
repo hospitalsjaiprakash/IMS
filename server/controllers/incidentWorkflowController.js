@@ -129,6 +129,11 @@ exports.submitHodFeedback = async (req, res) => {
         `UPDATE incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
         [newStatus, id]
       );
+    } else if (!allResponded && incident.status === 'submitted') {
+      await client.query(
+        `UPDATE incidents SET status = 'with_hod', updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
     }
 
     await client.query('COMMIT');

@@ -77,7 +77,14 @@ export default function LoginPage() {
     clearTimeout(wakingTimer);
     setServerWaking(false);
     if (result.success) {
-      navigate('/dashboard');
+      const roleDashboards = {
+        imc: '/imc/dashboard',
+        head_management: '/management/dashboard',
+        system_admin: '/admin/dashboard',
+        asst_coo: '/executive/dashboard',
+        coo: '/executive/dashboard'
+      };
+      navigate(roleDashboards[result.user?.role] || '/dashboard');
     } else {
       // Friendly message for timeout / network errors caused by Render cold start
       const isTimeout = result.error?.toLowerCase().includes('timeout') ||

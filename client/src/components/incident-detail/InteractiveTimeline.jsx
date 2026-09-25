@@ -236,7 +236,7 @@ export default function InteractiveTimeline({ incident, feedbacks, attachments, 
             done = true;
           } else if (i === 1) {
             done = statusOrder[incident.status] > 1 || feedbacks?.some(f => f.role === 'hod');
-            active = !done && ['with_hod', 'with_hod_and_imc'].includes(incident.status);
+            active = !done && ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status);
           } else if (i === 2) {
             done = statusOrder[incident.status] > 2 || feedbacks?.some(f => f.role === 'imc');
             active = !done && ['with_imc', 'with_hod_and_imc', 'redirect_requested'].includes(incident.status);

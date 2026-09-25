@@ -45,7 +45,7 @@ export default function DashboardPage() {
     enabled: user?.role === 'hod'
   });
 
-  const hodQueue = allReceived.filter(i => i.status === 'with_hod' || i.status === 'with_hod_and_imc');
+  const hodQueue = allReceived.filter(i => ['submitted', 'with_hod', 'with_hod_and_imc'].includes(i.status));
   const overdueCount = hodQueue.filter(i => ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
   const escalatedCount = hodQueue.filter(i => !!i.priority_escalated_by).length;
 

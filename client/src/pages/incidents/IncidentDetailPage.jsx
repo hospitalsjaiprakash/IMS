@@ -319,7 +319,7 @@ export default function IncidentDetailPage() {
     user?.role === 'hod' &&
     incident.is_target_hod &&
     user?.id !== incident.reporter_id &&
-    ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status) &&
     !incident.user_hod_dept_submitted &&
     !hasImcFeedback;
 
@@ -327,9 +327,11 @@ export default function IncidentDetailPage() {
     user?.role === 'hod' &&
     incident.is_target_hod &&
     user?.id !== incident.reporter_id &&
-    ['with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status) &&
     !incident.user_hod_dept_submitted &&
     !hasImcFeedback;
+
+  const isLead = Boolean(user?.isImcLead);
 
   const canImcAct =
     user?.role === 'imc' &&
@@ -348,10 +350,10 @@ export default function IncidentDetailPage() {
     !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
     !incident.all_hod_feedback_submitted;
 
-  const canAssignInvestigator = ['imc', 'system_admin'].includes(user?.role) && user?.isImcLead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
+  const canAssignInvestigator = ['imc', 'system_admin'].includes(user?.role) && isLead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
   const canInvestigatorAct = incident.status === 'with_investigator' && incident.investigators?.some(i => i.investigator_id === user?.id && i.status !== 'completed');
-  const canImcReviewInvestigator = user?.isImcLead && incident.status === 'with_imc_review';
-  const canGenerateImcReport = ['imc', 'system_admin'].includes(user?.role) && user?.isImcLead && incident.status === 'pending_imc_report';
+  const canImcReviewInvestigator = isLead && incident.status === 'with_imc_review';
+  const canGenerateImcReport = ['imc', 'system_admin'].includes(user?.role) && isLead && incident.status === 'pending_imc_report';
   const canCloseIncident = user?.role === 'imc' && incident.status === 'pending_training';
 
   const isHodOfDept = (deptName) => {
@@ -678,7 +680,7 @@ export default function IncidentDetailPage() {
                         </button>
                       </div>
                     )}
-                    {user?.isImcLead ? (
+                    {isLead ? (
                       <div className="space-y-4">
                         <div className="flex items-center gap-4 mb-4">
                           <label className="field-label mb-0">Investigator Required?</label>

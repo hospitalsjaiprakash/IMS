@@ -8,7 +8,7 @@ const { sendEmail } = require('../utils/emailService');
 const isUserHod = (user) => {
   if (user?.role === 'hod') return true;
   const desig = (user?.designation || '').toUpperCase();
-  return desig === 'HOD' || desig.includes('HEAD OF DEPARTMENT') || desig.includes('HEAD OF DEPT');
+  return desig === 'HOD' || desig.includes('HEAD OF DEPARTMENT') || desig.includes('HEAD OF DEPT') || desig.startsWith('HEAD OF ') || desig.includes('(HOD)');
 };
 
 const syncHodDepartment = async (user) => {
@@ -294,13 +294,9 @@ exports.login = async (req, res) => {
       });
     }
 
-    // For committee members (IMC / Management), default to employee/HOD view so they report normally, but keep system_admin active
+    // If role is employee but user is actually an HOD, ensure hod role is assigned
     let activeRole = user.role;
-    if (['imc', 'head_management'].includes(activeRole)) {
-      activeRole = isUserHod(user) ? 'hod' : 'employee';
-      await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
-      user.role = activeRole;
-    } else if (activeRole === 'employee' && isUserHod(user)) {
+    if (activeRole === 'employee' && isUserHod(user)) {
       activeRole = 'hod';
       await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
       user.role = activeRole;

@@ -95,7 +95,7 @@ exports.requestRedirect = async (req, res) => {
     if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
     const incident = incResult.rows[0];
 
-    if (!['with_hod', 'with_hod_and_imc'].includes(incident.status)) {
+    if (!['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status)) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Incident is not in HOD review status.' });
     }
