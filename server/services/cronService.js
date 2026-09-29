@@ -131,9 +131,73 @@ async function processHodEscalations() {
   }
 }
 
+/**
+ * Automatically escalate incidents pending resolution for more than 21 days
+ */
+async function checkAndAutoEscalate21Days() {
+  try {
+    const overdueRes = await query(`
+      SELECT 
+        i.id,
+        i.reference_id,
+        i.status,
+        FLOOR(EXTRACT(EPOCH FROM (NOW() - i.created_at)) / 86400) as days_elapsed
+      FROM incidents i
+      WHERE i.status NOT IN ('resolved', 'closed', 'withdrawn')
+        AND i.priority_escalated_at IS NULL
+        AND (NOW() - i.created_at) >= INTERVAL '21 days'
+    `);
+
+    for (const inc of overdueRes.rows) {
+      await query(`
+        UPDATE incidents 
+        SET priority_escalated_by = 'Automated System (21+ Days Overdue)',
+            priority_escalated_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+      `, [inc.id]);
+
+      const hodsRes = await query(`
+        SELECT DISTINCT u.id, u.email, u.full_name
+        FROM incident_departments idp
+        JOIN departments d ON d.id = idp.department_id
+        JOIN users u ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)
+        WHERE idp.incident_id = $1
+      `, [inc.id]);
+
+      const imcRes = await query(`SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE`);
+      const mgmtRes = await query(`SELECT id, email FROM users WHERE role = 'head_management' OR is_management_member = TRUE`);
+
+      const title = `🔴 Automated Escalation: Incident ${inc.reference_id}`;
+      const msg = `Incident ${inc.reference_id} has been pending resolution for ${inc.days_elapsed || 21} days and has been automatically escalated.`;
+
+      for (const h of hodsRes.rows) {
+        await query(`INSERT INTO notifications (user_id, incident_id, title, message, type) VALUES ($1, $2, $3, $4, 'escalation')`, [h.id, inc.id, title, msg]);
+        if (h.email) sendEmail(h.email, title, msg).catch(() => {});
+      }
+
+      for (const u of imcRes.rows) {
+        await query(`INSERT INTO notifications (user_id, incident_id, title, message, type) VALUES ($1, $2, $3, $4, 'escalation')`, [u.id, inc.id, title, msg]);
+        if (u.email) sendEmail(u.email, title, msg).catch(() => {});
+      }
+
+      for (const m of mgmtRes.rows) {
+        await query(`INSERT INTO notifications (user_id, incident_id, title, message, type) VALUES ($1, $2, $3, $4, 'escalation')`, [m.id, inc.id, title, msg]);
+        if (m.email) sendEmail(m.email, title, msg).catch(() => {});
+      }
+
+      console.log(`[Auto-Escalation] Incident ${inc.reference_id} automatically escalated after ${inc.days_elapsed} days.`);
+    }
+  } catch (error) {
+    console.error('[CRON] Error in checkAndAutoEscalate21Days:', error);
+  }
+}
+
 // Start cron job (Runs every day at 8:00 AM)
 cron.schedule('0 8 * * *', () => {
   processHodEscalations();
+  checkAndAutoEscalate21Days();
 });
 
-module.exports = { processHodEscalations };
+module.exports = { processHodEscalations, checkAndAutoEscalate21Days };
+

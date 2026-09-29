@@ -42,14 +42,14 @@ exports.addEmployee = async (req, res) => {
   try {
     const { employeeId, name, email, phone, department, designation, role } = req.body;
     
-    if (!employeeId || !/^\d{5}$/.test(employeeId.toString().trim())) {
-      return res.status(400).json({ error: 'Employee ID must be exactly 5 digits.' });
+    if (!employeeId || !/^\d{4,10}$/.test(employeeId.toString().trim())) {
+      return res.status(400).json({ error: 'Employee ID must be between 4 and 10 digits.' });
     }
     if (!name || name.trim() === '') {
       return res.status(400).json({ error: 'Employee Name is required.' });
     }
-    if (phone && !/^\d{10}$/.test(phone.toString().trim())) {
-      return res.status(400).json({ error: 'Mobile number must be exactly 10 digits.' });
+    if (phone && !/^\+?\d{10,14}$/.test(phone.toString().trim())) {
+      return res.status(400).json({ error: 'Mobile number must be between 10 and 14 digits.' });
     }
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.toString().trim())) {
       return res.status(400).json({ error: 'Invalid email format.' });
@@ -112,12 +112,12 @@ exports.bulkAddEmployees = async (req, res) => {
         const phoneStr = emp.phone ? emp.phone.toString().trim() : null;
         const emailStr = emp.email ? emp.email.toString().trim() : null;
 
-        if (!/^\d{5}$/.test(empIdStr)) {
+        if (!/^\d{4,10}$/.test(empIdStr)) {
           invalidData.push(`${emp.name} (Invalid ID: ${empIdStr})`);
           errorCount++;
           continue;
         }
-        if (phoneStr && !/^\d{10}$/.test(phoneStr)) {
+        if (phoneStr && !/^\+?\d{10,14}$/.test(phoneStr)) {
           invalidData.push(`${emp.name} (Invalid Phone: ${phoneStr})`);
           errorCount++;
           continue;
@@ -175,3 +175,36 @@ exports.bulkAddEmployees = async (req, res) => {
     res.status(500).json({ error: 'Failed to process bulk upload.' });
   }
 };
+
+const { syncEmployeesFromHrms, getHrmsSyncStatus } = require('../services/hrmsSyncService');
+
+// POST on-demand sync from Google Sheets HRMS API
+exports.syncFromHrms = async (req, res) => {
+  try {
+    const result = await syncEmployeesFromHrms();
+    await auditLog(req.user.id, 'HRMS_SYNC_PERFORMED', null, result, req.ip);
+
+    res.json({
+      success: true,
+      message: `Successfully synchronized ${result.totalFetched} employees from HRMS Google Sheet.`,
+      data: result
+    });
+  } catch (error) {
+    console.error('[POST /master-employees/sync-hrms] error:', error);
+    res.status(500).json({
+      error: error.message || 'Failed to synchronize employees from HRMS API.'
+    });
+  }
+};
+
+// GET sync status
+exports.getSyncStatus = async (req, res) => {
+  try {
+    const status = await getHrmsSyncStatus();
+    res.json({ success: true, data: status });
+  } catch (error) {
+    console.error('[GET /master-employees/sync-status] error:', error);
+    res.status(500).json({ error: 'Failed to retrieve HRMS sync status.' });
+  }
+};
+

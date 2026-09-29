@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, FileText, AlertCircle } from 'lucide-react';
+import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../../../components/ui';
 import { UPLOADS_URL } from '../../../api';
 import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../../utils/helpers';
@@ -465,7 +465,11 @@ export function FilePreviewModal({ previewFile, onClose }) {
 
 export function AssignInvestigatorModal({ show, onClose, mutate, isPending }) {
   const [imcMembers, setImcMembers] = React.useState([]);
-  const [selectedIds, setSelectedIds] = React.useState([]);
+  const [selectedImcIds, setSelectedImcIds] = React.useState([]);
+  const [selectedEmployees, setSelectedEmployees] = React.useState([]);
+  const [employeeSearch, setEmployeeSearch] = React.useState('');
+  const [employeeSearchResults, setEmployeeSearchResults] = React.useState([]);
+  const [isSearchingEmployees, setIsSearchingEmployees] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
@@ -482,42 +486,97 @@ export function AssignInvestigatorModal({ show, onClose, mutate, isPending }) {
       })
       .catch(() => setLoading(false));
     } else {
-      setSelectedIds([]);
+      setSelectedImcIds([]);
+      setSelectedEmployees([]);
+      setEmployeeSearch('');
+      setEmployeeSearchResults([]);
     }
   }, [show]);
 
-  const toggleMember = (id) => {
-    setSelectedIds(prev => 
+  React.useEffect(() => {
+    if (!employeeSearch.trim() || employeeSearch.length < 2) {
+      setEmployeeSearchResults([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setIsSearchingEmployees(true);
+      const token = sessionStorage.getItem('ims_token');
+      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/employee/search?q=${encodeURIComponent(employeeSearch)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(r => r.json())
+      .then(data => {
+        setEmployeeSearchResults(data || []);
+        setIsSearchingEmployees(false);
+      })
+      .catch(() => setIsSearchingEmployees(false));
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [employeeSearch]);
+
+  const toggleImcMember = (id) => {
+    setSelectedImcIds(prev => 
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
   };
 
+  const addEmployeeInvestigator = (emp) => {
+    if (!selectedEmployees.some(e => e.id === emp.id)) {
+      setSelectedEmployees(prev => [...prev, emp]);
+    }
+    setEmployeeSearch('');
+    setEmployeeSearchResults([]);
+  };
+
+  const removeEmployeeInvestigator = (id) => {
+    setSelectedEmployees(prev => prev.filter(e => e.id !== id));
+  };
+
+  const handleSubmit = () => {
+    const allIds = [...selectedImcIds, ...selectedEmployees.map(e => e.id)];
+    mutate(allIds);
+  };
+
   return (
-    <Modal open={show} onClose={onClose} title="Assign Investigator(s)" size="md"
+    <Modal open={show} onClose={onClose} title="Assign Investigation Team" size="lg"
       footer={<>
         <button onClick={onClose} className="btn-secondary">Cancel</button>
-        <button onClick={() => mutate(selectedIds)} disabled={selectedIds.length === 0 || isPending} className="btn-primary">
-          {isPending && <Spinner size={15} className="text-white" />} Assign Selected
+        <button 
+          onClick={handleSubmit} 
+          disabled={selectedImcIds.length === 0 || isPending} 
+          className="btn-primary"
+          title={selectedImcIds.length === 0 ? 'At least one IMC Member must be selected as primary investigator' : ''}
+        >
+          {isPending && <Spinner size={15} className="text-white" />} Assign Team ({selectedImcIds.length + selectedEmployees.length})
         </button>
       </>}
     >
       <div className="space-y-4">
-        <Alert type="info" message="Select one or more IMC members to act as investigators for this incident. They will be notified immediately." />
+        <Alert type="info" message="Primary investigators must be IMC members. You can also search and add any hospital employee as an additional/expert investigator." />
         
+        {/* Section 1: Primary IMC Investigators */}
         <div>
-          <label className="field-label mb-2">IMC Members</label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="field-label font-bold text-slate-800 flex items-center gap-1.5">
+              <Shield size={14} className="text-indigo-600" /> Primary Investigators (IMC Members) <span className="text-red-500">*</span>
+            </label>
+            <span className="text-xs text-indigo-700 font-semibold">{selectedImcIds.length} Selected</span>
+          </div>
+
           {loading ? (
-            <div className="flex items-center gap-2 text-slate-500 py-4"><Spinner size={16} /> Loading members...</div>
+            <div className="flex items-center gap-2 text-slate-500 py-3"><Spinner size={16} /> Loading IMC members...</div>
           ) : imcMembers.length === 0 ? (
-            <p className="text-sm text-slate-500 py-4">No IMC members found.</p>
+            <p className="text-sm text-slate-500 py-2">No IMC members found.</p>
           ) : (
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
               {imcMembers.map(member => (
-                <label key={member.id} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+                <label key={member.id} className="flex items-center gap-3 p-2.5 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
                   <input
                     type="checkbox"
-                    checked={selectedIds.includes(member.id)}
-                    onChange={() => toggleMember(member.id)}
+                    checked={selectedImcIds.includes(member.id)}
+                    onChange={() => toggleImcMember(member.id)}
                     className="w-4 h-4 accent-indigo-600 rounded"
                   />
                   <div>
@@ -529,7 +588,130 @@ export function AssignInvestigatorModal({ show, onClose, mutate, isPending }) {
             </div>
           )}
         </div>
+
+        {/* Section 2: Secondary / Employee Investigators */}
+        <div className="pt-3 border-t border-slate-100">
+          <label className="field-label font-bold text-slate-800 flex items-center gap-1.5 mb-1.5">
+            <Users size={14} className="text-blue-600" /> Additional Employee Investigators (Optional)
+          </label>
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={employeeSearch}
+              onChange={e => setEmployeeSearch(e.target.value)}
+              placeholder="Search hospital personnel by name or ID…"
+              className="input pl-9 text-xs"
+            />
+            {isSearchingEmployees && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2"><Spinner size={14} /></span>
+            )}
+          </div>
+
+          {employeeSearchResults.length > 0 && (
+            <div className="mt-1 border border-slate-200 rounded-xl bg-white shadow-md max-h-40 overflow-y-auto divide-y divide-slate-100">
+              {employeeSearchResults.map(emp => (
+                <div
+                  key={emp.id}
+                  onClick={() => addEmployeeInvestigator(emp)}
+                  className="p-2.5 hover:bg-blue-50/50 cursor-pointer flex items-center justify-between transition-colors"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">{emp.full_name || emp.name} ({emp.employee_id})</p>
+                    <p className="text-[11px] text-slate-500">{emp.designation} • {emp.department}</p>
+                  </div>
+                  <UserPlus size={14} className="text-blue-600" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {selectedEmployees.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {selectedEmployees.map(emp => (
+                <span
+                  key={emp.id}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-full text-xs font-medium"
+                >
+                  <span>{emp.full_name || emp.name} ({emp.employee_id})</span>
+                  <button
+                    type="button"
+                    onClick={() => removeEmployeeInvestigator(emp.id)}
+                    className="hover:text-red-600"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </Modal>
   );
 }
+
+export function InvolveDepartmentModal({ show, onClose, currentDepartments = [], departmentsList = [], mutate, isPending }) {
+  const [selectedDeptIds, setSelectedDeptIds] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!show) setSelectedDeptIds([]);
+  }, [show]);
+
+  const currentNames = currentDepartments.map(d => (typeof d === 'string' ? d : d.name).toLowerCase());
+  const availableDepts = departmentsList.filter(d => !currentNames.includes((d.name || '').toLowerCase()));
+
+  const toggleDept = (id) => {
+    setSelectedDeptIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  return (
+    <Modal open={show} onClose={onClose} title="Involve Additional Department(s)" size="md"
+      footer={<>
+        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button
+          onClick={() => mutate(selectedDeptIds)}
+          disabled={selectedDeptIds.length === 0 || isPending}
+          className="btn-primary"
+        >
+          {isPending && <Spinner size={15} className="text-white" />} Involve Selected ({selectedDeptIds.length})
+        </button>
+      </>}
+    >
+      <div className="space-y-4">
+        <Alert type="info" message="Select one or more departments whose feedback is also required for this incident. Their HODs will be notified immediately." />
+
+        <div className="text-xs text-slate-500 font-medium">
+          Currently involved: <span className="text-slate-800 font-semibold">{currentDepartments.map(d => typeof d === 'string' ? d : d.name).join(', ') || 'None'}</span>
+        </div>
+
+        <div>
+          <label className="field-label mb-2">Available Departments to Add</label>
+          {availableDepts.length === 0 ? (
+            <p className="text-sm text-slate-500 py-3">All hospital departments are already involved.</p>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+              {availableDepts.map(d => (
+                <label key={d.id} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={selectedDeptIds.includes(d.id)}
+                    onChange={() => toggleDept(d.id)}
+                    className="w-4 h-4 accent-blue-600 rounded"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-slate-800">{d.name}</div>
+                    {d.hod_name && <div className="text-xs text-slate-500">HOD: {d.hod_name}</div>}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+

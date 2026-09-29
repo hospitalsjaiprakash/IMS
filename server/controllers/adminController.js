@@ -1,5 +1,6 @@
 const { query } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
+const bcrypt = require('bcryptjs');
 
 exports.getSystemConfig = async (req, res) => {
   try {
@@ -100,6 +101,49 @@ const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
   }
 };
 
+async function getOrCreateUserFromMaster(employeeId, initialRole = 'employee') {
+  const empIdStr = String(employeeId).trim();
+  const userResult = await query(
+    'SELECT * FROM users WHERE employee_id = $1 OR id::text = $1',
+    [empIdStr]
+  );
+  if (userResult.rows.length > 0) {
+    return userResult.rows[0];
+  }
+
+  // Not found in users table, check master_employees
+  const masterRes = await query(
+    'SELECT * FROM master_employees WHERE employee_id = $1',
+    [empIdStr]
+  );
+  if (!masterRes.rows.length) {
+    return null;
+  }
+
+  const masterEmp = masterRes.rows[0];
+  const defaultHash = await bcrypt.hash('123456', 12);
+  const inserted = await query(
+    `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+     ON CONFLICT (employee_id) DO UPDATE SET
+       full_name = EXCLUDED.full_name,
+       department = EXCLUDED.department,
+       designation = EXCLUDED.designation,
+       is_active = TRUE
+     RETURNING *`,
+    [
+      masterEmp.employee_id,
+      masterEmp.name,
+      masterEmp.email || `${masterEmp.employee_id}@jphrc.org`,
+      masterEmp.department,
+      masterEmp.designation,
+      initialRole,
+      defaultHash
+    ]
+  );
+  return inserted.rows[0];
+}
+
 exports.assignImcRole = async (req, res) => {
   try {
     const { employeeId, isImcLead } = req.body;
@@ -107,21 +151,19 @@ exports.assignImcRole = async (req, res) => {
       return res.status(400).json({ error: 'Employee ID is required.' });
     }
 
-    const userResult = await query(
-      'SELECT * FROM users WHERE employee_id = $1 OR id::text = $1',
-      [String(employeeId).trim()]
-    );
-    if (!userResult.rows.length) {
-      return res.status(404).json({ error: 'Employee not found.' });
+    const user = await getOrCreateUserFromMaster(employeeId, 'imc');
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found in hospital directory.' });
     }
 
-    const user = userResult.rows[0];
     const prevRole = user.role;
 
     await query(
       `UPDATE users SET role = 'imc', is_imc_lead = $1, is_imc_member = TRUE, updated_at = NOW() WHERE id = $2`,
       [Boolean(isImcLead), user.id]
     );
+
+    await query(`UPDATE master_employees SET role = 'imc' WHERE employee_id = $1`, [user.employee_id]);
 
     await query(
       `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
@@ -135,6 +177,7 @@ exports.assignImcRole = async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to assign IMC role:', error);
     res.status(500).json({ error: 'Failed to assign IMC role.' });
   }
 };
@@ -154,15 +197,11 @@ exports.assignUserRole = async (req, res) => {
       return res.status(400).json({ error: 'Employee ID and Role are required.' });
     }
 
-    const userResult = await query(
-      'SELECT * FROM users WHERE employee_id = $1 OR id::text = $1',
-      [String(employeeId).trim()]
-    );
-    if (!userResult.rows.length) {
-      return res.status(404).json({ error: 'Employee not found in IMS users table. They must register first.' });
+    const user = await getOrCreateUserFromMaster(employeeId, targetRole === 'imc_convenor' ? 'imc' : targetRole);
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found in hospital directory.' });
     }
 
-    const user = userResult.rows[0];
     const prevRole = user.role;
 
     let updateSql = `UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`;
@@ -180,9 +219,13 @@ exports.assignUserRole = async (req, res) => {
     }
     await query(updateSql, [actualRole, user.id]);
 
+    // Also sync role in master_employees table
+    await query(`UPDATE master_employees SET role = $1 WHERE employee_id = $2`, [actualRole, user.employee_id]);
+
     if (targetRole === 'hod' && departmentId) {
       await query(`UPDATE departments SET hod_user_id = $1 WHERE id = $2`, [user.id, departmentId]);
       await query(`UPDATE users SET department = (SELECT name FROM departments WHERE id = $1) WHERE id = $2`, [departmentId, user.id]);
+      await query(`UPDATE master_employees SET department = (SELECT name FROM departments WHERE id = $1) WHERE employee_id = $2`, [departmentId, user.employee_id]);
     }
 
     await query(
@@ -599,14 +642,11 @@ exports.mapDepartmentLeader = async (req, res) => {
       return res.status(400).json({ error: 'Department, Leader Type, and Employee ID are required.' });
     }
 
-    const userResult = await query(
-      'SELECT * FROM users WHERE employee_id = $1 OR id::text = $1',
-      [String(employeeId).trim()]
-    );
-    if (!userResult.rows.length) {
-      return res.status(404).json({ error: 'Employee not found in IMS users table. Please verify the Employee ID.' });
+    const initialRole = leaderType === 'asst_coo' ? 'head_management' : 'hod';
+    const user = await getOrCreateUserFromMaster(employeeId, initialRole);
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found in hospital directory. Please verify the Employee ID.' });
     }
-    const user = userResult.rows[0];
 
     let column = 'hod_user_id';
     if (leaderType === 'incharge') {
@@ -622,8 +662,10 @@ exports.mapDepartmentLeader = async (req, res) => {
 
     if (leaderType === 'hod' || leaderType === 'incharge') {
       await query(`UPDATE users SET department = $1, role = CASE WHEN role = 'employee' THEN 'hod' ELSE role END, updated_at = NOW() WHERE id = $2`, [deptName, user.id]);
+      await query(`UPDATE master_employees SET department = $1, role = 'hod' WHERE employee_id = $2`, [deptName, user.employee_id]);
     } else if (leaderType === 'asst_coo') {
       await query(`UPDATE users SET role = 'head_management', is_management_member = TRUE, updated_at = NOW() WHERE id = $1`, [user.id]);
+      await query(`UPDATE master_employees SET role = 'head_management' WHERE employee_id = $1`, [user.employee_id]);
     }
 
     await auditLog(req.user.id, 'DEPARTMENT_LEADER_MAPPED', null, {
@@ -632,6 +674,7 @@ exports.mapDepartmentLeader = async (req, res) => {
 
     res.json({ success: true, message: `Successfully mapped ${user.full_name} (${user.employee_id}) as ${leaderType.toUpperCase()} for ${deptName}.` });
   } catch (error) {
+    console.error('Error in mapDepartmentLeader:', error);
     res.status(500).json({ error: 'Failed to map department leader.' });
   }
 };

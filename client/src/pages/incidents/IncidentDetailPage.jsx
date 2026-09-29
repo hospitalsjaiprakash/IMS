@@ -25,7 +25,8 @@ import {
   EditIncidentModal,
   FilePreviewModal,
   AssignInvestigatorModal,
-  ImcReportModal
+  ImcReportModal,
+  InvolveDepartmentModal
 } from '../../components/incident-detail/modals';
 
 const TIMELINE_STAGES = [
@@ -96,7 +97,9 @@ export default function IncidentDetailPage() {
   const [hodAcknowledged, setHodAcknowledged] = useState(false);
   const [redirectReason, setRedirectReason] = useState('');
   const [redirectTargetDepts, setRedirectTargetDepts] = useState([]);
+  const [retainRequestingDept, setRetainRequestingDept] = useState(false);
   const [rejectRedirectReason, setRejectRedirectReason] = useState('');
+  const [showInvolveDeptModal, setShowInvolveDeptModal] = useState(false);
 
   const [hodAttachments, setHodAttachments] = useState([]);
   const [imcAttachments, setImcAttachments] = useState([]);
@@ -270,9 +273,27 @@ export default function IncidentDetailPage() {
   });
 
   const approveRedirectMutation = useMutation({
-    mutationFn: () => incidentsApi.approveRedirect(id, { targetDepartments: redirectTargetDepts }),
-    onSuccess: () => { toast.success('Incident successfully redirected.'); setRedirectTargetDepts([]); refetch(); },
+    mutationFn: () => incidentsApi.approveRedirect(id, { 
+      targetDepartments: redirectTargetDepts,
+      actionType: retainRequestingDept ? 'partial' : 'full'
+    }),
+    onSuccess: () => { 
+      toast.success('Incident successfully redirected.'); 
+      setRedirectTargetDepts([]); 
+      setRetainRequestingDept(false);
+      refetch(); 
+    },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to redirect incident')
+  });
+
+  const involveDepartmentsMutation = useMutation({
+    mutationFn: (departmentIds) => incidentsApi.involveDepartments(id, { departmentIds }),
+    onSuccess: (res) => {
+      toast.success(res.data?.message || 'Additional department(s) successfully involved.');
+      setShowInvolveDeptModal(false);
+      refetch();
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to involve departments')
   });
 
   const rejectRedirectMutation = useMutation({
@@ -338,13 +359,19 @@ export default function IncidentDetailPage() {
     !incident.user_hod_dept_submitted &&
     !hasImcFeedback;
 
-  const isLead = Boolean(user?.isImcLead);
+  const isLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.is_system_admin || user?.role === 'system_admin');
+  const isImcMember = Boolean(user?.role === 'imc' || user?.is_imc_member || user?.isImcMember || isLead);
 
   const canImcAct =
-    user?.role === 'imc' &&
+    isLead &&
     user?.id !== incident.reporter_id &&
     (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training', 'with_imc_review'].includes(incident.status) ||
       (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
+
+  const canInvolveDepartments =
+    isLead &&
+    user?.id !== incident.reporter_id &&
+    ['with_imc', 'with_hod', 'with_hod_and_imc', 'redirect_requested'].includes(incident.status);
 
   const canMdAct = user?.role === 'head_management' && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
   const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
@@ -358,10 +385,10 @@ export default function IncidentDetailPage() {
     !incident.all_hod_feedback_submitted;
 
   const canAssignInvestigator = ['imc', 'system_admin'].includes(user?.role) && isLead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
-  const canInvestigatorAct = incident.status === 'with_investigator' && incident.investigators?.some(i => i.investigator_id === user?.id && i.status !== 'completed');
+  const canInvestigatorAct = incident.status === 'with_investigator' && (isImcMember || incident.investigators?.some(i => i.investigator_id === user?.id && i.status !== 'completed'));
   const canImcReviewInvestigator = isLead && incident.status === 'with_imc_review';
   const canGenerateImcReport = ['imc', 'system_admin'].includes(user?.role) && isLead && incident.status === 'pending_imc_report';
-  const canCloseIncident = user?.role === 'imc' && incident.status === 'pending_training';
+  const canCloseIncident = isLead && incident.status === 'pending_training';
 
   const isHodOfDept = (deptName) => {
     if (!user || user.role !== 'hod') return false;
@@ -403,6 +430,7 @@ export default function IncidentDetailPage() {
             canAssignInvestigator={canAssignInvestigator}
             canGenerateImcReport={canGenerateImcReport}
             canCloseIncident={canCloseIncident}
+            canInvolveDepartments={canInvolveDepartments}
             setShowWithdrawModal={setShowWithdrawModal}
             setShowFeedbackModal={setShowFeedbackModal}
             setShowRedirectModal={setShowRedirectModal}
@@ -410,6 +438,7 @@ export default function IncidentDetailPage() {
             setShowReopenModal={setShowReopenModal}
             setShowAssignInvestigatorModal={setShowAssignInvestigatorModal}
             setShowImcReportModal={setShowImcReportModal}
+            setShowInvolveDeptModal={setShowInvolveDeptModal}
             openEditIncident={openEditIncident}
             escalateMutation={escalateMutation}
             remindHodMutation={remindHodMutation}
@@ -1118,6 +1147,14 @@ export default function IncidentDetailPage() {
         setAttachments={setImcAttachments}
         mutate={() => imcReportMutation.mutate()}
         isPending={imcReportMutation.isPending}
+      />
+      <InvolveDepartmentModal
+        show={showInvolveDeptModal}
+        onClose={() => setShowInvolveDeptModal(false)}
+        currentDepartments={incident?.departments || []}
+        departmentsList={departmentsList}
+        mutate={(deptIds) => involveDepartmentsMutation.mutate(deptIds)}
+        isPending={involveDepartmentsMutation.isPending}
       />
       <FilePreviewModal
         previewFile={previewFile}

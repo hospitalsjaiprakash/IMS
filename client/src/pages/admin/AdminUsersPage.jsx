@@ -1,13 +1,13 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { adminApi, metaApi } from '../../api';
+import { adminApi, metaApi, masterEmployeesApi } from '../../api';
 import api from '../../api';
 import { Spinner, Modal, Alert, Pagination } from '../../components/ui';
 import {
   Search, Plus, ShieldCheck, UserMinus, AlertTriangle, ShieldX,
   Users, Award, Building2, CheckCircle2, Edit3, ShieldAlert,
   UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, Upload, Copy, FileUp, ArrowLeft,
-  Mail, Phone, User, FileText, AlertCircle, Building
+  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
@@ -48,7 +48,7 @@ export default function AdminUsersPage() {
 
   const { data: masterEmployees = [], isLoading: isLoadingMaster } = useQuery({
     queryKey: ['master-employees'],
-    queryFn: () => api.get('/master-employees').then(r => r.data.data),
+    queryFn: () => api.get('/master-employees').then(r => r.data?.data || (Array.isArray(r.data) ? r.data : [])),
   });
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -130,7 +130,26 @@ export default function AdminUsersPage() {
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to process upload')
   });
 
+  const { data: syncStatusData } = useQuery({
+    queryKey: ['hrms-sync-status'],
+    queryFn: () => masterEmployeesApi.getSyncStatus().then(r => r.data.data),
+  });
+
+  const syncHrmsMutation = useMutation({
+    mutationFn: () => masterEmployeesApi.syncHrms(),
+    onSuccess: (res) => {
+      toast.success(res.data.message || 'HRMS Google Sheet synchronized successfully!');
+      qc.invalidateQueries({ queryKey: ['master-employees'] });
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.error || 'Failed to synchronize with HRMS sheet');
+    }
+  });
+
   const handleFileUpload = (e) => {
+
     e.preventDefault();
     const file = e.target?.files?.[0] || e.dataTransfer?.files?.[0];
     if (!file) return;
@@ -481,6 +500,15 @@ export default function AdminUsersPage() {
               <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
                 <Plus size={14} /> Add Employee
               </button>
+              <button
+                onClick={() => syncHrmsMutation.mutate()}
+                disabled={syncHrmsMutation.isPending}
+                title={syncStatusData?.last_hrms_sync_at ? `Last synced: ${new Date(syncStatusData.last_hrms_sync_at).toLocaleString()}` : 'Sync all staff from HRMS Google Sheet'}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <RefreshCw size={14} className={syncHrmsMutation.isPending ? 'animate-spin' : ''} />
+                {syncHrmsMutation.isPending ? 'Syncing...' : 'Sync with HR Sheet'}
+              </button>
             </>
           )}
           <button
@@ -535,7 +563,12 @@ export default function AdminUsersPage() {
                       <span>Hospital Personnel Directory</span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Search, filter, and inspect governance permissions across all {masterEmployees.length || 0} registered staff members
+                      Search, filter, and inspect governance permissions across all {masterEmployees.length || 0} staff members
+                      {syncStatusData?.last_hrms_sync_at && (
+                        <span className="ml-2 font-medium text-indigo-600">
+                          (HR Sheet last synced: {new Date(syncStatusData.last_hrms_sync_at).toLocaleDateString()} {new Date(syncStatusData.last_hrms_sync_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
@@ -1137,29 +1170,52 @@ export default function AdminUsersPage() {
                   <input
                     value={mapSearchTerm}
                     onChange={e => setMapSearchTerm(e.target.value)}
-                    placeholder="Type name or Employee ID..."
+                    placeholder="Search by name, Employee ID, or department..."
                     className="input pl-9 font-bold text-sm w-full"
                     autoFocus
                   />
                   
-                  {mapSearchTerm && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
-                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(mapSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(mapSearchTerm.toLowerCase())).map(emp => (
+                  {mapSearchTerm.trim() && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100">
+                      {(() => {
+                        const term = mapSearchTerm.toLowerCase().trim();
+                        const matches = (masterEmployees || []).filter(e => {
+                          const fullName = String(e.full_name || e.name || '').toLowerCase();
+                          const empId = String(e.employee_id || '').toLowerCase();
+                          const dept = String(e.department || '').toLowerCase();
+                          const desig = String(e.designation || '').toLowerCase();
+                          return fullName.includes(term) || empId.includes(term) || dept.includes(term) || desig.includes(term);
+                        }).slice(0, 50);
+
+                        if (matches.length === 0) {
+                          return (
+                            <div className="p-4 text-sm text-slate-500 text-center font-medium">
+                              No employees found matching &quot;{mapSearchTerm}&quot;
+                            </div>
+                          );
+                        }
+
+                        return matches.map(emp => (
                           <div 
-                            key={emp.id} 
-                            className="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
+                            key={emp.employee_id || emp.master_id || emp.id} 
+                            className="p-3 hover:bg-amber-50/70 cursor-pointer transition-colors"
                             onClick={() => {
-                              setMapForm(f => ({ ...f, employeeId: emp.employee_id }));
+                              setMapForm(f => ({ ...f, employeeId: String(emp.employee_id) }));
                               setMapSearchTerm('');
                             }}
                           >
-                            <p className="font-bold text-sm text-slate-800">{emp.full_name}</p>
-                            <p className="text-xs text-slate-500">ID: {emp.employee_id} • {emp.department || 'No Dept'}</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-bold text-sm text-slate-800">{emp.full_name || emp.name}</p>
+                              <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-100 text-slate-600 rounded font-bold whitespace-nowrap">
+                                ID: {emp.employee_id}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              {emp.designation || 'Staff'} • <span className="text-slate-700 font-medium">{emp.department || 'No Dept'}</span>
+                            </p>
                           </div>
-                       ))}
-                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(mapSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(mapSearchTerm.toLowerCase())).length === 0 && (
-                          <div className="p-3 text-sm text-slate-500 text-center">No employees found.</div>
-                       )}
+                        ));
+                      })()}
                     </div>
                   )}
                 </div>
@@ -1168,58 +1224,61 @@ export default function AdminUsersPage() {
             ) : (
               <div>
                 <label className="field-label field-required font-bold">Selected Employee</label>
-                {masterEmployees?.find(e => e.employee_id === mapForm.employeeId) ? (() => {
-                  const emp = masterEmployees.find(e => e.employee_id === mapForm.employeeId);
-                  return (
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-1 animate-in fade-in zoom-in duration-200">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-black text-lg flex-shrink-0">
-                            {emp.full_name?.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="font-black text-slate-900 leading-tight">{emp.full_name}</p>
-                            <p className="text-xs font-mono font-bold text-slate-600 mt-0.5">ID: {emp.employee_id}</p>
-                            <p className="text-[11px] text-slate-500 mt-1">
-                              {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
-                            </p>
-                            <div className="mt-2 flex items-center gap-2">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
-                              <span className="font-black text-amber-700 uppercase px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-md text-[10px]">
-                                {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
-                              </span>
+                {(() => {
+                  const emp = (masterEmployees || []).find(e => String(e.employee_id) === String(mapForm.employeeId));
+                  if (emp) {
+                    return (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-1 animate-in fade-in zoom-in duration-200">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-black text-lg flex-shrink-0">
+                              {(emp.full_name || emp.name)?.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="font-black text-slate-900 leading-tight">{emp.full_name || emp.name}</p>
+                              <p className="text-xs font-mono font-bold text-slate-600 mt-0.5">ID: {emp.employee_id}</p>
+                              <p className="text-[11px] text-slate-500 mt-1">
+                                {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
+                              </p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
+                                <span className="font-black text-amber-700 uppercase px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-md text-[10px]">
+                                  {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
+                                </span>
+                              </div>
                             </div>
                           </div>
+                          <button
+                            onClick={() => {
+                              setMapForm(f => ({ ...f, employeeId: '' }));
+                              setMapSearchTerm('');
+                            }}
+                            className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
+                          >
+                            <Edit3 size={13} /> Change
+                          </button>
                         </div>
-                        <button
-                          onClick={() => {
-                            setMapForm(f => ({ ...f, employeeId: '' }));
-                            setMapSearchTerm('');
-                          }}
-                          className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
-                        >
-                          <Edit3 size={13} /> Change
-                        </button>
                       </div>
+                    );
+                  }
+                  return (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-1 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-red-900">Selected Employee</p>
+                        <p className="text-xs text-red-700 font-mono mt-0.5">ID: {mapForm.employeeId}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setMapForm(f => ({ ...f, employeeId: '' }));
+                          setMapSearchTerm('');
+                        }}
+                        className="text-xs text-red-700 hover:text-red-900 font-bold px-2.5 py-1.5 bg-red-100 hover:bg-red-200 rounded-lg transition-colors flex items-center gap-1.5"
+                      >
+                        <Edit3 size={13} /> Change
+                      </button>
                     </div>
                   );
-                })() : (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-1 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-red-900">Unknown Employee</p>
-                      <p className="text-xs text-red-700 font-mono mt-0.5">ID: {mapForm.employeeId}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setMapForm(f => ({ ...f, employeeId: '' }));
-                        setMapSearchTerm('');
-                      }}
-                      className="text-xs text-red-700 hover:text-red-900 font-bold px-2.5 py-1.5 bg-red-100 hover:bg-red-200 rounded-lg transition-colors flex items-center gap-1.5"
-                    >
-                      <Edit3 size={13} /> Change
-                    </button>
-                  </div>
-                )}
+                })()}
               </div>
             )}
           </div>
@@ -1255,29 +1314,52 @@ export default function AdminUsersPage() {
                   <input
                     value={assignSearchTerm}
                     onChange={e => setAssignSearchTerm(e.target.value)}
-                    placeholder="Type name or Employee ID..."
+                    placeholder="Search by name, Employee ID, or department..."
                     className="input pl-9 font-bold text-sm w-full"
                     autoFocus
                   />
                   
-                  {assignSearchTerm && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
-                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(assignSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(assignSearchTerm.toLowerCase())).map(emp => (
+                  {assignSearchTerm.trim() && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100">
+                      {(() => {
+                        const term = assignSearchTerm.toLowerCase().trim();
+                        const matches = (masterEmployees || []).filter(e => {
+                          const fullName = String(e.full_name || e.name || '').toLowerCase();
+                          const empId = String(e.employee_id || '').toLowerCase();
+                          const dept = String(e.department || '').toLowerCase();
+                          const desig = String(e.designation || '').toLowerCase();
+                          return fullName.includes(term) || empId.includes(term) || dept.includes(term) || desig.includes(term);
+                        }).slice(0, 50);
+
+                        if (matches.length === 0) {
+                          return (
+                            <div className="p-4 text-sm text-slate-500 text-center font-medium">
+                              No employees found matching &quot;{assignSearchTerm}&quot;
+                            </div>
+                          );
+                        }
+
+                        return matches.map(emp => (
                           <div 
-                            key={emp.id} 
-                            className="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
+                            key={emp.employee_id || emp.master_id || emp.id} 
+                            className="p-3 hover:bg-blue-50/70 cursor-pointer transition-colors"
                             onClick={() => {
-                              setAssignForm(f => ({ ...f, employeeId: emp.employee_id }));
+                              setAssignForm(f => ({ ...f, employeeId: String(emp.employee_id) }));
                               setAssignSearchTerm('');
                             }}
                           >
-                            <p className="font-bold text-sm text-slate-800">{emp.full_name}</p>
-                            <p className="text-xs text-slate-500">ID: {emp.employee_id} • {emp.department || 'No Dept'}</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-bold text-sm text-slate-800">{emp.full_name || emp.name}</p>
+                              <span className="text-[10px] font-mono px-2 py-0.5 bg-slate-100 text-slate-600 rounded font-bold whitespace-nowrap">
+                                ID: {emp.employee_id}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              {emp.designation || 'Staff'} • <span className="text-slate-700 font-medium">{emp.department || 'No Dept'}</span>
+                            </p>
                           </div>
-                       ))}
-                       {masterEmployees?.filter(e => e.full_name?.toLowerCase().includes(assignSearchTerm.toLowerCase()) || e.employee_id?.toLowerCase().includes(assignSearchTerm.toLowerCase())).length === 0 && (
-                          <div className="p-3 text-sm text-slate-500 text-center">No employees found.</div>
-                       )}
+                        ));
+                      })()}
                     </div>
                   )}
                 </div>
@@ -1285,58 +1367,61 @@ export default function AdminUsersPage() {
             ) : (
               <div>
                 <label className="field-label field-required font-bold">Selected Employee</label>
-                {masterEmployees?.find(e => e.employee_id === assignForm.employeeId) ? (() => {
-                  const emp = masterEmployees.find(e => e.employee_id === assignForm.employeeId);
-                  return (
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-1 animate-in fade-in zoom-in duration-200">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-black text-lg flex-shrink-0">
-                            {emp.full_name?.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="font-black text-slate-900 leading-tight">{emp.full_name}</p>
-                            <p className="text-xs font-mono font-bold text-slate-600 mt-0.5">ID: {emp.employee_id}</p>
-                            <p className="text-[11px] text-slate-500 mt-1">
-                              {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
-                            </p>
-                            <div className="mt-2 flex items-center gap-2">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
-                              <span className="font-black text-blue-700 uppercase px-2 py-0.5 bg-blue-100 border border-blue-200 rounded-md text-[10px]">
-                                {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
-                              </span>
+                {(() => {
+                  const emp = (masterEmployees || []).find(e => String(e.employee_id) === String(assignForm.employeeId));
+                  if (emp) {
+                    return (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-1 animate-in fade-in zoom-in duration-200">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-black text-lg flex-shrink-0">
+                              {(emp.full_name || emp.name)?.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="font-black text-slate-900 leading-tight">{emp.full_name || emp.name}</p>
+                              <p className="text-xs font-mono font-bold text-slate-600 mt-0.5">ID: {emp.employee_id}</p>
+                              <p className="text-[11px] text-slate-500 mt-1">
+                                {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
+                              </p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
+                                <span className="font-black text-blue-700 uppercase px-2 py-0.5 bg-blue-100 border border-blue-200 rounded-md text-[10px]">
+                                  {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
+                                </span>
+                              </div>
                             </div>
                           </div>
+                          <button
+                            onClick={() => {
+                              setAssignForm(f => ({ ...f, employeeId: '' }));
+                              setAssignSearchTerm('');
+                            }}
+                            className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
+                          >
+                            <Edit3 size={13} /> Change
+                          </button>
                         </div>
-                        <button
-                          onClick={() => {
-                            setAssignForm(f => ({ ...f, employeeId: '' }));
-                            setAssignSearchTerm('');
-                          }}
-                          className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
-                        >
-                          <Edit3 size={13} /> Change
-                        </button>
                       </div>
+                    );
+                  }
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-1 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-amber-900">Selected Employee</p>
+                        <p className="text-xs text-amber-700 font-mono mt-0.5">ID: {assignForm.employeeId}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setAssignForm(f => ({ ...f, employeeId: '' }));
+                          setAssignSearchTerm('');
+                        }}
+                        className="text-xs text-amber-700 hover:text-amber-900 font-bold px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors flex items-center gap-1.5"
+                      >
+                        <Edit3 size={13} /> Change
+                      </button>
                     </div>
                   );
-                })() : (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-1 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-amber-900">Unknown Employee</p>
-                      <p className="text-xs text-amber-700 font-mono mt-0.5">ID: {assignForm.employeeId}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setAssignForm(f => ({ ...f, employeeId: '' }));
-                        setAssignSearchTerm('');
-                      }}
-                      className="text-xs text-amber-700 hover:text-amber-900 font-bold px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors flex items-center gap-1.5"
-                    >
-                      <Edit3 size={13} /> Change
-                    </button>
-                  </div>
-                )}
+                })()}
               </div>
             )}
           </div>

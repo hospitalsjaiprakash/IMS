@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pencil, XCircle, MessageSquare, AlertTriangle, CheckCircle, Undo2, Flame, Bell } from 'lucide-react';
+import { Pencil, XCircle, MessageSquare, AlertTriangle, CheckCircle, Undo2, Flame, Bell, Building } from 'lucide-react';
 import { Spinner } from '../../components/ui';
 
 export default function IncidentActions({
@@ -13,6 +13,7 @@ export default function IncidentActions({
   canReopen,
   canEscalate,
   canRemindHod,
+  canInvolveDepartments,
   setShowWithdrawModal,
   setShowFeedbackModal,
   setShowRedirectModal,
@@ -20,6 +21,7 @@ export default function IncidentActions({
   setShowReopenModal,
   setShowAssignInvestigatorModal,
   setShowImcReportModal,
+  setShowInvolveDeptModal,
   openEditIncident,
   escalateMutation,
   remindHodMutation,
@@ -30,7 +32,7 @@ export default function IncidentActions({
 }) {
   const isEmployeeReporter = user?.id === incident.reporter_id && incident.status === 'submitted';
 
-  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canAssignInvestigator && !canGenerateImcReport && !canCloseIncident) {
+  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canAssignInvestigator && !canGenerateImcReport && !canCloseIncident && !canInvolveDepartments) {
     return null;
   }
 
@@ -46,13 +48,26 @@ export default function IncidentActions({
           <XCircle size={14} /> Withdraw
         </button>
       )}
+      {canInvolveDepartments && (
+        <button
+          onClick={() => setShowInvolveDeptModal(true)}
+          className="btn-secondary btn-sm border-blue-200 text-blue-700 hover:bg-blue-50 flex items-center gap-1.5 shadow-xs"
+        >
+          <Building size={14} /> + Involve Department
+        </button>
+      )}
       {canHodFeedback && (
         <button onClick={() => setShowFeedbackModal(true)} className="btn-primary btn-sm">
           <MessageSquare size={14} /> Submit Feedback
         </button>
       )}
       {canAssignInvestigator && (
-        <button onClick={() => setShowAssignInvestigatorModal(true)} className="btn-secondary btn-sm border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+        <button 
+          onClick={() => setShowAssignInvestigatorModal(true)} 
+          disabled={!incident.all_hod_feedback_submitted}
+          title={!incident.all_hod_feedback_submitted ? "Investigation can only be decided after receiving feedback from all concerned HODs." : "Assign investigation team"}
+          className="btn-secondary btn-sm border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           <Pencil size={14} /> Assign Investigator(s)
         </button>
       )}

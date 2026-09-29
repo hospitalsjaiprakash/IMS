@@ -97,6 +97,7 @@ export const incidentsApi = {
   assignInvestigator: (id, data) => api.post(`/incidents/${id}/assign-investigator`, data),
   investigatorReport: (id, fd) => api.post(`/incidents/${id}/investigator-report`, fd),
   rejectInvestigatorReport: (id, data) => api.post(`/incidents/${id}/reject-investigator-report`, data),
+  involveDepartments: (id, data) => api.post(`/incidents/${id}/involve-departments`, data),
   requestRedirect: (id, data) => api.post(`/incidents/${id}/request-redirect`, data),
   approveRedirect: (id, data) => api.post(`/incidents/${id}/approve-redirect`, data),
   rejectRedirect: (id, data) => api.post(`/incidents/${id}/reject-redirect`, data),
@@ -170,10 +171,20 @@ export const attachmentsApi = {
   getBroadcastDownloadUrl: (key) => api.get('/admin/broadcast-attachments/download', { params: { key } }),
 };
 
-// ── Employee Search ─────────────────────────────────
+// ── Master Employees & HRMS Sync ───────────────────
+export const masterEmployeesApi = {
+  list: () => api.get('/master-employees'),
+  add: (data) => api.post('/master-employees', data),
+  bulkAdd: (employees) => api.post('/master-employees/bulk', { employees }),
+  syncHrms: () => api.post('/master-employees/sync-hrms'),
+  getSyncStatus: () => api.get('/master-employees/sync-status'),
+};
+
+// ── Employee Search & Directory ───────────────────
 export const employeeApi = {
-  search: (q) => api.get('/employee/search', { params: { q } }),
-  getDirectory: (params) => api.get('/employees/directory', { params }),
+  search: (query) => api.get('/employee/search', { params: { query } }),
+  directory: () => api.get('/employees/directory'),
 };
 
 export default api;
+

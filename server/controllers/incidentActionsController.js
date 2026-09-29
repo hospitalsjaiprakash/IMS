@@ -151,13 +151,18 @@ exports.requestRedirect = async (req, res) => {
   }
 };
 
-// ── APPROVE REDIRECT (IMC) ─────────────────────────────────────────────────
+// ── APPROVE REDIRECT (IMC Convenor Only) ───────────────────────────────────
 exports.approveRedirect = async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
     const { id } = req.params;
-    const { targetDepartment, targetDepartments } = req.body;
+    const { targetDepartment, targetDepartments, retainedDepartments, actionType } = req.body;
+
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the IMC Convenor can approve redirection requests.' });
+    }
 
     let deptNames = [];
     if (Array.isArray(targetDepartments) && targetDepartments.length > 0) {
@@ -183,12 +188,25 @@ exports.approveRedirect = async (req, res) => {
     }
     const targetDepts = deptRes.rows;
 
+    let finalDeptIds = targetDepts.map(d => d.id);
+
+    // Support Partial Redirection: retain existing departments if requested
+    if (Array.isArray(retainedDepartments) && retainedDepartments.length > 0) {
+      const retainedRes = await client.query('SELECT id, name FROM departments WHERE name = ANY($1) OR id::text = ANY($1)', [retainedDepartments]);
+      finalDeptIds = [...new Set([...finalDeptIds, ...retainedRes.rows.map(d => d.id)])];
+    } else if (actionType === 'partial' && incident.redirect_requested_by_dept) {
+      const origRes = await client.query('SELECT id, name FROM departments WHERE name = $1', [incident.redirect_requested_by_dept]);
+      if (origRes.rows.length) {
+        finalDeptIds = [...new Set([...finalDeptIds, origRes.rows[0].id])];
+      }
+    }
+
     const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
 
-    // Update incident departments — remove old, add all new
+    // Update incident departments
     await client.query('DELETE FROM incident_departments WHERE incident_id = $1', [id]);
-    for (const td of targetDepts) {
-      await client.query('INSERT INTO incident_departments (incident_id, department_id) VALUES ($1, $2)', [id, td.id]);
+    for (const dId of finalDeptIds) {
+      await client.query('INSERT INTO incident_departments (incident_id, department_id) VALUES ($1, $2)', [id, dId]);
     }
 
     await client.query(
@@ -215,7 +233,7 @@ exports.approveRedirect = async (req, res) => {
       }
     }
 
-    // Notify original HOD of approval
+    // Notify original HOD of decision
     const redirectedDeptNamesStr = targetDepts.map(d => d.name).join(', ');
     if (incident.redirect_requested_by_dept) {
       const origHodRes = await query(
@@ -232,13 +250,13 @@ exports.approveRedirect = async (req, res) => {
       }
     }
 
-    await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartments: deptNames }, req.ip);
+    await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartments: deptNames, isPartial: actionType === 'partial' }, req.ip);
 
     if (req.io) {
       req.io.emit('incident_updated', { id });
     }
 
-    res.json({ success: true, message: 'Redirect approved successfully.', targetDepartments: deptNames });
+    res.json({ success: true, message: 'Redirect processed successfully.', targetDepartments: deptNames });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to approve redirect.' });
@@ -247,13 +265,18 @@ exports.approveRedirect = async (req, res) => {
   }
 };
 
-// ── REJECT REDIRECT (IMC) ──────────────────────────────────────────────────
+// ── REJECT REDIRECT (IMC Convenor Only) ────────────────────────────────────
 exports.rejectRedirect = async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
     const { id } = req.params;
     const { reason } = req.body;
+
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the IMC Convenor can reject redirection requests.' });
+    }
 
     const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
@@ -262,11 +285,12 @@ exports.rejectRedirect = async (req, res) => {
     const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
 
     await client.query(
-      `UPDATE incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
+      `UPDATE incidents SET status = $1, redirect_reason = NULL, redirect_requested_by_dept = NULL, redirect_requested_at = NULL, updated_at = NOW() WHERE id = $2`,
       [newStatus, id]
     );
 
     await client.query('COMMIT');
+
 
     if (incident.redirect_requested_by_dept) {
       const origHodRes = await query(

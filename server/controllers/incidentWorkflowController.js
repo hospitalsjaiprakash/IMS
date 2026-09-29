@@ -438,13 +438,18 @@ exports.submitManagementAction = async (req, res) => {
 };
 
 // =============================================
-// GENERATE IMC REPORT
+// GENERATE IMC REPORT (Convenor Only)
 // =============================================
 exports.generateImcReport = async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
     const { id } = req.params;
+
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the IMC Convenor can generate the official IMC report.' });
+    }
     
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -515,15 +520,15 @@ exports.generateImcReport = async (req, res) => {
 };
 
 // =============================================
-// CLOSE INCIDENT (Post-Training)
+// CLOSE INCIDENT (Convenor Only - Post-Training)
 // =============================================
 exports.closeIncident = async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // Check if training is completed
-    const trainingCheck = await query(`SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE`, [id]);
-    // Optionally check if training_records say it is completed
+
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      return res.status(403).json({ error: 'Only the IMC Convenor can close the incident.' });
+    }
     
     await query(
       `UPDATE incidents SET status = 'closed', resolved_at = NOW(), updated_at = NOW() WHERE id = $1`,
@@ -543,7 +548,7 @@ exports.closeIncident = async (req, res) => {
 };
 
 // =============================================
-// SUBMIT INVESTIGATOR REPORT
+// SUBMIT INVESTIGATION REPORT (Involved IMC Member / Assigned Investigator)
 // =============================================
 exports.submitInvestigatorReport = async (req, res) => {
   const client = await getClient();
@@ -552,82 +557,154 @@ exports.submitInvestigatorReport = async (req, res) => {
     const { id } = req.params;
     const { reportText } = req.body;
 
-    const invCheck = await client.query('SELECT * FROM investigators WHERE incident_id = $1 AND investigator_id = $2 AND status != \'completed\'', [id, req.user.id]);
-    if (!invCheck.rows.length) return res.status(403).json({ error: 'You are not assigned as an active investigator for this incident.' });
+    if (!reportText || !reportText.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Investigation findings text is required.' });
+    }
 
-    await client.query(
-      `UPDATE investigators SET report_text = $1, status = 'completed', completed_at = NOW() WHERE incident_id = $2 AND investigator_id = $3 AND status != 'completed'`,
-      [reportText, id, req.user.id]
+    // Verify user authorization: must be an assigned investigator or an IMC member
+    const isImc = Boolean(req.user.role === 'imc' || req.user.is_imc_member || req.user.is_imc_lead);
+    const assignedCheck = await client.query(
+      `SELECT * FROM investigators WHERE incident_id = $1 AND investigator_id = $2`,
+      [id, req.user.id]
     );
 
+    if (!assignedCheck.rows.length && !isImc) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only assigned investigators or involved IMC members can submit the investigation report.' });
+    }
+
+    // Update active investigator assignments for this incident
+    await client.query(
+      `UPDATE investigators 
+       SET report_text = $1, status = 'completed', completed_at = NOW() 
+       WHERE incident_id = $2 AND status != 'completed'`,
+      [reportText.trim(), id]
+    );
+
+    // Record findings into feedbacks
     await client.query(
       `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text) VALUES ($1, $2, 'investigator', $3)`,
-      [id, req.user.id, reportText]
+      [id, req.user.id, reportText.trim()]
     );
 
+    // Save attached files (photos, official report PDFs, etc.)
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         await client.query(
-          `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type) VALUES ($1, $2, 'investigator_report', $3, $4, $5, $6)`,
+          `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type) 
+           VALUES ($1, $2, 'investigator_report', $3, $4, $5, $6)`,
           [id, req.user.id, file.originalname, (file.filename || file.key), file.size, file.mimetype]
         );
       }
     }
 
+    // Incident status advances to with_imc_review for Convenor evaluation
     await client.query(`UPDATE incidents SET status = 'with_imc_review', updated_at = NOW() WHERE id = $1`, [id]);
 
     await client.query('COMMIT');
 
-    const imcMembers = await client.query(`SELECT id, email, full_name FROM users WHERE role = 'imc' AND is_imc_lead = TRUE`);
-    const { createNotification } = require('../utils/notifications');
-    for (const member of imcMembers.rows) {
-      await createNotification(member.id, id, 'Investigator Report Submitted', 'An investigator has submitted their findings.', 'investigator_report_submitted');
+    // Notify IMC Convenor
+    const convenorRes = await query(`SELECT id, email, full_name FROM users WHERE (role = 'imc' AND is_imc_lead = TRUE) OR is_system_admin = TRUE`);
+    for (const member of convenorRes.rows) {
+      await createNotification(
+        member.id,
+        id,
+        'Investigation Report Ready for Review',
+        `An investigation report has been submitted. Please evaluate findings to forward to Management or request reinvestigation.`,
+        'investigator_report_submitted'
+      );
     }
 
-    res.json({ success: true });
+    res.json({ success: true, message: 'Investigation report submitted successfully.' });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Failed to submit report' });
+    console.error('[POST /incidents/:id/investigator-report] error:', error);
+    res.status(500).json({ error: error.message || 'Failed to submit investigation report' });
   } finally {
     client.release();
   }
 };
 
 // =============================================
-// REJECT INVESTIGATOR REPORT
+// REJECT / REINVESTIGATE REPORT (Convenor Only)
 // =============================================
 exports.rejectInvestigatorReport = async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    const { id } = req.params;
-    const { action, newInvestigatorId, feedbackText } = req.body;
-    
-    if (!req.user.is_imc_lead) return res.status(403).json({ error: 'Only IMC Convenor can do this' });
-    
-    if (feedbackText) {
-      await client.query(
-        `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text) VALUES ($1, $2, 'imc', $3)`,
-        [id, req.user.id, feedbackText]
-      );
+    let { feedbackText, investigatorIds, newInvestigatorId } = req.body;
+    if (!investigatorIds && newInvestigatorId) {
+      investigatorIds = [newInvestigatorId];
     }
     
-    if (action === 'reinvestigate') {
-      const invCheck = await client.query(`SELECT id FROM investigators WHERE incident_id = $1 AND status = 'completed' ORDER BY completed_at DESC LIMIT 1`, [id]);
-      if (invCheck.rows.length) {
-        await client.query(`UPDATE investigators SET status = 'assigned' WHERE id = $1`, [invCheck.rows[0].id]);
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the IMC Convenor can request reinvestigation.' });
+    }
+    
+    if (!feedbackText || !feedbackText.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Please provide remarks explaining why reinvestigation is required.' });
+    }
+
+    // Record Convenor's feedback into feedbacks table
+    await client.query(
+      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text) VALUES ($1, $2, 'imc', $3)`,
+      [id, req.user.id, feedbackText.trim()]
+    );
+    
+    // If new or reallocated investigator IDs are provided, reassign them
+    if (Array.isArray(investigatorIds) && investigatorIds.length > 0) {
+      const invUsers = await client.query('SELECT id, email, full_name, role, is_imc_member, is_imc_lead FROM users WHERE id = ANY($1)', [investigatorIds]);
+      const hasImc = invUsers.rows.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
+      if (!hasImc) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'At least one IMC member must be included in the investigation team.' });
       }
-    } else if (action === 'reassign' && newInvestigatorId) {
-      await client.query(`INSERT INTO investigators (incident_id, investigator_id, assigned_by) VALUES ($1, $2, $3)`, [id, newInvestigatorId, req.user.id]);
+
+      for (const inv of invUsers.rows) {
+        await client.query(
+          `INSERT INTO investigators (incident_id, investigator_id, assigned_by, status) 
+           VALUES ($1, $2, $3, 'assigned')`,
+          [id, inv.id, req.user.id]
+        );
+      }
+    } else {
+      // Re-open existing completed investigators
+      await client.query(`UPDATE investigators SET status = 'assigned' WHERE incident_id = $1`, [id]);
     }
     
     await client.query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
     
     await client.query('COMMIT');
-    res.json({ success: true });
+
+    const incRes = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
+    const refId = incRes.rows[0]?.reference_id || id;
+
+    // Notify assigned investigators
+    const assignedInvs = await query(`
+      SELECT DISTINCT u.id, u.email, u.full_name 
+      FROM investigators inv
+      JOIN users u ON u.id = inv.investigator_id
+      WHERE inv.incident_id = $1 AND inv.status = 'assigned'
+    `, [id]);
+
+    for (const inv of assignedInvs.rows) {
+      await createNotification(
+        inv.id,
+        id,
+        'Reinvestigation Mandated',
+        `The IMC Convenor has requested reinvestigation for incident ${refId}. Remarks: "${feedbackText.trim()}"`,
+        'investigator_assigned'
+      );
+    }
+
+    res.json({ success: true, message: 'Incident successfully scheduled for reinvestigation.' });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Failed to reject report' });
+    console.error('[POST /incidents/:id/reject-investigator-report] error:', error);
+    res.status(500).json({ error: 'Failed to request reinvestigation.' });
   } finally {
     client.release();
   }
@@ -654,32 +731,68 @@ exports.reopenIncident = async (req, res) => {
 };
 
 // =============================================
-// ASSIGN INVESTIGATOR
+// ASSIGN INVESTIGATOR (Convenor Only - After HOD Feedbacks)
 // =============================================
 exports.assignInvestigator = async (req, res) => {
   try {
     const { id } = req.params;
     const { investigatorIds } = req.body;
 
-    if (!req.user.is_imc_lead) {
-      return res.status(403).json({ error: 'Only IMC Chairman/Convenor can assign investigators.' });
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      return res.status(403).json({ error: 'Only the IMC Convenor can assign investigators.' });
     }
 
     if (!Array.isArray(investigatorIds) || investigatorIds.length === 0) {
       return res.status(400).json({ error: 'Please select at least one investigator.' });
     }
 
+    // Rule: Investigation can only be initiated after feedback from ALL concerned HODs!
+    const pendingDepts = await query(`
+      SELECT d.name
+      FROM incident_departments id_dept
+      JOIN departments d ON d.id = id_dept.department_id
+      WHERE id_dept.incident_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          LEFT JOIN users u ON u.id = f.author_id
+          WHERE f.incident_id = $1 
+            AND f.role = 'hod'
+            AND (
+              f.department_id = d.id 
+              OR f.author_id = d.hod_user_id 
+              OR f.author_id = d.incharge_user_id 
+              OR f.author_id = d.asst_coo_user_id
+              OR LOWER(u.department) = LOWER(d.name)
+            )
+        )
+    `, [id]);
+
+    if (pendingDepts.rows.length > 0) {
+      const names = pendingDepts.rows.map(d => d.name).join(', ');
+      return res.status(400).json({
+        error: `Investigation can only be decided after receiving feedback from all concerned HODs: ${names}.`
+      });
+    }
+
+    // Validate selected users
     const invRes = await query(
-      'SELECT * FROM users WHERE id = ANY($1) AND role = $2',
-      [investigatorIds, 'imc']
+      'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id = ANY($1)',
+      [investigatorIds]
     );
     if (invRes.rows.length !== investigatorIds.length) {
-      return res.status(400).json({ error: 'All assigned investigators must be valid IMC members.' });
+      return res.status(400).json({ error: 'One or more selected investigators were not found in hospital user records.' });
+    }
+
+    // Must include at least one IMC member as primary investigator
+    const hasImcMember = invRes.rows.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
+    if (!hasImcMember) {
+      return res.status(400).json({ error: 'Primary investigators must include at least one IMC member.' });
     }
 
     for (const inv of invRes.rows) {
       await query(
-        `INSERT INTO investigators (incident_id, investigator_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        `INSERT INTO investigators (incident_id, investigator_id, assigned_by) 
+         VALUES ($1, $2, $3)`,
         [id, inv.id, req.user.id]
       );
     }
@@ -700,17 +813,124 @@ exports.assignInvestigator = async (req, res) => {
       if (inv.email) {
         sendEmail(inv.email, {
           subject: `Assigned as Investigator for Incident ${refId}`,
-          html: `<p>Dear ${inv.full_name},</p><p>You have been chosen by the IMC Chairman to investigate incident <b>${refId}</b>.</p>`
+          html: `<p>Dear ${inv.full_name},</p><p>You have been assigned by the IMC Convenor to investigate incident <b>${refId}</b>.</p>`
         }).catch(() => {});
       }
     }
 
-    res.json({ success: true });
+    res.json({ success: true, message: 'Investigators successfully assigned.' });
   } catch (e) {
     console.error('[POST /incidents/:id/assign-investigator] error:', e);
     res.status(500).json({ error: 'Failed to assign investigator' });
   }
 };
+
+// =============================================
+// INVOLVE MORE DEPARTMENTS (Convenor Only)
+// =============================================
+exports.involveDepartments = async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { departmentIds, departmentNames } = req.body;
+
+    if (!req.user.is_imc_lead && !req.user.is_system_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the IMC Convenor can involve additional departments.' });
+    }
+
+    const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
+    if (!incResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Incident not found' });
+    }
+    const incident = incResult.rows[0];
+
+    // Find departments by IDs or Names
+    let targetDeptRows = [];
+    if (Array.isArray(departmentIds) && departmentIds.length > 0) {
+      const dRes = await client.query('SELECT id, name FROM departments WHERE id = ANY($1)', [departmentIds]);
+      targetDeptRows = dRes.rows;
+    } else if (Array.isArray(departmentNames) && departmentNames.length > 0) {
+      const dRes = await client.query('SELECT id, name FROM departments WHERE name = ANY($1)', [departmentNames]);
+      targetDeptRows = dRes.rows;
+    }
+
+    if (!targetDeptRows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Please provide at least one valid department to involve.' });
+    }
+
+    const addedDepts = [];
+    for (const d of targetDeptRows) {
+      const insertRes = await client.query(
+        `INSERT INTO incident_departments (incident_id, department_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING
+         RETURNING department_id`,
+        [id, d.id]
+      );
+      if (insertRes.rows.length > 0) {
+        addedDepts.push(d);
+      }
+    }
+
+    if (!addedDepts.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'All selected department(s) are already linked to this incident.' });
+    }
+
+    // Transition status to with_hod (or with_hod_and_imc) so the new HOD feedback is submitted
+    const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
+    await client.query(
+      `UPDATE incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
+      [newStatus, id]
+    );
+
+    await client.query('COMMIT');
+
+    // Notify new HODs
+    const newlyAddedIds = addedDepts.map(d => d.id);
+    const newLeadersRes = await query(
+      `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
+       LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
+       WHERE d.id = ANY($1) AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+      [newlyAddedIds]
+    );
+
+    for (const leader of newLeadersRes.rows) {
+      await createNotification(
+        leader.id,
+        id,
+        'Department Invalidation / Review Required',
+        `Incident ${incident.reference_id} has been linked to your department by IMC. Your HOD review and feedback are required.`,
+        'incident_to_hod'
+      );
+      if (leader?.email) {
+        sendEmail(leader.email, templates.newIncidentHod(incident, leader)).catch(() => {});
+      }
+    }
+
+    await auditLog(req.user.id, 'DEPARTMENTS_INVOLVED', id, {
+      addedDepartments: addedDepts.map(d => d.name),
+      newStatus
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: `Successfully linked ${addedDepts.map(d => d.name).join(', ')}. Incident returned to HOD review for their feedback.`,
+      addedDepartments: addedDepts
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('[POST /incidents/:id/involve-departments] error:', error);
+    res.status(500).json({ error: error.message || 'Failed to involve departments.' });
+  } finally {
+    client.release();
+  }
+};
+
 
 // =============================================
 // GET IMC QUEUE

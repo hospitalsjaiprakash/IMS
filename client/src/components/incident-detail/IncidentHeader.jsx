@@ -55,10 +55,12 @@ export default function IncidentHeader({ incident, actions, user }) {
           </div>
           <div className="flex items-center gap-2">
             {actions}
-            <button onClick={() => window.print()} className="btn-secondary btn-sm print:hidden shadow-sm mr-2 border-slate-200">
-              <Download size={14} />
-              Generate PDF
-            </button>
+            {(user?.role === 'imc' || user?.is_imc_member || user?.isImcMember || user?.is_imc_lead || user?.isImcLead || user?.role === 'system_admin' || user?.is_system_admin) && (
+              <button onClick={() => window.print()} className="btn-secondary btn-sm print:hidden shadow-sm mr-2 border-slate-200">
+                <Download size={14} />
+                Generate PDF
+              </button>
+            )}
             <SeverityBadge severity={incident.severity} />
           </div>
         </div>

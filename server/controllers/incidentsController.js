@@ -3,6 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { generateReferenceId } = require('../utils/referenceId');
 const { sendEmail, templates } = require('../utils/emailService');
+const { checkAndAutoEscalate21Days } = require('../services/cronService');
 
 const categoryDepartmentMapping = {
   'Asset Related': 'Asset',
@@ -279,6 +280,7 @@ exports.createIncident = async (req, res) => {
 // =============================================
 exports.getIncidents = async (req, res) => {
   try {
+    checkAndAutoEscalate21Days().catch(() => {});
     const { status, severity, incidentCategory, incidentType, dateFrom, dateTo, page = 1, limit = 10, departmentId, reviewStage, viewMode, teamMemberId, teamMemberName } = req.query;
     const offset = (page - 1) * limit;
     const { role, id: userId, department } = req.user;

@@ -27,6 +27,7 @@ router.put('/:id/feedback', authenticate, authorize('hod', 'imc', 'head_manageme
 // IMC & Admin actions
 router.post('/:id/claim', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.claimIncident);
 router.post('/:id/imc-feedback', authenticate, authorize('imc', 'system_admin'), setUploadStage('imc_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitImcFeedback);
+router.post('/:id/involve-departments', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.involveDepartments);
 router.post('/:id/approve-redirect', authenticate, authorize('imc', 'system_admin'), incidentActionsController.approveRedirect);
 router.post('/:id/reject-redirect', authenticate, authorize('imc', 'system_admin'), incidentActionsController.rejectRedirect);
 router.post('/:id/verify-training', authenticate, authorize('imc', 'system_admin', 'hod'), incidentActionsController.verifyTraining);
@@ -36,8 +37,9 @@ router.post('/:id/close', authenticate, authorize('imc', 'system_admin'), incide
 
 // Investigator workflow
 router.post('/:id/assign-investigator', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.assignInvestigator);
-router.post('/:id/investigator-report', authenticate, authorize('imc', 'system_admin'), setUploadStage('investigator_report'), uploadIncidentAttachments, incidentWorkflowController.submitInvestigatorReport);
+router.post('/:id/investigator-report', authenticate, authorize('imc', 'system_admin', 'employee'), setUploadStage('investigator_report'), uploadIncidentAttachments, incidentWorkflowController.submitInvestigatorReport);
 router.post('/:id/reject-investigator-report', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.rejectInvestigatorReport);
+
 
 // Escalation, reminders & reopen
 router.post('/:id/escalate-priority', authenticate, authorize('imc', 'head_management'), incidentActionsController.escalatePriority);

@@ -12,4 +12,11 @@ router.post('/', authenticate, authorize('system_admin'), masterEmployeesControl
 // POST bulk add employees (admin only)
 router.post('/bulk', authenticate, authorize('system_admin'), masterEmployeesController.bulkAddEmployees);
 
+// POST sync from HRMS Google Sheets API (admin only)
+router.post('/sync-hrms', authenticate, authorize('system_admin'), masterEmployeesController.syncFromHrms);
+
+// GET HRMS sync status (admin only)
+router.get('/sync-status', authenticate, authorize('system_admin'), masterEmployeesController.getSyncStatus);
+
 module.exports = router;
+
