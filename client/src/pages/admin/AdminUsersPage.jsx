@@ -7,7 +7,7 @@ import {
   Search, Plus, ShieldCheck, UserMinus, AlertTriangle, ShieldX,
   Users, Award, Building2, CheckCircle2, Edit3, ShieldAlert,
   UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, Upload, Copy, FileUp, ArrowLeft,
-  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw
+  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw, Trash2, UserX
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
@@ -35,6 +35,8 @@ export default function AdminUsersPage() {
   const [showMapModal, setShowMapModal] = useState(false);
   const [mapForm, setMapForm] = useState({ departmentId: '', leaderType: 'hod', employeeId: '' });
   const [mapSearchTerm, setMapSearchTerm] = useState('');
+  const [showRemoveLeaderModal, setShowRemoveLeaderModal] = useState(false);
+  const [leaderToRemove, setLeaderToRemove] = useState(null);
 
   const [selectedProfileUser, setSelectedProfileUser] = useState(null);
   const [profileViewTab, setProfileViewTab] = useState('personal'); // 'personal' | 'department'
@@ -236,6 +238,41 @@ export default function AdminUsersPage() {
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to map department leader'),
   });
+
+  const removeLeaderMutation = useMutation({
+    mutationFn: (data) => adminApi.removeDepartmentLeader(data),
+    onSuccess: (res) => {
+      toast.success(res?.data?.message || 'Department leader removed successfully.');
+      setShowRemoveLeaderModal(false);
+      setLeaderToRemove(null);
+      setShowMapModal(false);
+      qc.invalidateQueries({ queryKey: ['departments'] });
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['role-audit'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to remove department leader'),
+  });
+
+  const handleOpenMapModal = (departmentId = '', leaderType = 'hod', employeeId = '') => {
+    setMapForm({
+      departmentId: departmentId || departments[0]?.id || '',
+      leaderType,
+      employeeId: employeeId || '',
+    });
+    setMapSearchTerm('');
+    setShowMapModal(true);
+  };
+
+  const handleOpenRemoveLeaderModal = (departmentId, deptName, leaderType, leaderName, leaderEmployeeId) => {
+    setLeaderToRemove({
+      departmentId,
+      deptName,
+      leaderType,
+      leaderName,
+      leaderEmployeeId,
+    });
+    setShowRemoveLeaderModal(true);
+  };
 
   const handleOpenStopModal = (user = null, type = 'imc') => {
     if (user) {
@@ -1001,10 +1038,7 @@ export default function AdminUsersPage() {
                       />
                     </div>
                     <button
-                      onClick={() => {
-                        setMapForm({ departmentId: departments[0]?.id || '', leaderType: 'hod', employeeId: '' });
-                        setShowMapModal(true);
-                      }}
+                      onClick={() => handleOpenMapModal(departments[0]?.id || '', 'hod', '')}
                       className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-amber-500/20 transition-all"
                     >
                       <Plus size={16} /> Assign Leader
@@ -1030,60 +1064,133 @@ export default function AdminUsersPage() {
                         {filteredDepts.map(d => (
                           <tr key={d.id} className="hover:bg-amber-50/20 transition-colors group">
                             <td className="pl-6 py-4 font-extrabold text-slate-900 text-sm">{d.name}</td>
+                            
+                            {/* HOD Column */}
                             <td className="py-4">
                               {d.hod_name ? (
-                                <div className="flex items-center gap-2.5">
-                                  <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center">
-                                    {d.hod_name.charAt(0)}
+                                <div className="flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-amber-50/40 border border-slate-200/80 hover:border-amber-200 p-2 rounded-xl transition-all shadow-2xs group/cell max-w-[240px]">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+                                      {d.hod_name.charAt(0)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-slate-800 truncate" title={d.hod_name}>{d.hod_name}</p>
+                                      {d.hod_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.hod_employee_id}</p>}
+                                    </div>
                                   </div>
-                                  <div>
-                                    <p className="text-xs font-bold text-slate-800">{d.hod_name}</p>
-                                    {d.hod_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.hod_employee_id}</p>}
+                                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleOpenMapModal(d.id, 'hod', d.hod_employee_id)}
+                                      title="Edit / Replace HOD"
+                                      className="p-1 rounded-lg text-slate-400 hover:text-amber-700 hover:bg-amber-100/70 transition-colors"
+                                    >
+                                      <Edit3 size={13} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, 'hod', d.hod_name, d.hod_employee_id)}
+                                      title="Remove HOD"
+                                      className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
                                   </div>
                                 </div>
                               ) : (
-                                <span className="text-xs text-slate-400 italic font-medium bg-slate-100 px-2.5 py-1 rounded-md">Unassigned</span>
+                                <button
+                                  onClick={() => handleOpenMapModal(d.id, 'hod', '')}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-slate-200 hover:border-amber-300 text-slate-400 hover:text-amber-700 bg-slate-50/50 hover:bg-amber-50/50 text-xs font-semibold transition-all"
+                                >
+                                  <Plus size={12} /> Assign HOD
+                                </button>
                               )}
                             </td>
+
+                            {/* Incharge Column */}
                             <td className="py-4">
                               {d.incharge_name ? (
-                                <div className="flex items-center gap-2.5">
-                                  <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 font-extrabold text-xs flex items-center justify-center">
-                                    {d.incharge_name.charAt(0)}
+                                <div className="flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-blue-50/40 border border-slate-200/80 hover:border-blue-200 p-2 rounded-xl transition-all shadow-2xs group/cell max-w-[240px]">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+                                      {d.incharge_name.charAt(0)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-slate-800 truncate" title={d.incharge_name}>{d.incharge_name}</p>
+                                      {d.incharge_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.incharge_employee_id}</p>}
+                                    </div>
                                   </div>
-                                  <div>
-                                    <p className="text-xs font-bold text-slate-800">{d.incharge_name}</p>
-                                    {d.incharge_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.incharge_employee_id}</p>}
+                                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleOpenMapModal(d.id, 'incharge', d.incharge_employee_id)}
+                                      title="Edit / Replace Incharge"
+                                      className="p-1 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-100/70 transition-colors"
+                                    >
+                                      <Edit3 size={13} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, 'incharge', d.incharge_name, d.incharge_employee_id)}
+                                      title="Remove Incharge"
+                                      className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
                                   </div>
                                 </div>
                               ) : (
-                                <span className="text-xs text-slate-400 italic font-medium bg-slate-100 px-2.5 py-1 rounded-md">Unassigned</span>
+                                <button
+                                  onClick={() => handleOpenMapModal(d.id, 'incharge', '')}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-slate-200 hover:border-blue-300 text-slate-400 hover:text-blue-700 bg-slate-50/50 hover:bg-blue-50/50 text-xs font-semibold transition-all"
+                                >
+                                  <Plus size={12} /> Assign Incharge
+                                </button>
                               )}
                             </td>
+
+                            {/* Assistant COO Column */}
                             <td className="py-4">
                               {d.asst_coo_name ? (
-                                <div className="flex items-center gap-2.5">
-                                  <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-800 font-extrabold text-xs flex items-center justify-center">
-                                    {d.asst_coo_name.charAt(0)}
+                                <div className="flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-purple-50/40 border border-slate-200/80 hover:border-purple-200 p-2 rounded-xl transition-all shadow-2xs group/cell max-w-[240px]">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+                                      {d.asst_coo_name.charAt(0)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-slate-800 truncate" title={d.asst_coo_name}>{d.asst_coo_name}</p>
+                                      {d.asst_coo_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.asst_coo_employee_id}</p>}
+                                    </div>
                                   </div>
-                                  <div>
-                                    <p className="text-xs font-bold text-slate-800">{d.asst_coo_name}</p>
-                                    {d.asst_coo_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.asst_coo_employee_id}</p>}
+                                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleOpenMapModal(d.id, 'asst_coo', d.asst_coo_employee_id)}
+                                      title="Edit / Replace Asst. COO"
+                                      className="p-1 rounded-lg text-slate-400 hover:text-purple-700 hover:bg-purple-100/70 transition-colors"
+                                    >
+                                      <Edit3 size={13} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, 'asst_coo', d.asst_coo_name, d.asst_coo_employee_id)}
+                                      title="Remove Asst. COO"
+                                      className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
                                   </div>
                                 </div>
                               ) : (
-                                <span className="text-xs text-slate-400 italic font-medium bg-slate-100 px-2.5 py-1 rounded-md">Unassigned</span>
+                                <button
+                                  onClick={() => handleOpenMapModal(d.id, 'asst_coo', '')}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-slate-200 hover:border-purple-300 text-slate-400 hover:text-purple-700 bg-slate-50/50 hover:bg-purple-50/50 text-xs font-semibold transition-all"
+                                >
+                                  <Plus size={12} /> Assign Asst. COO
+                                </button>
                               )}
                             </td>
+
                             <td className="pr-6 py-4 text-right">
                               <button
-                                onClick={() => {
-                                  setMapForm({ departmentId: d.id, leaderType: 'hod', employeeId: '' });
-                                  setShowMapModal(true);
-                                }}
-                                className="px-3.5 py-1.5 rounded-xl bg-slate-100 group-hover:bg-amber-600 group-hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1"
+                                onClick={() => handleOpenMapModal(d.id, 'hod', d.hod_employee_id || '')}
+                                className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-amber-600 hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5"
                               >
-                                <Edit3 size={12} /> Map Leader
+                                <Edit3 size={12} /> Manage
                               </button>
                             </td>
                           </tr>
@@ -1102,10 +1209,20 @@ export default function AdminUsersPage() {
       {/* ─── MODALS ─── */}
 
       {/* Map Department Leader Modal */}
+      {/* Map / Edit Department Leader Modal */}
       <Modal
         open={showMapModal}
         onClose={() => setShowMapModal(false)}
-        title="Assign Department Leadership"
+        title={(() => {
+          const selectedDept = departments.find(d => String(d.id) === String(mapForm.departmentId));
+          const hasCurrent = selectedDept && (
+            (mapForm.leaderType === 'hod' && selectedDept.hod_name) ||
+            (mapForm.leaderType === 'incharge' && selectedDept.incharge_name) ||
+            (mapForm.leaderType === 'asst_coo' && selectedDept.asst_coo_name)
+          );
+          const typeLabel = mapForm.leaderType === 'hod' ? 'HOD' : mapForm.leaderType === 'incharge' ? 'Incharge' : 'Asst. COO';
+          return hasCurrent ? `Edit ${typeLabel} — ${selectedDept.name}` : `Assign ${typeLabel} — ${selectedDept?.name || 'Department'}`;
+        })()}
         footer={
           <>
             <button onClick={() => setShowMapModal(false)} className="btn-secondary">Cancel</button>
@@ -1115,19 +1232,82 @@ export default function AdminUsersPage() {
               className="btn-primary"
             >
               {mapLeaderMutation.isPending ? <Spinner size={15} className="text-white" /> : <CheckCircle2 size={15} />}
-              Confirm Leadership Assignment
+              {(() => {
+                const selectedDept = departments.find(d => String(d.id) === String(mapForm.departmentId));
+                const hasCurrent = selectedDept && (
+                  (mapForm.leaderType === 'hod' && selectedDept.hod_name) ||
+                  (mapForm.leaderType === 'incharge' && selectedDept.incharge_name) ||
+                  (mapForm.leaderType === 'asst_coo' && selectedDept.asst_coo_name)
+                );
+                return hasCurrent ? 'Update Leadership Assignment' : 'Confirm Leadership Assignment';
+              })()}
             </button>
           </>
         }
       >
         <div className="space-y-4">
-          <Alert type="info" message="Establish accountability for incident workflows by assigning department leadership." />
+          <Alert type="info" message="Establish accountability for incident workflows by assigning or updating department leadership." />
+
+          {/* Currently Assigned Notice (if any) */}
+          {(() => {
+            const selectedDept = departments.find(d => String(d.id) === String(mapForm.departmentId));
+            if (!selectedDept) return null;
+            let currentName = '';
+            let currentId = '';
+            if (mapForm.leaderType === 'hod' && selectedDept.hod_name) {
+              currentName = selectedDept.hod_name;
+              currentId = selectedDept.hod_employee_id;
+            } else if (mapForm.leaderType === 'incharge' && selectedDept.incharge_name) {
+              currentName = selectedDept.incharge_name;
+              currentId = selectedDept.incharge_employee_id;
+            } else if (mapForm.leaderType === 'asst_coo' && selectedDept.asst_coo_name) {
+              currentName = selectedDept.asst_coo_name;
+              currentId = selectedDept.asst_coo_employee_id;
+            }
+            if (!currentName) return null;
+
+            const typeLabel = mapForm.leaderType === 'hod' ? 'HOD' : mapForm.leaderType === 'incharge' ? 'Incharge' : 'Asst. COO';
+            return (
+              <div className="p-3.5 bg-amber-50/90 border border-amber-200/90 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-amber-200/80 text-amber-900 font-black text-xs flex items-center justify-center flex-shrink-0">
+                    {currentName.charAt(0)}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Currently Mapped {typeLabel}:</span>
+                    <p className="text-xs font-bold text-slate-800 truncate">
+                      {currentName} {currentId && <span className="font-mono text-slate-500 font-normal">(ID: {currentId})</span>}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleOpenRemoveLeaderModal(
+                      mapForm.departmentId,
+                      selectedDept.name,
+                      mapForm.leaderType,
+                      currentName,
+                      currentId
+                    );
+                  }}
+                  className="px-2.5 py-1.5 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-2xs flex-shrink-0"
+                >
+                  <Trash2 size={12} /> Remove Leader
+                </button>
+              </div>
+            );
+          })()}
 
           <div>
             <label className="field-label field-required font-bold">Hospital Department</label>
             <select
               value={mapForm.departmentId}
-              onChange={e => setMapForm(f => ({ ...f, departmentId: e.target.value }))}
+              onChange={e => {
+                const newDeptId = e.target.value;
+                setMapForm(f => ({ ...f, departmentId: newDeptId, employeeId: '' }));
+                setMapSearchTerm('');
+              }}
               className="select w-full font-semibold"
             >
               <option value="">-- Choose Department --</option>
@@ -1148,7 +1328,10 @@ export default function AdminUsersPage() {
                 <button
                   type="button"
                   key={opt.id}
-                  onClick={() => setMapForm(f => ({ ...f, leaderType: opt.id }))}
+                  onClick={() => {
+                    setMapForm(f => ({ ...f, leaderType: opt.id, employeeId: '' }));
+                    setMapSearchTerm('');
+                  }}
                   className={`p-3 rounded-xl border text-left transition-all ${mapForm.leaderType === opt.id
                       ? 'border-amber-500 bg-amber-50/80 ring-2 ring-amber-500/20 font-bold text-amber-900'
                       : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
@@ -1164,7 +1347,7 @@ export default function AdminUsersPage() {
           <div>
             {!mapForm.employeeId ? (
               <>
-                <label className="field-label field-required font-bold">Search Employee</label>
+                <label className="field-label field-required font-bold">Search & Select Employee</label>
                 <div className="relative mt-1">
                   <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
@@ -1219,7 +1402,7 @@ export default function AdminUsersPage() {
                     </div>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Search and select the exact personnel taking this role.</p>
+                <p className="text-[11px] text-slate-500 mt-1">Search and select the personnel taking this role.</p>
               </>
             ) : (
               <div>
@@ -1283,6 +1466,69 @@ export default function AdminUsersPage() {
             )}
           </div>
         </div>
+      </Modal>
+
+      {/* Remove Department Leader Confirmation Modal */}
+      <Modal
+        open={showRemoveLeaderModal}
+        onClose={() => {
+          if (!removeLeaderMutation.isPending) {
+            setShowRemoveLeaderModal(false);
+            setLeaderToRemove(null);
+          }
+        }}
+        title="Remove Department Leader"
+        footer={
+          <>
+            <button
+              onClick={() => {
+                setShowRemoveLeaderModal(false);
+                setLeaderToRemove(null);
+              }}
+              disabled={removeLeaderMutation.isPending}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (leaderToRemove) {
+                  removeLeaderMutation.mutate({
+                    departmentId: leaderToRemove.departmentId,
+                    leaderType: leaderToRemove.leaderType,
+                  });
+                }
+              }}
+              disabled={removeLeaderMutation.isPending}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-red-500/20 transition-all disabled:opacity-60"
+            >
+              {removeLeaderMutation.isPending ? <Spinner size={14} className="text-white" /> : <Trash2 size={14} />}
+              Confirm Removal
+            </button>
+          </>
+        }
+      >
+        {leaderToRemove && (
+          <div className="space-y-4">
+            <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="text-red-600 mt-0.5 flex-shrink-0" size={20} />
+              <div className="text-xs text-red-900 leading-relaxed">
+                <p className="font-bold text-sm mb-1 text-red-950">Are you sure you want to remove this leader?</p>
+                <p>
+                  You are about to remove <strong className="font-extrabold">{leaderToRemove.leaderName}</strong>{' '}
+                  {leaderToRemove.leaderEmployeeId && <span>(ID: {leaderToRemove.leaderEmployeeId})</span>} from the role of{' '}
+                  <strong className="font-extrabold uppercase">
+                    {leaderToRemove.leaderType === 'hod' ? 'Head of Department (HOD)' : leaderToRemove.leaderType === 'incharge' ? 'Operational Incharge' : 'Assistant COO'}
+                  </strong>{' '}
+                  for <strong className="font-extrabold">{leaderToRemove.deptName}</strong>.
+                </p>
+                <p className="mt-2 text-red-700">
+                  This action will unbind them from this department in the governance matrix and revoke their incident review permissions for this department.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Configure User Role Modal */}

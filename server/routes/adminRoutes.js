@@ -53,6 +53,7 @@ router.delete('/management-members/:id', authenticate, authorize('system_admin')
 
 // Department Mapping
 router.post('/map-department-leader', authenticate, authorize('system_admin'), adminController.mapDepartmentLeader);
+router.post('/remove-department-leader', authenticate, authorize('system_admin'), adminController.removeDepartmentLeader);
 
 // System Health & Master Data
 router.get('/system-admins', authenticate, authorize('system_admin'), adminController.getSystemAdmins);

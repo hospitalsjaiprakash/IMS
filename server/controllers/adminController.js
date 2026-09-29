@@ -655,10 +655,31 @@ exports.mapDepartmentLeader = async (req, res) => {
       column = 'asst_coo_user_id';
     }
 
+    // Check old leader before updating
+    const oldDeptRes = await query(`SELECT ${column} as old_leader_id, name FROM departments WHERE id = $1`, [departmentId]);
+    const oldLeaderId = oldDeptRes.rows[0]?.old_leader_id;
+    const deptName = oldDeptRes.rows[0]?.name;
+
     await query(`UPDATE departments SET ${column} = $1 WHERE id = $2`, [user.id, departmentId]);
 
-    const deptRes = await query('SELECT name FROM departments WHERE id = $1', [departmentId]);
-    const deptName = deptRes.rows[0]?.name;
+    // If there was an old leader different from the newly assigned leader
+    if (oldLeaderId && String(oldLeaderId) !== String(user.id)) {
+      if (leaderType === 'hod' || leaderType === 'incharge') {
+        const otherDepts = await query(
+          `SELECT id FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1`,
+          [oldLeaderId]
+        );
+        if (otherDepts.rows.length === 0) {
+          const oldUserRes = await query('SELECT role, employee_id FROM users WHERE id = $1', [oldLeaderId]);
+          if (oldUserRes.rows[0]?.role === 'hod') {
+            await query(`UPDATE users SET role = 'employee', updated_at = NOW() WHERE id = $1`, [oldLeaderId]);
+            if (oldUserRes.rows[0].employee_id) {
+              await query(`UPDATE master_employees SET role = 'employee' WHERE employee_id = $1`, [oldUserRes.rows[0].employee_id]);
+            }
+          }
+        }
+      }
+    }
 
     if (leaderType === 'hod' || leaderType === 'incharge') {
       await query(`UPDATE users SET department = $1, role = CASE WHEN role = 'employee' THEN 'hod' ELSE role END, updated_at = NOW() WHERE id = $2`, [deptName, user.id]);
@@ -676,6 +697,89 @@ exports.mapDepartmentLeader = async (req, res) => {
   } catch (error) {
     console.error('Error in mapDepartmentLeader:', error);
     res.status(500).json({ error: 'Failed to map department leader.' });
+  }
+};
+
+exports.removeDepartmentLeader = async (req, res) => {
+  try {
+    const { departmentId, leaderType } = req.body;
+    if (!departmentId || !leaderType) {
+      return res.status(400).json({ error: 'Department ID and Leader Type are required.' });
+    }
+
+    let column = 'hod_user_id';
+    if (leaderType === 'incharge') {
+      column = 'incharge_user_id';
+    } else if (leaderType === 'asst_coo') {
+      column = 'asst_coo_user_id';
+    } else if (leaderType !== 'hod') {
+      return res.status(400).json({ error: 'Invalid leader type specified.' });
+    }
+
+    const deptRes = await query(`SELECT id, name, ${column} as current_leader_id FROM departments WHERE id = $1`, [departmentId]);
+    if (!deptRes.rows.length) {
+      return res.status(404).json({ error: 'Department not found.' });
+    }
+
+    const deptName = deptRes.rows[0].name;
+    const currentLeaderId = deptRes.rows[0].current_leader_id;
+
+    if (!currentLeaderId) {
+      return res.status(400).json({ error: `No ${leaderType.toUpperCase()} is currently mapped to ${deptName}.` });
+    }
+
+    const userRes = await query('SELECT id, employee_id, full_name, role, is_management_member FROM users WHERE id = $1', [currentLeaderId]);
+    const user = userRes.rows[0];
+
+    // Remove leader mapping from department
+    await query(`UPDATE departments SET ${column} = NULL WHERE id = $1`, [departmentId]);
+
+    // Check if user still leads any other departments as HOD or Incharge
+    if (user && (leaderType === 'hod' || leaderType === 'incharge')) {
+      const otherDepts = await query(
+        `SELECT id FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1`,
+        [user.id]
+      );
+      if (otherDepts.rows.length === 0 && user.role === 'hod') {
+        await query(`UPDATE users SET role = 'employee', updated_at = NOW() WHERE id = $1`, [user.id]);
+        if (user.employee_id) {
+          await query(`UPDATE master_employees SET role = 'employee' WHERE employee_id = $1`, [user.employee_id]);
+        }
+        await query(
+          `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
+           VALUES ($1, 'hod', 'employee (Removed from Department Leadership)', $2)`,
+          [user.id, req.user.id]
+        );
+      }
+    } else if (user && leaderType === 'asst_coo') {
+      const otherCooDepts = await query(
+        `SELECT id FROM departments WHERE asst_coo_user_id = $1`,
+        [user.id]
+      );
+      if (otherCooDepts.rows.length === 0 && user.role === 'head_management' && !user.is_management_member) {
+        await query(`UPDATE users SET role = 'employee', updated_at = NOW() WHERE id = $1`, [user.id]);
+        if (user.employee_id) {
+          await query(`UPDATE master_employees SET role = 'employee' WHERE employee_id = $1`, [user.employee_id]);
+        }
+      }
+    }
+
+    await auditLog(req.user.id, 'DEPARTMENT_LEADER_REMOVED', null, {
+      departmentId,
+      deptName,
+      leaderType,
+      targetEmployee: user?.employee_id,
+      targetName: user?.full_name
+    }, req.ip);
+
+    const leaderLabel = leaderType === 'hod' ? 'HOD' : leaderType === 'incharge' ? 'Operational Incharge' : 'Assistant COO';
+    res.json({
+      success: true,
+      message: `Successfully removed ${user ? user.full_name : 'leader'} as ${leaderLabel} for ${deptName}.`
+    });
+  } catch (error) {
+    console.error('Error in removeDepartmentLeader:', error);
+    res.status(500).json({ error: 'Failed to remove department leader.' });
   }
 };
 

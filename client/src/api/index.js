@@ -159,6 +159,7 @@ export const adminApi = {
   getManagementMembers: () => api.get('/admin/management-members'),
   removeManagement: (id) => api.delete(`/admin/management-members/${id}`),
   mapDepartmentLeader: (data) => api.post('/admin/map-department-leader', data),
+  removeDepartmentLeader: (data) => api.post('/admin/remove-department-leader', data),
   getSystemAdmins: () => api.get('/admin/system-admins'),
   toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
   getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
