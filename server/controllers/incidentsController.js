@@ -224,11 +224,11 @@ exports.createIncident = async (req, res) => {
       sendEmail(reporter.email, templates.incidentSubmitted(incident, reporter)).catch(() => {});
     }
 
-    // Notify HODs, Incharges, and Assistant COOs (in-app + email)
+    // Notify assigned department feedback staff (in-app + email)
     const hodResult = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-       LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
-       WHERE d.id = ANY($1) AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+       JOIN departments d ON (d.assigned_user_id = u.id OR (d.assigned_user_id IS NULL AND d.hod_user_id = u.id))
+       WHERE d.id = ANY($1)`,
       [departmentIds]
     );
     for (const hod of hodResult.rows) {
@@ -290,9 +290,34 @@ exports.getIncidents = async (req, res) => {
     let paramIdx = 1;
 
     // Role-based filtering
-    if (role === 'employee' || (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_incidents')) {
-      whereClause += ` AND i.reporter_id = $${paramIdx++}`;
+    if (role === 'employee' && viewMode !== 'dept_reviews') {
+      whereClause += ` AND (
+        i.reporter_id = $${paramIdx} 
+        OR i.redirect_requested_by_user_id = $${paramIdx}
+        OR EXISTS (
+          SELECT 1 FROM incident_departments id2
+          JOIN departments d ON d.id = id2.department_id
+          WHERE id2.incident_id = i.id AND (
+            d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
+          )
+        )
+      )`;
       params.push(userId);
+      paramIdx++;
+    } else if (role === 'employee' && viewMode === 'dept_reviews') {
+      whereClause += ` AND EXISTS (
+        SELECT 1 FROM incident_departments id2
+        JOIN departments d ON d.id = id2.department_id
+        WHERE id2.incident_id = i.id AND (
+          d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
+        )
+      )`;
+      params.push(userId);
+      paramIdx++;
+    } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_incidents') {
+      whereClause += ` AND (i.reporter_id = $${paramIdx} OR i.redirect_requested_by_user_id = $${paramIdx})`;
+      params.push(userId);
+      paramIdx++;
     } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_team') {
       const userDept = department || '';
       whereClause += ` AND EXISTS (
@@ -300,9 +325,8 @@ exports.getIncidents = async (req, res) => {
         JOIN users ru ON ru.id = ire.employee_id
         LEFT JOIN departments d ON LOWER(d.name) = LOWER(ru.department) OR d.id = ire.department_id
         WHERE ire.incident_id = i.id AND (
+          d.assigned_user_id = $${paramIdx} OR
           d.hod_user_id = $${paramIdx} OR
-          d.incharge_user_id = $${paramIdx} OR
-          d.asst_coo_user_id = $${paramIdx} OR
           (LOWER(d.name) = LOWER($${paramIdx + 1}))
         )
       )`;
@@ -312,31 +336,27 @@ exports.getIncidents = async (req, res) => {
       const userDept = department || '';
       
       if (teamMemberId) {
-        // If viewing a specific team member, ensure the team member belongs to the HOD's department,
-        // but do not restrict the incidents to the HOD's department (they can see incidents reported by their team to any department).
         whereClause += ` AND EXISTS (
           SELECT 1 FROM users tm
           LEFT JOIN departments d ON LOWER(d.name) = LOWER(tm.department)
           WHERE tm.id = $${paramIdx} AND (
+            d.assigned_user_id = $${paramIdx+1} OR
             d.hod_user_id = $${paramIdx+1} OR
-            d.incharge_user_id = $${paramIdx+1} OR
-            d.asst_coo_user_id = $${paramIdx+1} OR
             LOWER(tm.department) = LOWER($${paramIdx+2})
           )
         )`;
         params.push(teamMemberId, userId, userDept);
         paramIdx += 3;
       } else {
-        whereClause += ` AND EXISTS (
+        whereClause += ` AND (EXISTS (
           SELECT 1 FROM incident_departments id2
           JOIN departments d ON d.id = id2.department_id
           WHERE id2.incident_id = i.id AND (
+            d.assigned_user_id = $${paramIdx} OR
             d.hod_user_id = $${paramIdx} OR
-            d.incharge_user_id = $${paramIdx} OR
-            d.asst_coo_user_id = $${paramIdx} OR
             (LOWER(d.name) = LOWER($${paramIdx + 1}))
           )
-        )`;
+        ) OR i.redirect_requested_by_user_id = $${paramIdx})`;
         params.push(userId, userDept);
         paramIdx += 2;
       }
@@ -575,9 +595,9 @@ exports.getIncident = async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get departments with per-department HOD feedback status
+    // Get departments with per-department feedback status
     const depts = await query(
-      `SELECT d.id, d.name, d.hod_user_id,
+      `SELECT d.id, d.name, d.hod_user_id, COALESCE(d.assigned_user_id, d.hod_user_id) as assigned_user_id,
          EXISTS (
            SELECT 1 FROM feedbacks f
            LEFT JOIN users u ON u.id = f.author_id
@@ -585,6 +605,7 @@ exports.getIncident = async (req, res) => {
              AND f.role = 'hod'
              AND (
                f.department_id = d.id 
+               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
                OR f.author_id = d.hod_user_id 
                OR f.author_id = d.incharge_user_id 
                OR f.author_id = d.asst_coo_user_id
@@ -613,17 +634,16 @@ exports.getIncident = async (req, res) => {
     const pendingHodDepartments = depts.rows.filter(d => !d.has_feedback).map(d => d.name);
     const hasImcFeedback = feedbacks.rows.some(f => f.role === 'imc');
 
-    // Check if current user is an HOD whose department has already submitted feedback
+    // Check if current user is assigned to a department that has already submitted feedback
     let userHodDeptSubmitted = false;
-    if (['hod', 'asst_coo', 'coo'].includes(role)) {
-      const userDept = (req.user.department || '').trim().toLowerCase();
-      const myDept = depts.rows.find(d => 
-        d.hod_user_id === userId || 
-        (d.name && userDept && d.name.toLowerCase() === userDept)
-      );
-      if (myDept) {
-        userHodDeptSubmitted = !!myDept.has_feedback;
-      }
+    const userDept = (req.user.department || '').trim().toLowerCase();
+    const myDept = depts.rows.find(d => 
+      d.assigned_user_id === userId ||
+      d.hod_user_id === userId || 
+      (d.name && userDept && d.name.toLowerCase() === userDept)
+    );
+    if (myDept) {
+      userHodDeptSubmitted = !!myDept.has_feedback;
     }
 
     // Get attachments
@@ -661,23 +681,27 @@ exports.getIncident = async (req, res) => {
       );
     }
 
-    // Check if current user is authorized as the Target HOD for this incident
+    // Check if current user is authorized as the designated staff member to give feedback for this incident
     let isTargetHod = false;
-    if (['hod', 'asst_coo', 'coo'].includes(role)) {
-      const userDept = req.user.department || '';
-      const targetHodCheck = await query(
-        `SELECT 1 FROM incident_departments id2
-         JOIN departments d ON d.id = id2.department_id
-         WHERE id2.incident_id = $1 AND (
-           d.hod_user_id = $2 OR
-           d.incharge_user_id = $2 OR
-           d.asst_coo_user_id = $2 OR
-           (LOWER(d.name) = LOWER($3))
-         )`,
-         [incident.id, userId, userDept]
-      );
-      isTargetHod = targetHodCheck.rows.length > 0;
-    }
+    const targetHodCheck = await query(
+      `SELECT 1 FROM incident_departments id2
+       JOIN departments d ON d.id = id2.department_id
+       WHERE id2.incident_id = $1 AND (
+         d.assigned_user_id = $2 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $2)
+       )`,
+       [incident.id, userId]
+    );
+    isTargetHod = targetHodCheck.rows.length > 0 || (incident.redirect_requested_by_user_id === userId);
+
+    // Get audit logs for dynamic lifecycle timeline
+    const auditLogsRes = await query(
+      `SELECT al.*, u.full_name, u.role, u.department as user_department, u.designation as user_designation
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       WHERE al.incident_id = $1
+       ORDER BY al.created_at ASC`,
+      [incident.id]
+    );
 
     res.json({
       incident: {
@@ -691,7 +715,8 @@ exports.getIncident = async (req, res) => {
       },
       feedbacks: feedbacks.rows,
       attachments: attachments.rows,
-      finalReport: finalReport.rows[0] || null
+      finalReport: finalReport.rows[0] || null,
+      timelineEvents: auditLogsRes.rows
     });
 
   } catch (error) {
@@ -822,6 +847,27 @@ exports.getDashboardStats = async (req, res) => {
         ${deptFilter}
       `, params);
 
+      const redirectRejectedRes = await query(`
+        SELECT COUNT(*) as count
+        FROM incidents i
+        WHERE i.redirect_rejected_at IS NOT NULL
+          AND i.status NOT IN ('resolved', 'withdrawn')
+          AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.author_id = $1)
+          AND (
+            i.redirect_requested_by_user_id = $1 OR
+            EXISTS (
+              SELECT 1 FROM incident_departments id2
+              JOIN departments d ON d.id = id2.department_id
+              WHERE id2.incident_id = i.id AND (
+                d.hod_user_id = $1 OR
+                d.incharge_user_id = $1 OR
+                d.asst_coo_user_id = $1 OR
+                (LOWER(d.name) = LOWER($2))
+              )
+            )
+          )
+      `, [userId, department || '']);
+
       const receivedCount = parseInt(totals.rows[0].total) - parseInt(totals.rows[0].withdrawn || 0);
 
       hodReport = {
@@ -831,6 +877,7 @@ exports.getDashboardStats = async (req, res) => {
         withdrawn: parseInt(totals.rows[0].withdrawn || 0),
         feedbackGiven: parseInt(feedbackGivenRes.rows[0].feedback_given || 0),
         feedbackPending: parseInt(feedbackPendingRes.rows[0].pending || 0),
+        redirectRejectedCount: parseInt(redirectRejectedRes.rows[0]?.count || 0),
         myIncidents: {
           total: parseInt(myIncidentsRes.rows[0].total || 0),
           active: parseInt(myIncidentsRes.rows[0].active || 0),
@@ -840,6 +887,15 @@ exports.getDashboardStats = async (req, res) => {
         }
       };
     }
+
+    const userRejectedRes = await query(`
+      SELECT COUNT(*) as count
+      FROM incidents i
+      WHERE i.redirect_rejected_at IS NOT NULL
+        AND (i.redirect_requested_by_user_id = $1)
+        AND i.status NOT IN ('resolved', 'withdrawn')
+        AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.author_id = $1)
+    `, [userId]);
 
     let pipelineStats = {};
     if (role === 'system_admin' || role === 'head_management' || role === 'coo' || role === 'asst_coo') {
@@ -869,6 +925,7 @@ exports.getDashboardStats = async (req, res) => {
       resolved: parseInt(t.resolved || 0),
       withdrawn: parseInt(t.withdrawn || 0),
       this_month: parseInt(t.this_month || 0),
+      redirectRejectedCount: parseInt(userRejectedRes.rows[0]?.count || 0),
       ...pipelineStats
     };
     res.json({

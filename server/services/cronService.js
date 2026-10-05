@@ -38,7 +38,7 @@ async function processHodEscalations() {
       FROM incidents i
       JOIN incident_departments idp ON i.id = idp.incident_id
       JOIN departments d ON idp.department_id = d.id
-      JOIN users u_hod ON d.hod_user_id = u_hod.id
+      JOIN users u_hod ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u_hod.id)
       WHERE i.status IN ('with_hod', 'with_hod_and_imc')
     `);
 
@@ -161,7 +161,7 @@ async function checkAndAutoEscalate21Days() {
         SELECT DISTINCT u.id, u.email, u.full_name
         FROM incident_departments idp
         JOIN departments d ON d.id = idp.department_id
-        JOIN users u ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)
+        JOIN users u ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
         WHERE idp.incident_id = $1
       `, [inc.id]);
 

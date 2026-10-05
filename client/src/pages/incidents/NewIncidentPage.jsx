@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { incidentsApi, metaApi } from '../../api';
+import { incidentsApi, metaApi, employeeApi } from '../../api';
 import { INCIDENT_CATEGORY_MAPPING, INCIDENT_CATEGORIES, OCCURRED_TO_OPTIONS } from '../../utils/helpers';
 import { Alert, Spinner, Modal, SearchableMultiSelect, SearchableSelect } from '../../components/ui';
 import {
   ChevronRight, ChevronLeft, Check, MapPin, Calendar,
-  FileText, Users, Eye, Layers, Tag, Upload, Paperclip, X, Download
+  FileText, Users, Eye, Layers, Tag, Upload, Paperclip, X, Download,
+  Search, UserCheck, UserPlus
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -43,6 +44,77 @@ export default function NewIncidentPage() {
     attachments: [],
   });
   const [previewFile, setPreviewFile] = useState(null);
+
+  // Step 6: Searchable employee picker state
+  const [selectedResponsibleEmployees, setSelectedResponsibleEmployees] = useState([]);
+  const [employeeSearchTerm, setEmployeeSearchTerm] = useState('');
+  const [employeeSearchResults, setEmployeeSearchResults] = useState([]);
+  const [isSearchingEmployees, setIsSearchingEmployees] = useState(false);
+  const [customPersonName, setCustomPersonName] = useState('');
+  const [showCustomInput, setShowCustomInput] = useState(false);
+
+  useEffect(() => {
+    if (!employeeSearchTerm.trim() || employeeSearchTerm.trim().length < 2) {
+      setEmployeeSearchResults([]);
+      setIsSearchingEmployees(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearchingEmployees(true);
+      try {
+        const res = await employeeApi.search(employeeSearchTerm.trim());
+        const list = Array.isArray(res.data) ? res.data : (res.data?.employees || []);
+        setEmployeeSearchResults(list);
+      } catch (err) {
+        setEmployeeSearchResults([]);
+      } finally {
+        setIsSearchingEmployees(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [employeeSearchTerm]);
+
+  const updateResponsiblePersonNames = (list) => {
+    const formatted = list.map(e => {
+      if (e.is_custom) return e.full_name;
+      const deptPart = e.department ? ` - ${e.department}` : '';
+      return `${e.full_name} (${e.employee_id}${deptPart})`;
+    }).join(', ');
+    setForm(f => ({ ...f, responsiblePersonName: formatted }));
+  };
+
+  const addResponsibleEmployee = (emp) => {
+    if (!selectedResponsibleEmployees.some(e => e.employee_id === emp.employee_id)) {
+      const updated = [...selectedResponsibleEmployees, emp];
+      setSelectedResponsibleEmployees(updated);
+      updateResponsiblePersonNames(updated);
+    }
+    setEmployeeSearchTerm('');
+    setEmployeeSearchResults([]);
+  };
+
+  const removeResponsibleEmployee = (key) => {
+    const updated = selectedResponsibleEmployees.filter(e => (e.employee_id || e.full_name) !== key);
+    setSelectedResponsibleEmployees(updated);
+    updateResponsiblePersonNames(updated);
+  };
+
+  const addCustomPerson = () => {
+    if (!customPersonName.trim()) return;
+    const customObj = {
+      employee_id: 'EXTERNAL',
+      full_name: customPersonName.trim(),
+      department: 'External / Non-Directory',
+      is_custom: true
+    };
+    const updated = [...selectedResponsibleEmployees, customObj];
+    setSelectedResponsibleEmployees(updated);
+    updateResponsiblePersonNames(updated);
+    setCustomPersonName('');
+    setShowCustomInput(false);
+  };
 
   const { data: meta } = useQuery({
     queryKey: ['meta'],
@@ -436,7 +508,7 @@ export default function NewIncidentPage() {
 
           {/* ── STEP 6: Accountability ── */}
           {step === 6 && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
                 <label className="field-label">Is anyone responsible for this incident?</label>
                 <div className="flex gap-3 mt-2">
@@ -444,10 +516,16 @@ export default function NewIncidentPage() {
                     <button
                       key={String(val)}
                       type="button"
-                      onClick={() => set('hasResponsiblePerson', val)}
+                      onClick={() => {
+                        set('hasResponsiblePerson', val);
+                        if (!val) {
+                          setSelectedResponsibleEmployees([]);
+                          setForm(f => ({ ...f, responsiblePersonName: '' }));
+                        }
+                      }}
                       className={`flex-1 py-3 rounded-xl border text-sm font-medium transition-all ${
                         form.hasResponsiblePerson === val
-                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
                           : 'border-slate-300 hover:border-blue-300 text-slate-700'
                       }`}
                     >
@@ -456,17 +534,211 @@ export default function NewIncidentPage() {
                   ))}
                 </div>
               </div>
+
               {form.hasResponsiblePerson && (
-                <div>
-                  <label className="field-label field-required">Responsible Person(s) Name</label>
-                  <input
-                    value={form.responsiblePersonName}
-                    onChange={e => set('responsiblePersonName', e.target.value)}
-                    placeholder="e.g. John Doe, Jane Smith"
-                    className={`input ${errors.responsiblePersonName ? 'input-error' : ''}`}
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1">If there are multiple people, separate their names with commas.</p>
-                  {errors.responsiblePersonName && <p className="field-error">{errors.responsiblePersonName}</p>}
+                <div className="space-y-4 pt-1">
+                  <div>
+                    <label className="field-label field-required">
+                      Select Responsible Employee(s)
+                    </label>
+                    <p className="text-xs text-slate-500 mb-2">
+                      Search and select hospital staff by their Name or Employee ID. You can select multiple people if applicable.
+                    </p>
+
+                    {/* Search Input Box */}
+                    <div className="relative">
+                      <div className="relative">
+                        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={employeeSearchTerm}
+                          onChange={e => setEmployeeSearchTerm(e.target.value)}
+                          placeholder="Search employee by name (e.g. Rahul, Priya) or ID (e.g. 1024, 1224)..."
+                          className="input pl-10 pr-10 bg-white"
+                        />
+                        {isSearchingEmployees ? (
+                          <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                            <Spinner size={16} className="text-blue-600" />
+                          </div>
+                        ) : employeeSearchTerm ? (
+                          <button
+                            type="button"
+                            onClick={() => { setEmployeeSearchTerm(''); setEmployeeSearchResults([]); }}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                          >
+                            <X size={15} />
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {/* Dropdown Results */}
+                      {employeeSearchResults.length > 0 && (
+                        <div className="absolute z-30 left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200 divide-y divide-slate-100">
+                          {employeeSearchResults.map((emp) => {
+                            const isAlreadySelected = selectedResponsibleEmployees.some(
+                              e => e.employee_id === emp.employee_id
+                            );
+                            return (
+                              <button
+                                key={emp.employee_id || emp.id}
+                                type="button"
+                                disabled={isAlreadySelected}
+                                onClick={() => addResponsibleEmployee(emp)}
+                                className={`w-full text-left p-3 flex items-center justify-between transition-colors ${
+                                  isAlreadySelected
+                                    ? 'bg-slate-50 opacity-60 cursor-not-allowed'
+                                    : 'hover:bg-blue-50/70 cursor-pointer'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center flex-shrink-0">
+                                    {(emp.full_name || emp.name || '?').charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-slate-800 truncate flex items-center gap-2">
+                                      <span>{emp.full_name || emp.name}</span>
+                                      <span className="font-mono text-[11px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-normal">
+                                        ID: {emp.employee_id}
+                                      </span>
+                                    </div>
+                                    <div className="text-xs text-slate-500 truncate mt-0.5">
+                                      {emp.designation || 'Staff'} {emp.department ? `· ${emp.department}` : ''}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div>
+                                  {isAlreadySelected ? (
+                                    <span className="text-[11px] font-semibold text-green-700 bg-green-50 px-2 py-1 rounded-full border border-green-200">
+                                      Selected
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-blue-600 font-semibold group-hover:underline">
+                                      + Add
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* No results message */}
+                      {employeeSearchTerm.trim().length >= 2 && !isSearchingEmployees && employeeSearchResults.length === 0 && (
+                        <div className="absolute z-30 left-0 right-0 mt-1 p-4 bg-white rounded-xl shadow-lg border border-slate-200 text-center">
+                          <p className="text-xs text-slate-500">No hospital employees matching "{employeeSearchTerm}".</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomPersonName(employeeSearchTerm);
+                              setShowCustomInput(true);
+                              setEmployeeSearchTerm('');
+                            }}
+                            className="mt-2 text-xs font-semibold text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1"
+                          >
+                            <UserPlus size={13} /> Add "{employeeSearchTerm}" as external/custom person
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Selected Responsible Persons Chips / Cards */}
+                  {selectedResponsibleEmployees.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-700 mb-2">
+                        Selected Responsible Personnel ({selectedResponsibleEmployees.length}):
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {selectedResponsibleEmployees.map(emp => (
+                          <div
+                            key={emp.employee_id || emp.full_name}
+                            className="flex items-center justify-between p-2.5 rounded-xl border border-blue-200 bg-blue-50/60 shadow-xs"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">
+                                {emp.full_name?.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-800 truncate">{emp.full_name}</p>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  {emp.is_custom ? 'External' : `ID: ${emp.employee_id}`} {emp.department ? `· ${emp.department}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeResponsibleEmployee(emp.employee_id || emp.full_name)}
+                              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0 ml-2"
+                              title="Remove"
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Add person not in directory */}
+                  <div className="pt-1">
+                    {!showCustomInput ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomInput(true)}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <UserPlus size={14} /> + Add person not listed in directory (e.g. Visitor, Contractor, Third-Party)
+                      </button>
+                    ) : (
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-700">Add External / Custom Person Name</label>
+                          <button
+                            type="button"
+                            onClick={() => setShowCustomInput(false)}
+                            className="text-xs text-slate-400 hover:text-slate-600"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={customPersonName}
+                            onChange={e => setCustomPersonName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomPerson(); } }}
+                            placeholder="Full name of person (e.g. Contractor John, Patient Attendant)..."
+                            className="input text-xs flex-1 bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={addCustomPerson}
+                            disabled={!customPersonName.trim()}
+                            className="btn-primary btn-sm flex-shrink-0"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual input fallback / formatted preview */}
+                  <div>
+                    <label className="field-label text-xs text-slate-500">
+                      Summary Text (sent with report):
+                    </label>
+                    <input
+                      value={form.responsiblePersonName}
+                      onChange={e => set('responsiblePersonName', e.target.value)}
+                      placeholder="Selected responsible personnel summary..."
+                      className={`input bg-slate-50 text-xs ${errors.responsiblePersonName ? 'input-error' : ''}`}
+                    />
+                    {errors.responsiblePersonName && (
+                      <p className="field-error">{errors.responsiblePersonName}</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

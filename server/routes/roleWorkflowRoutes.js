@@ -12,8 +12,8 @@ router.get('/hod/team', authenticate, authorize('hod'), incidentsController.getH
 router.get('/hod/incidents', authenticate, authorize('hod'), incidentsController.getIncidents);
 router.get('/hod/incidents/export', authenticate, authorize('hod'), incidentsController.exportIncidents);
 router.get('/hod/incidents/:id', authenticate, authorize('hod'), incidentsController.getIncident);
-router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
-router.post('/hod/incidents/:id/redirect', authenticate, authorize('hod'), incidentActionsController.requestRedirect);
+router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod', 'employee', 'system_admin', 'asst_coo', 'coo'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
+router.post('/hod/incidents/:id/redirect', authenticate, authorize('hod', 'employee', 'system_admin', 'asst_coo', 'coo'), incidentActionsController.requestRedirect);
 
 // ─── IMC ALIASES ─────────────────────────────────────
 router.get('/imc/dashboard', authenticate, authorize('imc', 'system_admin'), incidentsController.getDashboardStats);

@@ -40,29 +40,39 @@ exports.submitHodFeedback = async (req, res) => {
       return res.status(400).json({ error: 'Cannot submit HOD feedback because IMC has already submitted quality review feedback.' });
     }
 
-    // Get HOD's department(s)
+    // Get department(s) where current user is the assigned feedback staff
     const deptResult = await client.query(
-      'SELECT id, name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1 OR asst_coo_user_id = $1 OR LOWER(name) = LOWER($2)',
-      [req.user.id, (req.user.department || '').trim()]
+      'SELECT id, name FROM departments WHERE assigned_user_id = $1 OR (assigned_user_id IS NULL AND hod_user_id = $1)',
+      [req.user.id]
     );
-
-    if (!deptResult.rows.length) {
-      return res.status(403).json({ error: 'Not authorized as HOD' });
-    }
 
     const userDeptIds = deptResult.rows.map(d => d.id);
+    let deptId = null;
 
-    // Check if any of HOD's departments is targeted by this incident
-    const targetCheck = await client.query(
-      'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = ANY($2)',
-      [id, userDeptIds]
-    );
-
-    if (!targetCheck.rows.length) {
-      return res.status(403).json({ error: 'This incident is not targeted at your department' });
+    if (userDeptIds.length > 0) {
+      // Check if any of HOD's departments is targeted by this incident
+      const targetCheck = await client.query(
+        'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = ANY($2)',
+        [id, userDeptIds]
+      );
+      if (targetCheck.rows.length) {
+        deptId = targetCheck.rows[0].department_id;
+      }
     }
 
-    const deptId = targetCheck.rows[0].department_id;
+    // If user requested redirect for this incident, allow them to submit on the incident's department
+    if (!deptId && (incident.redirect_requested_by_user_id === req.user.id || req.user.role === 'hod')) {
+      const incDepts = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1 LIMIT 1', [id]);
+      if (incDepts.rows.length) {
+        deptId = incDepts.rows[0].department_id;
+      } else if (userDeptIds.length > 0) {
+        deptId = userDeptIds[0];
+      }
+    }
+
+    if (!deptId) {
+      return res.status(403).json({ error: 'This incident is not targeted at your department.' });
+    }
 
     // Check if this HOD or department has already submitted feedback
     const existingFb = await client.query(
@@ -107,10 +117,7 @@ exports.submitHodFeedback = async (req, res) => {
             AND f.role = 'hod'
             AND (
               f.department_id = d.id 
-              OR f.author_id = d.hod_user_id 
-              OR f.author_id = d.incharge_user_id 
-              OR f.author_id = d.asst_coo_user_id
-              OR LOWER(u.department) = LOWER(d.name)
+              OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
             )
         )
     `, [id]);
@@ -254,10 +261,7 @@ exports.submitImcFeedback = async (req, res) => {
             AND f.role = 'hod'
             AND (
               f.department_id = d.id 
-              OR f.author_id = d.hod_user_id 
-              OR f.author_id = d.incharge_user_id 
-              OR f.author_id = d.asst_coo_user_id
-              OR LOWER(u.department) = LOWER(d.name)
+              OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
             )
         )
     `, [id]);
@@ -495,7 +499,7 @@ exports.generateImcReport = async (req, res) => {
       for (const emp of responsibleEmployees.rows) {
         await createNotification(emp.employee_id, id, 'Training Mandated', `You have been marked as needing training for incident ${incident.reference_id}.`, 'training_mandated');
         const hodRes = await query(
-          `SELECT u.id, u.email FROM users u JOIN departments d ON d.hod_user_id = u.id OR d.incharge_user_id = u.id WHERE d.id = $1`, [emp.department_id]
+          `SELECT u.id, u.email FROM users u JOIN departments d ON COALESCE(d.assigned_user_id, d.hod_user_id) = u.id WHERE d.id = $1`, [emp.department_id]
         );
         for (const hod of hodRes.rows) {
           await createNotification(hod.id, id, 'Employee Training Required', `Your department employee has been marked for training in incident ${incident.reference_id}. Please instruct them.`, 'hod_training_alert');
@@ -759,10 +763,7 @@ exports.assignInvestigator = async (req, res) => {
             AND f.role = 'hod'
             AND (
               f.department_id = d.id 
-              OR f.author_id = d.hod_user_id 
-              OR f.author_id = d.incharge_user_id 
-              OR f.author_id = d.asst_coo_user_id
-              OR LOWER(u.department) = LOWER(d.name)
+              OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
             )
         )
     `, [id]);
@@ -894,8 +895,8 @@ exports.involveDepartments = async (req, res) => {
     const newlyAddedIds = addedDepts.map(d => d.id);
     const newLeadersRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-       LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
-       WHERE d.id = ANY($1) AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+       JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
+       WHERE d.id = ANY($1)`,
       [newlyAddedIds]
     );
 

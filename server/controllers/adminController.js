@@ -637,86 +637,57 @@ exports.removeManagementRole = async (req, res) => {
 
 exports.mapDepartmentLeader = async (req, res) => {
   try {
-    const { departmentId, leaderType, employeeId } = req.body;
-    if (!departmentId || !leaderType || !employeeId) {
-      return res.status(400).json({ error: 'Department, Leader Type, and Employee ID are required.' });
+    const { departmentId, employeeId } = req.body;
+    if (!departmentId || !employeeId) {
+      return res.status(400).json({ error: 'Department and Employee ID are required.' });
     }
 
-    const initialRole = leaderType === 'asst_coo' ? 'head_management' : 'hod';
-    const user = await getOrCreateUserFromMaster(employeeId, initialRole);
+    const user = await getOrCreateUserFromMaster(employeeId, 'employee');
     if (!user) {
       return res.status(404).json({ error: 'Employee not found in hospital directory. Please verify the Employee ID.' });
     }
 
-    let column = 'hod_user_id';
-    if (leaderType === 'incharge') {
-      column = 'incharge_user_id';
-    } else if (leaderType === 'asst_coo') {
-      column = 'asst_coo_user_id';
+    const deptRes = await query(`SELECT id, name FROM departments WHERE id = $1`, [departmentId]);
+    if (!deptRes.rows.length) {
+      return res.status(404).json({ error: 'Department not found.' });
     }
+    const deptName = deptRes.rows[0].name;
 
-    // Check old leader before updating
-    const oldDeptRes = await query(`SELECT ${column} as old_leader_id, name FROM departments WHERE id = $1`, [departmentId]);
-    const oldLeaderId = oldDeptRes.rows[0]?.old_leader_id;
-    const deptName = oldDeptRes.rows[0]?.name;
+    // Single assigned staff member for this department:
+    // Update assigned_user_id and hod_user_id (for backwards compatibility)
+    await query(
+      `UPDATE departments 
+       SET assigned_user_id = $1, hod_user_id = $1, incharge_user_id = NULL, asst_coo_user_id = NULL 
+       WHERE id = $2`, 
+      [user.id, departmentId]
+    );
 
-    await query(`UPDATE departments SET ${column} = $1 WHERE id = $2`, [user.id, departmentId]);
-
-    // If there was an old leader different from the newly assigned leader
-    if (oldLeaderId && String(oldLeaderId) !== String(user.id)) {
-      if (leaderType === 'hod' || leaderType === 'incharge') {
-        const otherDepts = await query(
-          `SELECT id FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1`,
-          [oldLeaderId]
-        );
-        if (otherDepts.rows.length === 0) {
-          const oldUserRes = await query('SELECT role, employee_id FROM users WHERE id = $1', [oldLeaderId]);
-          if (oldUserRes.rows[0]?.role === 'hod') {
-            await query(`UPDATE users SET role = 'employee', updated_at = NOW() WHERE id = $1`, [oldLeaderId]);
-            if (oldUserRes.rows[0].employee_id) {
-              await query(`UPDATE master_employees SET role = 'employee' WHERE employee_id = $1`, [oldUserRes.rows[0].employee_id]);
-            }
-          }
-        }
-      }
-    }
-
-    if (leaderType === 'hod' || leaderType === 'incharge') {
-      await query(`UPDATE users SET department = $1, role = CASE WHEN role = 'employee' THEN 'hod' ELSE role END, updated_at = NOW() WHERE id = $2`, [deptName, user.id]);
-      await query(`UPDATE master_employees SET department = $1, role = 'hod' WHERE employee_id = $2`, [deptName, user.employee_id]);
-    } else if (leaderType === 'asst_coo') {
-      await query(`UPDATE users SET role = 'head_management', is_management_member = TRUE, updated_at = NOW() WHERE id = $1`, [user.id]);
-      await query(`UPDATE master_employees SET role = 'head_management' WHERE employee_id = $1`, [user.employee_id]);
-    }
-
-    await auditLog(req.user.id, 'DEPARTMENT_LEADER_MAPPED', null, {
-      departmentId, deptName, leaderType, targetEmployee: user.employee_id, targetName: user.full_name
+    await auditLog(req.user.id, 'DEPARTMENT_FEEDBACK_STAFF_MAPPED', null, {
+      departmentId, deptName, targetEmployee: user.employee_id, targetName: user.full_name
     }, req.ip);
 
-    res.json({ success: true, message: `Successfully mapped ${user.full_name} (${user.employee_id}) as ${leaderType.toUpperCase()} for ${deptName}.` });
+    res.json({ 
+      success: true, 
+      message: `Successfully assigned ${user.full_name} (${user.employee_id}) as feedback staff for ${deptName}.` 
+    });
   } catch (error) {
     console.error('Error in mapDepartmentLeader:', error);
-    res.status(500).json({ error: 'Failed to map department leader.' });
+    res.status(500).json({ error: 'Failed to assign department feedback staff.' });
   }
 };
 
 exports.removeDepartmentLeader = async (req, res) => {
   try {
-    const { departmentId, leaderType } = req.body;
-    if (!departmentId || !leaderType) {
-      return res.status(400).json({ error: 'Department ID and Leader Type are required.' });
+    const { departmentId } = req.body;
+    if (!departmentId) {
+      return res.status(400).json({ error: 'Department ID is required.' });
     }
 
-    let column = 'hod_user_id';
-    if (leaderType === 'incharge') {
-      column = 'incharge_user_id';
-    } else if (leaderType === 'asst_coo') {
-      column = 'asst_coo_user_id';
-    } else if (leaderType !== 'hod') {
-      return res.status(400).json({ error: 'Invalid leader type specified.' });
-    }
-
-    const deptRes = await query(`SELECT id, name, ${column} as current_leader_id FROM departments WHERE id = $1`, [departmentId]);
+    const deptRes = await query(
+      `SELECT id, name, COALESCE(assigned_user_id, hod_user_id) as current_leader_id 
+       FROM departments WHERE id = $1`, 
+      [departmentId]
+    );
     if (!deptRes.rows.length) {
       return res.status(404).json({ error: 'Department not found.' });
     }
@@ -725,61 +696,128 @@ exports.removeDepartmentLeader = async (req, res) => {
     const currentLeaderId = deptRes.rows[0].current_leader_id;
 
     if (!currentLeaderId) {
-      return res.status(400).json({ error: `No ${leaderType.toUpperCase()} is currently mapped to ${deptName}.` });
+      return res.status(400).json({ error: `No staff member is currently mapped for ${deptName}.` });
     }
 
-    const userRes = await query('SELECT id, employee_id, full_name, role, is_management_member FROM users WHERE id = $1', [currentLeaderId]);
-    const user = userRes.rows[0];
+    // Remove assigned staff mapping from department
+    await query(
+      `UPDATE departments 
+       SET assigned_user_id = NULL, hod_user_id = NULL, incharge_user_id = NULL, asst_coo_user_id = NULL 
+       WHERE id = $1`, 
+      [departmentId]
+    );
 
-    // Remove leader mapping from department
-    await query(`UPDATE departments SET ${column} = NULL WHERE id = $1`, [departmentId]);
-
-    // Check if user still leads any other departments as HOD or Incharge
-    if (user && (leaderType === 'hod' || leaderType === 'incharge')) {
-      const otherDepts = await query(
-        `SELECT id FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1`,
-        [user.id]
-      );
-      if (otherDepts.rows.length === 0 && user.role === 'hod') {
-        await query(`UPDATE users SET role = 'employee', updated_at = NOW() WHERE id = $1`, [user.id]);
-        if (user.employee_id) {
-          await query(`UPDATE master_employees SET role = 'employee' WHERE employee_id = $1`, [user.employee_id]);
-        }
-        await query(
-          `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
-           VALUES ($1, 'hod', 'employee (Removed from Department Leadership)', $2)`,
-          [user.id, req.user.id]
-        );
-      }
-    } else if (user && leaderType === 'asst_coo') {
-      const otherCooDepts = await query(
-        `SELECT id FROM departments WHERE asst_coo_user_id = $1`,
-        [user.id]
-      );
-      if (otherCooDepts.rows.length === 0 && user.role === 'head_management' && !user.is_management_member) {
-        await query(`UPDATE users SET role = 'employee', updated_at = NOW() WHERE id = $1`, [user.id]);
-        if (user.employee_id) {
-          await query(`UPDATE master_employees SET role = 'employee' WHERE employee_id = $1`, [user.employee_id]);
-        }
-      }
-    }
-
-    await auditLog(req.user.id, 'DEPARTMENT_LEADER_REMOVED', null, {
-      departmentId,
-      deptName,
-      leaderType,
-      targetEmployee: user?.employee_id,
-      targetName: user?.full_name
+    await auditLog(req.user.id, 'DEPARTMENT_FEEDBACK_STAFF_REMOVED', null, {
+      departmentId, deptName
     }, req.ip);
 
-    const leaderLabel = leaderType === 'hod' ? 'HOD' : leaderType === 'incharge' ? 'Operational Incharge' : 'Assistant COO';
-    res.json({
-      success: true,
-      message: `Successfully removed ${user ? user.full_name : 'leader'} as ${leaderLabel} for ${deptName}.`
-    });
+    res.json({ success: true, message: `Successfully unassigned feedback staff from ${deptName}.` });
   } catch (error) {
     console.error('Error in removeDepartmentLeader:', error);
-    res.status(500).json({ error: 'Failed to remove department leader.' });
+    res.status(500).json({ error: 'Failed to remove department feedback staff.' });
+  }
+};
+
+exports.createDepartment = async (req, res) => {
+  try {
+    const { name, employeeId } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Department name is required.' });
+    }
+    const trimmedName = name.trim();
+
+    // Check duplicate department name case-insensitively
+    const dupCheck = await query(
+      `SELECT id FROM departments WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))`,
+      [trimmedName]
+    );
+    if (dupCheck.rows.length > 0) {
+      return res.status(400).json({ error: `A department named "${trimmedName}" already exists.` });
+    }
+
+    let assignedUserId = null;
+    let assignedStaff = null;
+    if (employeeId && String(employeeId).trim()) {
+      assignedStaff = await getOrCreateUserFromMaster(String(employeeId).trim(), 'employee');
+      if (assignedStaff) {
+        assignedUserId = assignedStaff.id;
+      }
+    }
+
+    const insertRes = await query(
+      `INSERT INTO departments (name, assigned_user_id, hod_user_id)
+       VALUES ($1, $2, $2)
+       RETURNING *`,
+      [trimmedName, assignedUserId]
+    );
+    const newDept = insertRes.rows[0];
+
+    await auditLog(req.user.id, 'DEPARTMENT_CREATED', null, {
+      departmentId: newDept.id,
+      departmentName: newDept.name,
+      assignedUserId,
+      assignedEmployeeId: assignedStaff?.employee_id || null
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: `Department "${trimmedName}" created successfully.`,
+      department: newDept
+    });
+  } catch (error) {
+    console.error('Error in createDepartment:', error);
+    res.status(500).json({ error: 'Failed to create department.' });
+  }
+};
+
+exports.deleteDepartment = async (req, res) => {
+  try {
+    const departmentId = req.params.id;
+    if (!departmentId) {
+      return res.status(400).json({ error: 'Department ID is required.' });
+    }
+
+    const deptRes = await query(`SELECT id, name FROM departments WHERE id = $1`, [departmentId]);
+    if (!deptRes.rows.length) {
+      return res.status(404).json({ error: 'Department not found.' });
+    }
+    const deptName = deptRes.rows[0].name;
+
+    // Check references across incidents, feedbacks, responsible persons, knowledge base
+    const refCheck = await query(
+      `SELECT 
+         (SELECT COUNT(*) FROM incident_departments WHERE department_id = $1) as incident_count,
+         (SELECT COUNT(*) FROM feedbacks WHERE department_id = $1) as feedback_count,
+         (SELECT COUNT(*) FROM incident_responsible_employees WHERE department_id = $1) as resp_count,
+         (SELECT COUNT(*) FROM knowledge_base WHERE department_id = $1) as kb_count`,
+      [departmentId]
+    );
+    const incidentCount = parseInt(refCheck.rows[0]?.incident_count || 0, 10);
+    const feedbackCount = parseInt(refCheck.rows[0]?.feedback_count || 0, 10);
+    const respCount = parseInt(refCheck.rows[0]?.resp_count || 0, 10);
+    const kbCount = parseInt(refCheck.rows[0]?.kb_count || 0, 10);
+    const totalRefs = incidentCount + feedbackCount + respCount + kbCount;
+
+    if (totalRefs > 0) {
+      return res.status(400).json({
+        error: `Cannot delete department "${deptName}" because it is linked to ${totalRefs} historical incident record(s). You can unassign its feedback staff instead to prevent future feedback authorization.`
+      });
+    }
+
+    await query(`DELETE FROM departments WHERE id = $1`, [departmentId]);
+
+    await auditLog(req.user.id, 'DEPARTMENT_DELETED', null, {
+      departmentId,
+      departmentName: deptName
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: `Department "${deptName}" has been successfully deleted.`
+    });
+  } catch (error) {
+    console.error('Error in deleteDepartment:', error);
+    res.status(500).json({ error: 'Failed to delete department.' });
   }
 };
 
@@ -830,51 +868,69 @@ exports.getMasterData = async (req, res) => {
 
 exports.searchEmployeeProfile = async (req, res) => {
   try {
-    const { q } = req.query;
-    if (!q) {
-      return res.status(400).json({ error: 'Search query (q) is required' });
+    const term = (req.query.q || req.query.query || '').trim();
+    if (!term) {
+      return res.status(400).json({ error: 'Search query is required' });
     }
 
+    // Search both master_employees and users to include all hospital personnel
     const userResult = await query(
-      `SELECT id, employee_id, full_name, email, phone, department, designation, role 
-       FROM users 
-       WHERE employee_id ILIKE $1 OR full_name ILIKE $2
-       LIMIT 10`,
-      [`%${q}%`, `%${q}%`]
+      `SELECT DISTINCT ON (COALESCE(u.employee_id, m.employee_id))
+         COALESCE(u.id, m.id) as id,
+         COALESCE(u.employee_id, m.employee_id) as employee_id,
+         COALESCE(u.full_name, m.name) as full_name,
+         COALESCE(u.email, m.email) as email,
+         COALESCE(u.phone, m.phone) as phone,
+         COALESCE(u.department, m.department) as department,
+         COALESCE(u.designation, m.designation) as designation,
+         COALESCE(u.role, m.role, 'employee') as role,
+         CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered
+       FROM master_employees m
+       FULL OUTER JOIN users u ON u.employee_id = m.employee_id
+       WHERE COALESCE(u.employee_id, m.employee_id) ILIKE $1 
+          OR COALESCE(u.full_name, m.name) ILIKE $2
+          OR COALESCE(u.department, m.department) ILIKE $3
+       ORDER BY COALESCE(u.employee_id, m.employee_id), COALESCE(u.full_name, m.name) ASC
+       LIMIT 20`,
+      [`%${term}%`, `%${term}%`, `%${term}%`]
     );
 
     if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Employee not found' });
+      if (req.query.strict === 'true') {
+        return res.status(404).json({ error: 'Employee not found' });
+      }
+      return res.json({ employees: [], selectedEmployee: null });
     }
 
-    // Support returning just the first match deeply, or a list. Let's return the first match for deep details, 
-    // but if the UI needs to pick from a list we should return the list.
-    // The requirement says "single employee search ... through imc ... can see the incident details".
-    // Let's assume the first match is the target if multiple, but returning the exact match is best.
-    // We will return the first user's full details and their incidents.
     const user = userResult.rows[0];
 
-    // Fetch reported incidents
-    const incidentsResult = await query(
-      `SELECT id, reference_id, incident_date, incident_category, incident_type, severity, status, created_at 
-       FROM incidents 
-       WHERE reporter_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT 50`,
-      [user.id]
-    );
+    // Fetch reported incidents if user exists in users table
+    let recentIncidents = [];
+    let totalIncidents = 0;
+    if (user.id && user.is_registered) {
+      const incidentsResult = await query(
+        `SELECT id, reference_id, incident_date, incident_category, incident_type, severity, status, created_at 
+         FROM incidents 
+         WHERE reporter_id = $1 
+         ORDER BY created_at DESC 
+         LIMIT 50`,
+        [user.id]
+      );
+      recentIncidents = incidentsResult.rows;
 
-    const countResult = await query(
-      `SELECT COUNT(*) FROM incidents WHERE reporter_id = $1`,
-      [user.id]
-    );
+      const countResult = await query(
+        `SELECT COUNT(*) FROM incidents WHERE reporter_id = $1`,
+        [user.id]
+      );
+      totalIncidents = parseInt(countResult.rows[0]?.count || 0);
+    }
 
     res.json({
-      employees: userResult.rows, // Send all matches so UI can let user pick if needed
+      employees: userResult.rows,
       selectedEmployee: {
         ...user,
-        totalIncidentsReported: parseInt(countResult.rows[0].count),
-        recentIncidents: incidentsResult.rows
+        totalIncidentsReported: totalIncidents,
+        recentIncidents
       }
     });
   } catch (error) {

@@ -160,21 +160,24 @@ export const adminApi = {
   removeManagement: (id) => api.delete(`/admin/management-members/${id}`),
   mapDepartmentLeader: (data) => api.post('/admin/map-department-leader', data),
   removeDepartmentLeader: (data) => api.post('/admin/remove-department-leader', data),
+  createDepartment: (data) => api.post('/admin/departments', data),
+  deleteDepartment: (id) => api.delete(`/admin/departments/${id}`),
   getSystemAdmins: () => api.get('/admin/system-admins'),
   toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
   getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
   broadcastNotification: (data) => api.post('/admin/broadcast-notification', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
 };
 
-// ── Attachment Download (presigned) ────────────────
+// ── Attachment Download (presigned) & Preview ───────
 export const attachmentsApi = {
   getDownloadUrl: (id) => api.get(`/attachments/${id}/download`),
+  getPreviewUrl: (id) => api.get(`/attachments/${id}/preview`),
   getBroadcastDownloadUrl: (key) => api.get('/admin/broadcast-attachments/download', { params: { key } }),
 };
 
 // ── Master Employees & HRMS Sync ───────────────────
 export const masterEmployeesApi = {
-  list: () => api.get('/master-employees'),
+  list: (params) => api.get('/master-employees', { params }),
   add: (data) => api.post('/master-employees', data),
   bulkAdd: (employees) => api.post('/master-employees/bulk', { employees }),
   syncHrms: () => api.post('/master-employees/sync-hrms'),

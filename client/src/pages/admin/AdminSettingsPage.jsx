@@ -70,12 +70,17 @@ const CONFIG_FIELDS = [
     min: 1, max: 60,
   },
   {
+    key: 'email_notifications_enabled',
+    label: 'Email Notifications',
+    description: 'Enable or disable general system email notifications. When disabled, incident alerts, reminders, and updates are stopped. Essential authentication emails (signup, password reset, security OTPs) continue to function normally.',
+    type: 'boolean',
+  },
+  {
     key: 'maintenance_mode',
     label: 'Maintenance Mode',
     description: 'When enabled, users cannot report new incidents (System under maintenance).',
     type: 'boolean',
   },
-
 ];
 
 export default function AdminSettingsPage() {

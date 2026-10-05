@@ -1,7 +1,7 @@
 import React from 'react';
 import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../../../components/ui';
-import { UPLOADS_URL } from '../../../api';
+import { UPLOADS_URL, API_BASE_URL, attachmentsApi } from '../../../api';
 import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../../utils/helpers';
 import FileUploadArea from '../FileUploadArea';
 
@@ -417,44 +417,130 @@ export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, 
 }
 
 export function FilePreviewModal({ previewFile, onClose }) {
+  const [fileUrl, setFileUrl] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!previewFile) {
+      setFileUrl(null);
+      setLoading(false);
+      setError(false);
+      return;
+    }
+
+    if (previewFile instanceof File || previewFile instanceof Blob) {
+      const objUrl = URL.createObjectURL(previewFile);
+      setFileUrl(objUrl);
+      return () => URL.revokeObjectURL(objUrl);
+    }
+
+    if (previewFile.url) {
+      setFileUrl(previewFile.url);
+      return;
+    }
+
+    if (previewFile.id) {
+      setLoading(true);
+      setError(false);
+      attachmentsApi.getPreviewUrl(previewFile.id)
+        .then(res => {
+          if (res.data?.url) {
+            setFileUrl(res.data.url);
+          } else {
+            setFileUrl(`${API_BASE_URL}/attachments/${previewFile.id}/view`);
+          }
+        })
+        .catch(() => {
+          setFileUrl(`${API_BASE_URL}/attachments/${previewFile.id}/view`);
+        })
+        .finally(() => setLoading(false));
+    } else if (previewFile.stored_filename) {
+      setFileUrl(`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`);
+    }
+  }, [previewFile]);
+
+  const filename = previewFile?.original_filename || previewFile?.name || 'File Preview';
+  const isImage = previewFile?.mime_type?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|svg)($|\?)/i.test(filename) || /\.(jpe?g|png|gif|webp|bmp|svg)($|\?)/i.test(fileUrl || '');
+  const isPdf = previewFile?.mime_type === 'application/pdf' || /\.pdf($|\?)/i.test(filename) || /\.pdf($|\?)/i.test(fileUrl || '');
+
+  const handleDownload = async () => {
+    if (!previewFile) return;
+    if (previewFile instanceof File || previewFile instanceof Blob) {
+      const url = URL.createObjectURL(previewFile);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return;
+    }
+    if (previewFile.id) {
+      try {
+        const res = await attachmentsApi.getDownloadUrl(previewFile.id);
+        if (res.data?.url) {
+          window.open(res.data.url, '_blank');
+          return;
+        }
+      } catch (_) {}
+    }
+    if (fileUrl) {
+      window.open(fileUrl, '_blank');
+    }
+  };
+
   return (
     <Modal
       open={!!previewFile}
       onClose={onClose}
-      title={previewFile?.original_filename || 'File Preview'}
+      title={filename}
       size="full"
       footer={
         <div className="flex justify-between w-full">
           {previewFile ? (
-            <a
-              href={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`}
-              download={previewFile.original_filename}
+            <button
+              onClick={handleDownload}
               className="btn-primary flex items-center gap-2"
             >
               <Download size={16} /> Download
-            </a>
+            </button>
           ) : <div />}
           <button onClick={onClose} className="btn-secondary">Close</button>
         </div>
       }
     >
       {previewFile && (
-        <div className="flex justify-center bg-slate-900 rounded-xl overflow-hidden" style={{ minHeight: '50vh', maxHeight: '80vh' }}>
-          {previewFile.mime_type?.startsWith('image/') || previewFile.original_filename?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-            <img src={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`} alt="Preview" className="w-full h-full object-contain" />
-          ) : previewFile.mime_type === 'application/pdf' || previewFile.original_filename?.endsWith('.pdf') ? (
-            <iframe src={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`} className="w-full h-[80vh]" title="PDF Preview" />
-          ) : (
-            <div className="p-8 text-center bg-white w-full flex flex-col items-center justify-center">
+        <div className="flex items-center justify-center bg-slate-900 rounded-xl overflow-hidden min-h-[50vh] max-h-[80vh] p-2 relative">
+          {loading ? (
+            <div className="flex flex-col items-center gap-3 text-slate-300">
+              <Spinner size={32} />
+              <p className="text-sm">Loading attachment preview...</p>
+            </div>
+          ) : error ? (
+            <div className="p-8 text-center bg-white rounded-xl w-full flex flex-col items-center justify-center">
               <FileText size={48} className="mx-auto text-slate-300 mb-3" />
-              <p className="text-slate-600 font-medium mb-2">Preview not available</p>
-              <a
-                href={`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`}
-                download={previewFile.original_filename}
-                className="btn-primary inline-flex mt-2"
-              >
-                Download
-              </a>
+              <p className="text-slate-700 font-medium mb-1">Failed to load preview</p>
+              <p className="text-xs text-slate-500 mb-4">You can download the file directly to view it.</p>
+              <button onClick={handleDownload} className="btn-primary">Download File</button>
+            </div>
+          ) : isImage && fileUrl ? (
+            <img
+              src={fileUrl}
+              alt="Preview"
+              onError={() => setError(true)}
+              className="max-w-full max-h-[78vh] object-contain rounded-lg shadow-sm"
+            />
+          ) : isPdf && fileUrl ? (
+            <iframe src={fileUrl} className="w-full h-[78vh] rounded-lg" title="PDF Preview" />
+          ) : (
+            <div className="p-8 text-center bg-white rounded-xl w-full flex flex-col items-center justify-center">
+              <FileText size={48} className="mx-auto text-slate-300 mb-3" />
+              <p className="text-slate-600 font-medium mb-2">Preview not available for this file format</p>
+              <button onClick={handleDownload} className="btn-primary inline-flex mt-2">
+                Download File
+              </button>
             </div>
           )}
         </div>
@@ -507,7 +593,8 @@ export function AssignInvestigatorModal({ show, onClose, mutate, isPending }) {
       })
       .then(r => r.json())
       .then(data => {
-        setEmployeeSearchResults(data || []);
+        const results = Array.isArray(data) ? data : (data?.employees || []);
+        setEmployeeSearchResults(results);
         setIsSearchingEmployees(false);
       })
       .catch(() => setIsSearchingEmployees(false));

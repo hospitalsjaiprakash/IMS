@@ -58,7 +58,12 @@ const getClient = () => pool.connect();
 pool.query(`
   ALTER TABLE departments
   ADD COLUMN IF NOT EXISTS incharge_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS asst_coo_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS asst_coo_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS assigned_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+  UPDATE departments
+  SET assigned_user_id = COALESCE(hod_user_id, incharge_user_id)
+  WHERE assigned_user_id IS NULL AND (hod_user_id IS NOT NULL OR incharge_user_id IS NOT NULL);
 
   ALTER TABLE users
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20);

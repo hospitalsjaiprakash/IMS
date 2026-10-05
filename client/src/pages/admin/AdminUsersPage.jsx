@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, metaApi, masterEmployeesApi } from '../../api';
 import api from '../../api';
@@ -20,9 +20,20 @@ export default function AdminUsersPage() {
   const [activeCard, setActiveCard] = useState('employee'); // 'employee' | 'system_admin' | 'imc' | 'management' | 'mapping'
 
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [tabSearch, setTabSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState('all');
   const [page, setPage] = useState(1);
+
+  // Debounce search input for immediate responsive feedback
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // Modal States
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -33,10 +44,16 @@ export default function AdminUsersPage() {
   const [stopTarget, setStopTarget] = useState({ id: '', employeeId: '', fullName: '', type: 'imc' });
 
   const [showMapModal, setShowMapModal] = useState(false);
-  const [mapForm, setMapForm] = useState({ departmentId: '', leaderType: 'hod', employeeId: '' });
+  const [mapForm, setMapForm] = useState({ departmentId: '', employeeId: '' });
   const [mapSearchTerm, setMapSearchTerm] = useState('');
   const [showRemoveLeaderModal, setShowRemoveLeaderModal] = useState(false);
   const [leaderToRemove, setLeaderToRemove] = useState(null);
+
+  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
+  const [newDeptForm, setNewDeptForm] = useState({ name: '', employeeId: '' });
+  const [newDeptSearchTerm, setNewDeptSearchTerm] = useState('');
+  const [showDeleteDeptModal, setShowDeleteDeptModal] = useState(false);
+  const [deptToDelete, setDeptToDelete] = useState(null);
 
   const [selectedProfileUser, setSelectedProfileUser] = useState(null);
   const [profileViewTab, setProfileViewTab] = useState('personal'); // 'personal' | 'department'
@@ -50,7 +67,7 @@ export default function AdminUsersPage() {
 
   const { data: masterEmployees = [], isLoading: isLoadingMaster } = useQuery({
     queryKey: ['master-employees'],
-    queryFn: () => api.get('/master-employees').then(r => r.data?.data || (Array.isArray(r.data) ? r.data : [])),
+    queryFn: () => api.get('/master-employees', { params: { all: 'true' } }).then(r => r.data?.data || (Array.isArray(r.data) ? r.data : [])),
   });
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -229,20 +246,20 @@ export default function AdminUsersPage() {
   const mapLeaderMutation = useMutation({
     mutationFn: (data) => adminApi.mapDepartmentLeader(data),
     onSuccess: (res) => {
-      toast.success(res?.data?.message || 'Department leadership assigned successfully.');
+      toast.success(res?.data?.message || 'Department feedback staff assigned successfully.');
       setShowMapModal(false);
-      setMapForm({ departmentId: '', leaderType: 'hod', employeeId: '' });
+      setMapForm({ departmentId: '', employeeId: '' });
       qc.invalidateQueries({ queryKey: ['departments'] });
       qc.invalidateQueries({ queryKey: ['admin-users'] });
       qc.invalidateQueries({ queryKey: ['role-audit'] });
     },
-    onError: (e) => toast.error(e.response?.data?.error || 'Failed to map department leader'),
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to assign department feedback staff'),
   });
 
   const removeLeaderMutation = useMutation({
     mutationFn: (data) => adminApi.removeDepartmentLeader(data),
     onSuccess: (res) => {
-      toast.success(res?.data?.message || 'Department leader removed successfully.');
+      toast.success(res?.data?.message || 'Department feedback staff removed successfully.');
       setShowRemoveLeaderModal(false);
       setLeaderToRemove(null);
       setShowMapModal(false);
@@ -250,26 +267,49 @@ export default function AdminUsersPage() {
       qc.invalidateQueries({ queryKey: ['admin-users'] });
       qc.invalidateQueries({ queryKey: ['role-audit'] });
     },
-    onError: (e) => toast.error(e.response?.data?.error || 'Failed to remove department leader'),
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to remove department feedback staff'),
   });
 
-  const handleOpenMapModal = (departmentId = '', leaderType = 'hod', employeeId = '') => {
+  const createDeptMutation = useMutation({
+    mutationFn: (data) => adminApi.createDepartment(data),
+    onSuccess: (res) => {
+      toast.success(res?.data?.message || 'Department created successfully');
+      setShowAddDeptModal(false);
+      setNewDeptForm({ name: '', employeeId: '' });
+      setNewDeptSearchTerm('');
+      qc.invalidateQueries({ queryKey: ['departments'] });
+      qc.invalidateQueries({ queryKey: ['role-audit'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to create department'),
+  });
+
+  const deleteDeptMutation = useMutation({
+    mutationFn: (id) => adminApi.deleteDepartment(id),
+    onSuccess: (res) => {
+      toast.success(res?.data?.message || 'Department deleted successfully');
+      setShowDeleteDeptModal(false);
+      setDeptToDelete(null);
+      qc.invalidateQueries({ queryKey: ['departments'] });
+      qc.invalidateQueries({ queryKey: ['role-audit'] });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed to delete department'),
+  });
+
+  const handleOpenMapModal = (departmentId = '', employeeId = '') => {
     setMapForm({
       departmentId: departmentId || departments[0]?.id || '',
-      leaderType,
       employeeId: employeeId || '',
     });
     setMapSearchTerm('');
     setShowMapModal(true);
   };
 
-  const handleOpenRemoveLeaderModal = (departmentId, deptName, leaderType, leaderName, leaderEmployeeId) => {
+  const handleOpenRemoveLeaderModal = (departmentId, deptName, staffName, employeeId) => {
     setLeaderToRemove({
       departmentId,
       deptName,
-      leaderType,
-      leaderName,
-      leaderEmployeeId,
+      staffName,
+      employeeId,
     });
     setShowRemoveLeaderModal(true);
   };
@@ -295,6 +335,7 @@ export default function AdminUsersPage() {
     { value: 'imc', label: 'IMC Committee Member' },
     { value: 'head_management', label: 'Executive Management' },
     { value: 'system_admin', label: 'System Administrator' },
+    { value: 'unregistered', label: 'Unregistered (No IMS)' },
   ];
 
   const roleColorMap = {
@@ -527,46 +568,26 @@ export default function AdminUsersPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
-          {activeCard === 'employee' && (
-            <>
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
-              <button onClick={() => setShowBulkUploadModal(true)} disabled={bulkAddMutation.isPending} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
-                {bulkAddMutation.isPending ? <Spinner size={14} /> : <Upload size={14} />} Bulk Upload
-              </button>
-              <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
-                <Plus size={14} /> Add Employee
-              </button>
-              <button
-                onClick={() => syncHrmsMutation.mutate()}
-                disabled={syncHrmsMutation.isPending}
-                title={syncStatusData?.last_hrms_sync_at ? `Last synced: ${new Date(syncStatusData.last_hrms_sync_at).toLocaleString()}` : 'Sync all staff from HRMS Google Sheet'}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                <RefreshCw size={14} className={syncHrmsMutation.isPending ? 'animate-spin' : ''} />
-                {syncHrmsMutation.isPending ? 'Syncing...' : 'Sync with HR Sheet'}
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => {
-              setMapForm({ departmentId: departments[0]?.id || '', leaderType: 'hod', employeeId: '' });
-              setShowMapModal(true);
-            }}
-            className="px-4 py-2 rounded-lg font-bold text-xs bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 shadow-sm flex-1 xl:flex-none"
-          >
-            <Building2 size={14} className="text-amber-500" /> Map Department Leaders
-          </button>
-          <button
-            onClick={() => {
-              setAssignForm({ employeeId: '', targetRole: 'system_admin', departmentId: '' });
-              setShowAssignModal(true);
-            }}
-            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 flex-1 xl:flex-none"
-          >
-            <Plus size={14} /> Configure User Role
-          </button>
-        </div>
+        {activeCard === 'employee' && (
+          <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+            <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
+            <button onClick={() => setShowBulkUploadModal(true)} disabled={bulkAddMutation.isPending} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
+              {bulkAddMutation.isPending ? <Spinner size={14} /> : <Upload size={14} />} Bulk Upload
+            </button>
+            <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
+              <Plus size={14} /> Add Employee
+            </button>
+            <button
+              onClick={() => syncHrmsMutation.mutate()}
+              disabled={syncHrmsMutation.isPending}
+              title={syncStatusData?.last_hrms_sync_at ? `Last synced: ${new Date(syncStatusData.last_hrms_sync_at).toLocaleString()}` : 'Sync all staff from HRMS Google Sheet'}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={syncHrmsMutation.isPending ? 'animate-spin' : ''} />
+              {syncHrmsMutation.isPending ? 'Syncing...' : 'Sync with HR Sheet'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ─── DERIVED FILTERED LISTS ─── */}
@@ -581,12 +602,59 @@ export default function AdminUsersPage() {
         const filteredMgmtMembers = managementMembers.filter(m =>
           m.full_name?.toLowerCase().includes(ts) || m.employee_id?.toLowerCase().includes(ts)
         );
-        const filteredDepts = departments.filter(d =>
-          d.name?.toLowerCase().includes(ts) ||
-          d.hod_name?.toLowerCase().includes(ts) ||
-          d.incharge_name?.toLowerCase().includes(ts) ||
-          d.asst_coo_name?.toLowerCase().includes(ts)
-        );
+        const filteredDepts = departments.filter(d => {
+          const staffName = d.assigned_staff_name || d.hod_name || '';
+          const staffId = d.assigned_employee_id || d.hod_employee_id || '';
+          return (
+            d.name?.toLowerCase().includes(ts) ||
+            staffName.toLowerCase().includes(ts) ||
+            staffId.toLowerCase().includes(ts)
+          );
+        });
+
+        const filteredPersonnel = (masterEmployees || []).filter(u => {
+          const term = (debouncedSearch || '').toLowerCase().trim();
+          if (term) {
+            const matches =
+              (u.full_name || '').toLowerCase().includes(term) ||
+              (u.employee_id || '').toLowerCase().includes(term) ||
+              (u.department || '').toLowerCase().includes(term) ||
+              (u.designation || '').toLowerCase().includes(term) ||
+              (u.email || '').toLowerCase().includes(term) ||
+              (u.phone || '').toLowerCase().includes(term);
+            if (!matches) return false;
+          }
+
+          if (roleFilter) {
+            const hasImcAccess = u.role === 'imc' || u.is_imc_member || u.is_imc_lead;
+            const hasMgmtAccess = u.role === 'head_management' || u.is_management_member;
+            const isSysAdmin = u.role === 'system_admin' || u.is_system_admin;
+
+            if (roleFilter === 'system_admin') {
+              if (!isSysAdmin) return false;
+            } else if (roleFilter === 'imc') {
+              if (!hasImcAccess) return false;
+            } else if (roleFilter === 'head_management') {
+              if (!hasMgmtAccess) return false;
+            } else if (roleFilter === 'hod') {
+              if (u.role !== 'hod') return false;
+            } else if (roleFilter === 'employee') {
+              if (!u.is_registered || u.role !== 'employee' || isSysAdmin || hasImcAccess || hasMgmtAccess) return false;
+            } else if (roleFilter === 'unregistered') {
+              if (u.is_registered) return false;
+            }
+          }
+
+          if (selectedDeptFilter && selectedDeptFilter !== 'all') {
+            if ((u.department || '').toLowerCase() !== selectedDeptFilter.toLowerCase()) return false;
+          }
+
+          return true;
+        });
+
+        const PAGE_SIZE = 50;
+        const personnelTotalPages = Math.ceil(filteredPersonnel.length / PAGE_SIZE) || 1;
+        const paginatedPersonnel = filteredPersonnel.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
         return (
           <>
@@ -600,7 +668,7 @@ export default function AdminUsersPage() {
                       <span>Hospital Personnel Directory</span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Search, filter, and inspect governance permissions across all {masterEmployees.length || 0} staff members
+                      Showing {filteredPersonnel.length} personnel ({masterEmployees.length || 0} total staff)
                       {syncStatusData?.last_hrms_sync_at && (
                         <span className="ml-2 font-medium text-indigo-600">
                           (HR Sheet last synced: {new Date(syncStatusData.last_hrms_sync_at).toLocaleDateString()} {new Date(syncStatusData.last_hrms_sync_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
@@ -609,24 +677,59 @@ export default function AdminUsersPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
-                    <div className="relative flex-1 sm:flex-initial min-w-[240px]">
+                    <div className="relative flex-1 sm:flex-initial min-w-[220px]">
                       <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                       <input
                         value={search}
-                        onChange={e => { setSearch(e.target.value); setPage(1); }}
-                        placeholder="Search staff name or ID (e.g. 13574)…"
-                        className="input pl-10 bg-white text-xs py-2.5 rounded-xl border-slate-200 focus:border-blue-500 font-medium"
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search name, ID, email, dept…"
+                        className="input pl-10 pr-8 bg-white text-xs py-2.5 rounded-xl border-slate-200 focus:border-blue-500 font-medium w-full"
                       />
+                      {search && (
+                        <button
+                          type="button"
+                          onClick={() => { setSearch(''); setPage(1); }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <select
+                        value={selectedDeptFilter}
+                        onChange={e => { setSelectedDeptFilter(e.target.value); setPage(1); }}
+                        className="select w-40 bg-white font-semibold text-xs py-2.5 rounded-xl border-slate-200"
+                      >
+                        <option value="all">All Departments</option>
+                        {departments.map(d => (
+                          <option key={d.id || d.name} value={d.name}>{d.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="relative">
                       <select
                         value={roleFilter}
                         onChange={e => { setRoleFilter(e.target.value); setPage(1); }}
-                        className="select w-44 bg-white font-semibold text-xs py-2.5 rounded-xl border-slate-200"
+                        className="select w-40 bg-white font-semibold text-xs py-2.5 rounded-xl border-slate-200"
                       >
                         {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                       </select>
                     </div>
+                    {(search || roleFilter || selectedDeptFilter !== 'all') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearch('');
+                          setRoleFilter('');
+                          setSelectedDeptFilter('all');
+                          setPage(1);
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-bold px-2 py-1 underline"
+                      >
+                        Reset
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -649,20 +752,14 @@ export default function AdminUsersPage() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {isLoadingMaster ? <tr><td colSpan={7} className="text-center py-14"><Spinner size={24} /></td></tr> : (
-                            masterEmployees.filter(emp => 
-                              emp.full_name?.toLowerCase().includes(search.toLowerCase()) || 
-                              emp.employee_id?.toLowerCase().includes(search.toLowerCase())
-                            ).length === 0 ? (
+                            filteredPersonnel.length === 0 ? (
                               <tr><td colSpan={7} className="text-center py-14 text-slate-400 font-medium">No personnel found matching your filter criteria.</td></tr>
-                            ) : masterEmployees.filter(emp => 
-                              emp.full_name?.toLowerCase().includes(search.toLowerCase()) || 
-                              emp.employee_id?.toLowerCase().includes(search.toLowerCase())
-                            ).map(u => {
+                            ) : paginatedPersonnel.map(u => {
                             const hasImcAccess = u.role === 'imc' || u.is_imc_member || u.is_imc_lead;
                             const hasMgmtAccess = u.role === 'head_management' || u.is_management_member;
                             const isSysAdmin = u.role === 'system_admin' || u.is_system_admin;
                             return (
-                              <tr key={u.id} onClick={() => { setSelectedProfileUser(u); setProfileViewTab('personal'); }} className="hover:bg-blue-50/30 transition-colors group cursor-pointer">
+                              <tr key={u.master_id || u.id || u.employee_id} onClick={() => { setSelectedProfileUser(u); setProfileViewTab('personal'); }} className="hover:bg-blue-50/30 transition-colors group cursor-pointer">
                                 <td className="pl-6 py-4">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 border border-slate-300/80 flex items-center justify-center flex-shrink-0 shadow-2xs font-bold text-slate-700">
@@ -760,6 +857,14 @@ export default function AdminUsersPage() {
                         </tbody>
                       </table>
                     </div>
+                    {personnelTotalPages > 1 && (
+                      <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <span className="text-xs text-slate-500">
+                          Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filteredPersonnel.length)} of {filteredPersonnel.length} personnel
+                        </span>
+                        <Pagination page={page} totalPages={personnelTotalPages} onPageChange={setPage} />
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -1011,7 +1116,7 @@ export default function AdminUsersPage() {
               </div>
             )}
 
-            {/* ─── TAB 5: DEPARTMENT LEADERSHIP MATRIX VIEW ─── */}
+            {/* ─── TAB 5: DEPARTMENT FEEDBACK MAPPING ─── */}
             {activeCard === 'mapping' && (
               <div className="rounded-2xl bg-white border border-slate-200/80 shadow-md p-6 sm:p-8 animate-in fade-in duration-200">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8 border-b border-slate-100 pb-6">
@@ -1020,28 +1125,32 @@ export default function AdminUsersPage() {
                       <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
                         <Building2 size={20} />
                       </div>
-                      <h2 className="text-xl font-black text-slate-900">Department Governance Matrix</h2>
+                      <h2 className="text-xl font-black text-slate-900">Department Feedback Mapping</h2>
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
-                      Establish clear accountability across all {departments.length} hospital departments by mapping HODs, Incharges, and Assistant COOs
+                      Designate the single employee authorized to submit incident feedback for each department. The same employee can be assigned to multiple departments.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                    <div className="relative flex-1 sm:min-w-[200px]">
+                    <div className="relative flex-1 sm:min-w-[220px]">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                       <input
                         type="text"
-                        placeholder="Search departments..."
+                        placeholder="Search departments or staff..."
                         value={tabSearch}
                         onChange={(e) => setTabSearch(e.target.value)}
                         className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
                       />
                     </div>
                     <button
-                      onClick={() => handleOpenMapModal(departments[0]?.id || '', 'hod', '')}
+                      onClick={() => {
+                        setNewDeptForm({ name: '', employeeId: '' });
+                        setNewDeptSearchTerm('');
+                        setShowAddDeptModal(true);
+                      }}
                       className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-amber-500/20 transition-all"
                     >
-                      <Plus size={16} /> Assign Leader
+                      <Plus size={16} /> Add Department
                     </button>
                   </div>
                 </div>
@@ -1053,148 +1162,135 @@ export default function AdminUsersPage() {
                     <table className="table w-full">
                       <thead>
                         <tr className="bg-slate-50/80 text-[11px] uppercase tracking-wider text-slate-500 font-bold border-b border-slate-200">
-                          <th className="py-3.5 pl-6 w-1/4">Hospital Department</th>
-                          <th className="py-3.5">HOD (Head of Dept)</th>
-                          <th className="py-3.5">Operational Incharge</th>
-                          <th className="py-3.5">Assistant COO</th>
+                          <th className="py-3.5 pl-6 w-1/3">Hospital Department</th>
+                          <th className="py-3.5 w-5/12">Assigned Feedback Staff</th>
+                          <th className="py-3.5 text-center">Feedback Authority Status</th>
                           <th className="py-3.5 pr-6 text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {filteredDepts.map(d => (
-                          <tr key={d.id} className="hover:bg-amber-50/20 transition-colors group">
-                            <td className="pl-6 py-4 font-extrabold text-slate-900 text-sm">{d.name}</td>
-                            
-                            {/* HOD Column */}
-                            <td className="py-4">
-                              {d.hod_name ? (
-                                <div className="flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-amber-50/40 border border-slate-200/80 hover:border-amber-200 p-2 rounded-xl transition-all shadow-2xs group/cell max-w-[240px]">
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
-                                      {d.hod_name.charAt(0)}
+                        {filteredDepts.map(d => {
+                          const staffName = d.assigned_staff_name || d.hod_name;
+                          const staffId = d.assigned_employee_id || d.hod_employee_id;
+                          const staffDesig = d.assigned_designation;
+                          const staffDept = d.assigned_department;
+
+                          return (
+                            <tr key={d.id} className="hover:bg-amber-50/20 transition-colors group">
+                              <td className="pl-6 py-4">
+                                <p className="font-extrabold text-slate-900 text-sm">{d.name}</p>
+                                <span className="text-[10px] text-slate-400 font-mono">Dept ID: {d.id}</span>
+                              </td>
+                              
+                              {/* Assigned Feedback Staff Column */}
+                              <td className="py-4">
+                                {staffName ? (
+                                  <div className="flex items-center justify-between gap-3 bg-slate-50/80 hover:bg-amber-50/40 border border-slate-200/80 hover:border-amber-200 p-2.5 rounded-xl transition-all shadow-2xs group/cell max-w-[340px]">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+                                        {staffName.charAt(0)}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-xs font-bold text-slate-800 truncate" title={staffName}>{staffName}</p>
+                                        <p className="text-[11px] font-mono text-slate-500 font-semibold">ID: {staffId}</p>
+                                        {(staffDesig || staffDept) && (
+                                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                            {[staffDesig, staffDept].filter(Boolean).join(' · ')}
+                                          </p>
+                                        )}
+                                      </div>
                                     </div>
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-bold text-slate-800 truncate" title={d.hod_name}>{d.hod_name}</p>
-                                      {d.hod_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.hod_employee_id}</p>}
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => handleOpenMapModal(d.id, staffId)}
+                                        title="Change feedback staff"
+                                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-700 hover:bg-amber-100/70 transition-colors"
+                                      >
+                                        <Edit3 size={13} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, staffName, staffId)}
+                                        title="Unassign feedback staff"
+                                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-700 hover:bg-amber-100/70 transition-colors"
+                                      >
+                                        <UserMinus size={13} />
+                                      </button>
                                     </div>
                                   </div>
-                                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                                ) : (
+                                  <button
+                                    onClick={() => handleOpenMapModal(d.id, '')}
+                                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-slate-300 hover:border-amber-400 text-slate-500 hover:text-amber-800 bg-slate-50/50 hover:bg-amber-50/50 text-xs font-semibold transition-all"
+                                  >
+                                    <Plus size={13} /> Assign Feedback Staff
+                                  </button>
+                                )}
+                              </td>
+
+                              {/* Feedback Authority Status Column */}
+                              <td className="py-4 text-center">
+                                {staffName ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 size={12} className="text-emerald-600" /> Authorized Assignee
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                    <AlertTriangle size={12} className="text-amber-600" /> Pending Assignee
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="pr-6 py-4 text-right">
+                                {staffName ? (
+                                  <div className="flex items-center justify-end gap-1.5">
                                     <button
-                                      onClick={() => handleOpenMapModal(d.id, 'hod', d.hod_employee_id)}
-                                      title="Edit / Replace HOD"
-                                      className="p-1 rounded-lg text-slate-400 hover:text-amber-700 hover:bg-amber-100/70 transition-colors"
+                                      onClick={() => handleOpenMapModal(d.id, staffId)}
+                                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-amber-600 hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5"
                                     >
-                                      <Edit3 size={13} />
+                                      <Edit3 size={12} /> Change
                                     </button>
                                     <button
-                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, 'hod', d.hod_name, d.hod_employee_id)}
-                                      title="Remove HOD"
-                                      className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, staffName, staffId)}
+                                      title="Unassign feedback staff"
+                                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5"
+                                    >
+                                      <UserMinus size={12} /> Unassign
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setDeptToDelete({ id: d.id, name: d.name, staffName });
+                                        setShowDeleteDeptModal(true);
+                                      }}
+                                      title="Delete Department"
+                                      className="p-1.5 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 border border-transparent hover:border-red-200 transition-all shadow-2xs inline-flex items-center justify-center"
                                     >
                                       <Trash2 size={13} />
                                     </button>
                                   </div>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => handleOpenMapModal(d.id, 'hod', '')}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-slate-200 hover:border-amber-300 text-slate-400 hover:text-amber-700 bg-slate-50/50 hover:bg-amber-50/50 text-xs font-semibold transition-all"
-                                >
-                                  <Plus size={12} /> Assign HOD
-                                </button>
-                              )}
-                            </td>
-
-                            {/* Incharge Column */}
-                            <td className="py-4">
-                              {d.incharge_name ? (
-                                <div className="flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-blue-50/40 border border-slate-200/80 hover:border-blue-200 p-2 rounded-xl transition-all shadow-2xs group/cell max-w-[240px]">
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
-                                      {d.incharge_name.charAt(0)}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-bold text-slate-800 truncate" title={d.incharge_name}>{d.incharge_name}</p>
-                                      {d.incharge_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.incharge_employee_id}</p>}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1.5">
                                     <button
-                                      onClick={() => handleOpenMapModal(d.id, 'incharge', d.incharge_employee_id)}
-                                      title="Edit / Replace Incharge"
-                                      className="p-1 rounded-lg text-slate-400 hover:text-blue-700 hover:bg-blue-100/70 transition-colors"
+                                      onClick={() => handleOpenMapModal(d.id, '')}
+                                      className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5"
                                     >
-                                      <Edit3 size={13} />
+                                      <Plus size={12} /> Assign Staff
                                     </button>
                                     <button
-                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, 'incharge', d.incharge_name, d.incharge_employee_id)}
-                                      title="Remove Incharge"
-                                      className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                      onClick={() => {
+                                        setDeptToDelete({ id: d.id, name: d.name, staffName: null });
+                                        setShowDeleteDeptModal(true);
+                                      }}
+                                      title="Delete Department"
+                                      className="p-1.5 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 border border-transparent hover:border-red-200 transition-all shadow-2xs inline-flex items-center justify-center"
                                     >
                                       <Trash2 size={13} />
                                     </button>
                                   </div>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => handleOpenMapModal(d.id, 'incharge', '')}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-slate-200 hover:border-blue-300 text-slate-400 hover:text-blue-700 bg-slate-50/50 hover:bg-blue-50/50 text-xs font-semibold transition-all"
-                                >
-                                  <Plus size={12} /> Assign Incharge
-                                </button>
-                              )}
-                            </td>
-
-                            {/* Assistant COO Column */}
-                            <td className="py-4">
-                              {d.asst_coo_name ? (
-                                <div className="flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-purple-50/40 border border-slate-200/80 hover:border-purple-200 p-2 rounded-xl transition-all shadow-2xs group/cell max-w-[240px]">
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
-                                      {d.asst_coo_name.charAt(0)}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-bold text-slate-800 truncate" title={d.asst_coo_name}>{d.asst_coo_name}</p>
-                                      {d.asst_coo_employee_id && <p className="text-[10px] font-mono text-slate-400">ID: {d.asst_coo_employee_id}</p>}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-0.5 flex-shrink-0">
-                                    <button
-                                      onClick={() => handleOpenMapModal(d.id, 'asst_coo', d.asst_coo_employee_id)}
-                                      title="Edit / Replace Asst. COO"
-                                      className="p-1 rounded-lg text-slate-400 hover:text-purple-700 hover:bg-purple-100/70 transition-colors"
-                                    >
-                                      <Edit3 size={13} />
-                                    </button>
-                                    <button
-                                      onClick={() => handleOpenRemoveLeaderModal(d.id, d.name, 'asst_coo', d.asst_coo_name, d.asst_coo_employee_id)}
-                                      title="Remove Asst. COO"
-                                      className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                                    >
-                                      <Trash2 size={13} />
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => handleOpenMapModal(d.id, 'asst_coo', '')}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-slate-200 hover:border-purple-300 text-slate-400 hover:text-purple-700 bg-slate-50/50 hover:bg-purple-50/50 text-xs font-semibold transition-all"
-                                >
-                                  <Plus size={12} /> Assign Asst. COO
-                                </button>
-                              )}
-                            </td>
-
-                            <td className="pr-6 py-4 text-right">
-                              <button
-                                onClick={() => handleOpenMapModal(d.id, 'hod', d.hod_employee_id || '')}
-                                className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-amber-600 hover:text-white text-slate-700 text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5"
-                              >
-                                <Edit3 size={12} /> Manage
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1208,20 +1304,14 @@ export default function AdminUsersPage() {
 
       {/* ─── MODALS ─── */}
 
-      {/* Map Department Leader Modal */}
-      {/* Map / Edit Department Leader Modal */}
+      {/* Map / Edit Department Feedback Staff Modal */}
       <Modal
         open={showMapModal}
         onClose={() => setShowMapModal(false)}
         title={(() => {
           const selectedDept = departments.find(d => String(d.id) === String(mapForm.departmentId));
-          const hasCurrent = selectedDept && (
-            (mapForm.leaderType === 'hod' && selectedDept.hod_name) ||
-            (mapForm.leaderType === 'incharge' && selectedDept.incharge_name) ||
-            (mapForm.leaderType === 'asst_coo' && selectedDept.asst_coo_name)
-          );
-          const typeLabel = mapForm.leaderType === 'hod' ? 'HOD' : mapForm.leaderType === 'incharge' ? 'Incharge' : 'Asst. COO';
-          return hasCurrent ? `Edit ${typeLabel} — ${selectedDept.name}` : `Assign ${typeLabel} — ${selectedDept?.name || 'Department'}`;
+          const currentStaff = selectedDept?.assigned_staff_name || selectedDept?.hod_name;
+          return currentStaff ? `Change Feedback Staff — ${selectedDept.name}` : `Assign Feedback Staff — ${selectedDept?.name || 'Department'}`;
         })()}
         footer={
           <>
@@ -1234,39 +1324,24 @@ export default function AdminUsersPage() {
               {mapLeaderMutation.isPending ? <Spinner size={15} className="text-white" /> : <CheckCircle2 size={15} />}
               {(() => {
                 const selectedDept = departments.find(d => String(d.id) === String(mapForm.departmentId));
-                const hasCurrent = selectedDept && (
-                  (mapForm.leaderType === 'hod' && selectedDept.hod_name) ||
-                  (mapForm.leaderType === 'incharge' && selectedDept.incharge_name) ||
-                  (mapForm.leaderType === 'asst_coo' && selectedDept.asst_coo_name)
-                );
-                return hasCurrent ? 'Update Leadership Assignment' : 'Confirm Leadership Assignment';
+                const currentStaff = selectedDept?.assigned_staff_name || selectedDept?.hod_name;
+                return currentStaff ? 'Update Feedback Assignment' : 'Confirm Assignment';
               })()}
             </button>
           </>
         }
       >
         <div className="space-y-4">
-          <Alert type="info" message="Establish accountability for incident workflows by assigning or updating department leadership." />
+          <Alert type="info" message="Designate the single employee who will give feedback for this department. Any employee can be assigned, and the same employee can be assigned to multiple departments." />
 
           {/* Currently Assigned Notice (if any) */}
           {(() => {
             const selectedDept = departments.find(d => String(d.id) === String(mapForm.departmentId));
             if (!selectedDept) return null;
-            let currentName = '';
-            let currentId = '';
-            if (mapForm.leaderType === 'hod' && selectedDept.hod_name) {
-              currentName = selectedDept.hod_name;
-              currentId = selectedDept.hod_employee_id;
-            } else if (mapForm.leaderType === 'incharge' && selectedDept.incharge_name) {
-              currentName = selectedDept.incharge_name;
-              currentId = selectedDept.incharge_employee_id;
-            } else if (mapForm.leaderType === 'asst_coo' && selectedDept.asst_coo_name) {
-              currentName = selectedDept.asst_coo_name;
-              currentId = selectedDept.asst_coo_employee_id;
-            }
+            const currentName = selectedDept.assigned_staff_name || selectedDept.hod_name;
+            const currentId = selectedDept.assigned_employee_id || selectedDept.hod_employee_id;
             if (!currentName) return null;
 
-            const typeLabel = mapForm.leaderType === 'hod' ? 'HOD' : mapForm.leaderType === 'incharge' ? 'Incharge' : 'Asst. COO';
             return (
               <div className="p-3.5 bg-amber-50/90 border border-amber-200/90 rounded-xl flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -1274,7 +1349,7 @@ export default function AdminUsersPage() {
                     {currentName.charAt(0)}
                   </div>
                   <div className="min-w-0">
-                    <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Currently Mapped {typeLabel}:</span>
+                    <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Currently Assigned Staff:</span>
                     <p className="text-xs font-bold text-slate-800 truncate">
                       {currentName} {currentId && <span className="font-mono text-slate-500 font-normal">(ID: {currentId})</span>}
                     </p>
@@ -1286,14 +1361,13 @@ export default function AdminUsersPage() {
                     handleOpenRemoveLeaderModal(
                       mapForm.departmentId,
                       selectedDept.name,
-                      mapForm.leaderType,
                       currentName,
                       currentId
                     );
                   }}
                   className="px-2.5 py-1.5 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-2xs flex-shrink-0"
                 >
-                  <Trash2 size={12} /> Remove Leader
+                  <Trash2 size={12} /> Remove Staff
                 </button>
               </div>
             );
@@ -1318,36 +1392,9 @@ export default function AdminUsersPage() {
           </div>
 
           <div>
-            <label className="field-label field-required font-bold">Leadership Role Level</label>
-            <div className="grid grid-cols-3 gap-2 mt-1">
-              {[
-                { id: 'hod', label: 'HOD', desc: 'Head of Department' },
-                { id: 'incharge', label: 'Incharge', desc: 'Operational Lead' },
-                { id: 'asst_coo', label: 'Asst. COO', desc: 'Executive Oversight' }
-              ].map(opt => (
-                <button
-                  type="button"
-                  key={opt.id}
-                  onClick={() => {
-                    setMapForm(f => ({ ...f, leaderType: opt.id, employeeId: '' }));
-                    setMapSearchTerm('');
-                  }}
-                  className={`p-3 rounded-xl border text-left transition-all ${mapForm.leaderType === opt.id
-                      ? 'border-amber-500 bg-amber-50/80 ring-2 ring-amber-500/20 font-bold text-amber-900'
-                      : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                    }`}
-                >
-                  <p className="text-xs font-black">{opt.label}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
             {!mapForm.employeeId ? (
               <>
-                <label className="field-label field-required font-bold">Search & Select Employee</label>
+                <label className="field-label field-required font-bold">Search & Select Staff Member</label>
                 <div className="relative mt-1">
                   <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
@@ -1402,11 +1449,11 @@ export default function AdminUsersPage() {
                     </div>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Search and select the personnel taking this role.</p>
+                <p className="text-[11px] text-slate-500 mt-1">Search and select the hospital staff member to give feedback for this department.</p>
               </>
             ) : (
               <div>
-                <label className="field-label field-required font-bold">Selected Employee</label>
+                <label className="field-label field-required font-bold">Selected Feedback Staff</label>
                 {(() => {
                   const emp = (masterEmployees || []).find(e => String(e.employee_id) === String(mapForm.employeeId));
                   if (emp) {
@@ -1423,12 +1470,6 @@ export default function AdminUsersPage() {
                               <p className="text-[11px] text-slate-500 mt-1">
                                 {emp.designation || 'Staff'} • {emp.department || 'No Dept'}
                               </p>
-                              <div className="mt-2 flex items-center gap-2">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Role:</span> 
-                                <span className="font-black text-amber-700 uppercase px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-md text-[10px]">
-                                  {emp.role?.replace(/_/g, ' ') || 'EMPLOYEE'}
-                                </span>
-                              </div>
                             </div>
                           </div>
                           <button
@@ -1447,7 +1488,7 @@ export default function AdminUsersPage() {
                   return (
                     <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-1 flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-bold text-red-900">Selected Employee</p>
+                        <p className="text-sm font-bold text-red-900">Selected Staff</p>
                         <p className="text-xs text-red-700 font-mono mt-0.5">ID: {mapForm.employeeId}</p>
                       </div>
                       <button
@@ -1468,7 +1509,7 @@ export default function AdminUsersPage() {
         </div>
       </Modal>
 
-      {/* Remove Department Leader Confirmation Modal */}
+      {/* Remove Department Feedback Staff Confirmation Modal */}
       <Modal
         open={showRemoveLeaderModal}
         onClose={() => {
@@ -1477,7 +1518,7 @@ export default function AdminUsersPage() {
             setLeaderToRemove(null);
           }
         }}
-        title="Remove Department Leader"
+        title="Remove Department Feedback Staff"
         footer={
           <>
             <button
@@ -1495,7 +1536,6 @@ export default function AdminUsersPage() {
                 if (leaderToRemove) {
                   removeLeaderMutation.mutate({
                     departmentId: leaderToRemove.departmentId,
-                    leaderType: leaderToRemove.leaderType,
                   });
                 }
               }}
@@ -1513,17 +1553,208 @@ export default function AdminUsersPage() {
             <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
               <AlertTriangle className="text-red-600 mt-0.5 flex-shrink-0" size={20} />
               <div className="text-xs text-red-900 leading-relaxed">
-                <p className="font-bold text-sm mb-1 text-red-950">Are you sure you want to remove this leader?</p>
+                <p className="font-bold text-sm mb-1 text-red-950">Remove feedback staff assignment?</p>
                 <p>
-                  You are about to remove <strong className="font-extrabold">{leaderToRemove.leaderName}</strong>{' '}
-                  {leaderToRemove.leaderEmployeeId && <span>(ID: {leaderToRemove.leaderEmployeeId})</span>} from the role of{' '}
-                  <strong className="font-extrabold uppercase">
-                    {leaderToRemove.leaderType === 'hod' ? 'Head of Department (HOD)' : leaderToRemove.leaderType === 'incharge' ? 'Operational Incharge' : 'Assistant COO'}
-                  </strong>{' '}
-                  for <strong className="font-extrabold">{leaderToRemove.deptName}</strong>.
+                  You are about to remove <strong className="font-extrabold">{leaderToRemove.staffName}</strong>{' '}
+                  {leaderToRemove.employeeId && <span>(ID: {leaderToRemove.employeeId})</span>} as the designated feedback provider for{' '}
+                  <strong className="font-extrabold">{leaderToRemove.deptName}</strong>.
                 </p>
                 <p className="mt-2 text-red-700">
-                  This action will unbind them from this department in the governance matrix and revoke their incident review permissions for this department.
+                  This department will not have anyone authorized to submit feedback on incidents until a new staff member is assigned.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ─── ADD DEPARTMENT MODAL ─── */}
+      <Modal
+        open={showAddDeptModal}
+        onClose={() => {
+          if (!createDeptMutation.isPending) {
+            setShowAddDeptModal(false);
+          }
+        }}
+        title="Add New Hospital Department"
+        footer={
+          <>
+            <button
+              onClick={() => setShowAddDeptModal(false)}
+              disabled={createDeptMutation.isPending}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => createDeptMutation.mutate(newDeptForm)}
+              disabled={!newDeptForm.name.trim() || createDeptMutation.isPending}
+              className="btn-primary"
+            >
+              {createDeptMutation.isPending ? <Spinner size={15} className="text-white" /> : <Plus size={15} />}
+              Create Department
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Alert
+            type="info"
+            message="Add a hospital department to the system directory. You can optionally designate an employee authorized to provide incident feedback."
+          />
+
+          <div>
+            <label className="field-label field-required font-bold">Department Name</label>
+            <input
+              type="text"
+              placeholder="e.g. Cardiology, Radiology, Pharmacy..."
+              value={newDeptForm.name}
+              onChange={(e) => setNewDeptForm((f) => ({ ...f, name: e.target.value }))}
+              className="input font-bold text-sm w-full"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="field-label font-bold">Assign Initial Feedback Staff (Optional)</label>
+            {!newDeptForm.employeeId ? (
+              <div className="relative mt-1">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={newDeptSearchTerm}
+                  onChange={(e) => setNewDeptSearchTerm(e.target.value)}
+                  placeholder="Search by staff name, ID, or department..."
+                  className="input pl-9 text-xs font-semibold w-full"
+                />
+                {newDeptSearchTerm.trim() && (
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-slate-100">
+                    {(() => {
+                      const term = newDeptSearchTerm.toLowerCase().trim();
+                      const matches = (masterEmployees || []).filter((e) => {
+                        const fullName = String(e.full_name || e.name || '').toLowerCase();
+                        const empId = String(e.employee_id || '').toLowerCase();
+                        const dept = String(e.department || '').toLowerCase();
+                        return fullName.includes(term) || empId.includes(term) || dept.includes(term);
+                      }).slice(0, 30);
+
+                      if (matches.length === 0) {
+                        return (
+                          <div className="p-3 text-xs text-slate-500 text-center font-medium">
+                            No employees found matching &quot;{newDeptSearchTerm}&quot;
+                          </div>
+                        );
+                      }
+
+                      return matches.map((emp) => (
+                        <div
+                          key={emp.employee_id || emp.id}
+                          className="p-2.5 hover:bg-amber-50 cursor-pointer transition-colors"
+                          onClick={() => {
+                            setNewDeptForm((f) => ({ ...f, employeeId: String(emp.employee_id) }));
+                            setNewDeptSearchTerm('');
+                          }}
+                        >
+                          <div className="flex items-center justify-between">
+                            <p className="font-bold text-xs text-slate-800">{emp.full_name || emp.name}</p>
+                            <span className="text-[10px] font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded font-bold">
+                              ID: {emp.employee_id}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {emp.designation || 'Staff'} · {emp.department || 'Hospital Personnel'}
+                          </p>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                {(() => {
+                  const emp = (masterEmployees || []).find((e) => String(e.employee_id) === String(newDeptForm.employeeId));
+                  return (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between mt-1">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+                          {(emp?.full_name || emp?.name || 'E').charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{emp?.full_name || emp?.name || newDeptForm.employeeId}</p>
+                          <p className="text-[10px] font-mono text-slate-500">ID: {newDeptForm.employeeId}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setNewDeptForm((f) => ({ ...f, employeeId: '' }))}
+                        className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* ─── DELETE DEPARTMENT CONFIRMATION MODAL ─── */}
+      <Modal
+        open={showDeleteDeptModal}
+        onClose={() => {
+          if (!deleteDeptMutation.isPending) {
+            setShowDeleteDeptModal(false);
+            setDeptToDelete(null);
+          }
+        }}
+        title="Delete Hospital Department"
+        footer={
+          <>
+            <button
+              onClick={() => {
+                setShowDeleteDeptModal(false);
+                setDeptToDelete(null);
+              }}
+              disabled={deleteDeptMutation.isPending}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (deptToDelete?.id) {
+                  deleteDeptMutation.mutate(deptToDelete.id);
+                }
+              }}
+              disabled={deleteDeptMutation.isPending}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-red-500/20 transition-all disabled:opacity-60"
+            >
+              {deleteDeptMutation.isPending ? <Spinner size={14} className="text-white" /> : <Trash2 size={14} />}
+              Confirm Deletion
+            </button>
+          </>
+        }
+      >
+        {deptToDelete && (
+          <div className="space-y-4">
+            <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="text-red-600 mt-0.5 flex-shrink-0" size={20} />
+              <div className="text-xs text-red-900 leading-relaxed">
+                <p className="font-bold text-sm mb-1 text-red-950">
+                  Delete &quot;{deptToDelete.name}&quot;?
+                </p>
+                <p>
+                  Are you sure you want to permanently delete <strong className="font-extrabold">{deptToDelete.name}</strong> from the hospital department directory?
+                </p>
+                {deptToDelete.staffName && (
+                  <p className="mt-1 text-red-800">
+                    Currently assigned feedback staff ({deptToDelete.staffName}) will also be unmapped.
+                  </p>
+                )}
+                <p className="mt-2 text-red-700">
+                  Note: If this department has recorded incidents or historical feedback, deletion is prevented by system integrity rules to preserve audit trails.
                 </p>
               </div>
             </div>

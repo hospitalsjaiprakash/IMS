@@ -1,16 +1,18 @@
 import { Modal } from './index';
 import { Download, FileText, Image as ImageIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export function AttachmentViewerModal({ open, onClose, fileUrl, fileName }) {
-  const isImage = fileUrl && (
-    fileUrl.toLowerCase().match(/\\.(jpeg|jpg|gif|png|webp)/i) || 
-    fileUrl.includes('response-content-disposition') // S3 presigned might hide ext but usually it's passed via fileName
-  );
-  
-  const isImageByName = fileName && fileName.toLowerCase().match(/\\.(jpeg|jpg|gif|png|webp)/i);
+  const imageRegex = /\.(jpe?g|png|gif|webp|bmp|svg)($|\?)/i;
+  const isImage = (fileUrl && imageRegex.test(fileUrl)) || (fileName && imageRegex.test(fileName));
+  const isPdf = (fileUrl && /\.pdf($|\?)/i.test(fileUrl)) || (fileName && /\.pdf$/i.test(fileName));
   
   const [imgError, setImgError] = useState(false);
+
+  // Reset img error when file changes
+  useEffect(() => {
+    setImgError(false);
+  }, [fileUrl]);
 
   return (
     <Modal
@@ -57,12 +59,18 @@ export function AttachmentViewerModal({ open, onClose, fileUrl, fileName }) {
       <div className="p-4 flex flex-col items-center justify-center min-h-[300px] bg-slate-50/50 rounded-xl border border-slate-100">
         {!fileUrl ? (
           <div className="text-slate-400">Loading attachment...</div>
-        ) : (isImage || isImageByName) && !imgError ? (
+        ) : (isImage) && !imgError ? (
           <img
             src={fileUrl}
             alt={fileName}
             onError={() => setImgError(true)}
             className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-sm"
+          />
+        ) : isPdf ? (
+          <iframe
+            src={fileUrl}
+            className="w-full h-[70vh] rounded-lg border border-slate-200"
+            title={fileName || 'PDF Preview'}
           />
         ) : (
           <div className="flex flex-col items-center gap-4 text-slate-500">

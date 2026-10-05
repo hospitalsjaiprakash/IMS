@@ -17,9 +17,9 @@ router.get('/:id', authenticate, incidentsController.getIncident);
 router.put('/:id', authenticate, incidentActionsController.updateIncident);
 router.post('/:id/withdraw', authenticate, incidentsController.withdrawIncident);
 
-// HOD actions
-router.post('/:id/hod-feedback', authenticate, authorize('hod'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
-router.post('/:id/request-redirect', authenticate, authorize('hod'), incidentActionsController.requestRedirect);
+// HOD actions (authorized for HODs, Asst COOs, COOs, and department leaders)
+router.post('/:id/hod-feedback', authenticate, authorize('hod', 'asst_coo', 'coo', 'employee'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
+router.post('/:id/request-redirect', authenticate, authorize('hod', 'asst_coo', 'coo', 'employee'), incidentActionsController.requestRedirect);
 
 // Feedback edit
 router.put('/:id/feedback', authenticate, authorize('hod', 'imc', 'head_management'), incidentActionsController.editFeedback);

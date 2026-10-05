@@ -118,14 +118,22 @@ exports.requestRedirect = async (req, res) => {
       return res.status(400).json({ error: 'Incident is not in HOD review status.' });
     }
 
-    // Get HOD's department
-    const deptRes = await client.query('SELECT name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1 OR asst_coo_user_id = $1 OR LOWER(name) = LOWER($2)', [req.user.id, (req.user.department || '').trim()]);
+    // Get assigned department for user
+    const deptRes = await client.query('SELECT name FROM departments WHERE assigned_user_id = $1 OR (assigned_user_id IS NULL AND hod_user_id = $1) OR LOWER(name) = LOWER($2)', [req.user.id, (req.user.department || '').trim()]);
     const deptName = deptRes.rows[0]?.name || req.user.department || 'Unknown';
 
     await client.query(
-      `UPDATE incidents SET status = 'redirect_requested', redirect_reason = $1,
-       redirect_requested_by_dept = $2, redirect_requested_at = NOW(), updated_at = NOW() WHERE id = $3`,
-      [reason, deptName, id]
+      `UPDATE incidents SET 
+         status = 'redirect_requested', 
+         redirect_reason = $1,
+         redirect_requested_by_dept = $2, 
+         redirect_requested_by_user_id = $3,
+         redirect_requested_at = NOW(), 
+         redirect_rejected_reason = NULL,
+         redirect_rejected_at = NULL,
+         updated_at = NOW() 
+       WHERE id = $4`,
+      [reason, deptName, req.user.id, id]
     );
 
     await client.query('COMMIT');
@@ -134,7 +142,7 @@ exports.requestRedirect = async (req, res) => {
     const imcMembers = await query("SELECT id, email, full_name FROM users WHERE role = 'imc'");
     for (const m of imcMembers.rows) {
       await createNotification(m.id, id, 'Redirect Requested',
-        `HOD of ${deptName} has requested a redirect for incident ${incident.reference_id}.`,
+        `HOD of ${deptName} has requested a redirect for incident ${incident.reference_id}. Reason: "${reason}"`,
         'redirect_requested');
       if (m.email) {
         sendEmail(m.email, templates.redirectRequested(incident, m, deptName, reason)).catch(() => { });
@@ -210,18 +218,25 @@ exports.approveRedirect = async (req, res) => {
     }
 
     await client.query(
-      `UPDATE incidents SET status = $1, redirect_reason = NULL, redirect_requested_by_dept = NULL, redirect_requested_at = NULL, updated_at = NOW() WHERE id = $2`,
+      `UPDATE incidents SET 
+         status = $1, 
+         redirect_reason = NULL, 
+         redirect_requested_at = NULL, 
+         redirect_rejected_reason = NULL,
+         redirect_rejected_at = NULL,
+         updated_at = NOW() 
+       WHERE id = $2`,
       [newStatus, id]
     );
 
     await client.query('COMMIT');
 
-    // Notify new HODs of all targeted departments
+    // Notify assigned staff of all targeted departments
     const targetDeptIds = targetDepts.map(d => d.id);
     const newLeadersRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-       LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
-       WHERE d.id = ANY($1) AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+       JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
+       WHERE d.id = ANY($1)`,
       [targetDeptIds]
     );
     for (const leader of newLeadersRes.rows) {
@@ -235,11 +250,16 @@ exports.approveRedirect = async (req, res) => {
 
     // Notify original HOD of decision
     const redirectedDeptNamesStr = targetDepts.map(d => d.name).join(', ');
-    if (incident.redirect_requested_by_dept) {
+    if (incident.redirect_requested_by_user_id) {
+      const origUserRes = await query('SELECT email, full_name FROM users WHERE id = $1', [incident.redirect_requested_by_user_id]);
+      if (origUserRes.rows[0]?.email) {
+        sendEmail(origUserRes.rows[0].email, templates.redirectDecision(incident, origUserRes.rows[0], true, redirectedDeptNamesStr, null)).catch(() => { });
+      }
+    } else if (incident.redirect_requested_by_dept) {
       const origHodRes = await query(
         `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-         LEFT JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id OR LOWER(d.name) = LOWER(u.department))
-         WHERE d.name = $1 AND (u.role = 'hod' OR d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)`,
+         JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
+         WHERE d.name = $1`,
         [incident.redirect_requested_by_dept]
       );
       if (origHodRes.rows.length) {
@@ -285,31 +305,59 @@ exports.rejectRedirect = async (req, res) => {
     const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
 
     await client.query(
-      `UPDATE incidents SET status = $1, redirect_reason = NULL, redirect_requested_by_dept = NULL, redirect_requested_at = NULL, updated_at = NOW() WHERE id = $2`,
-      [newStatus, id]
+      `UPDATE incidents SET 
+         status = $1, 
+         redirect_rejected_reason = $2, 
+         redirect_rejected_at = NOW(), 
+         redirect_reason = NULL, 
+         redirect_requested_at = NULL, 
+         updated_at = NOW() 
+       WHERE id = $3`,
+      [newStatus, reason, id]
     );
 
     await client.query('COMMIT');
 
+    // Notify the user who requested the redirect directly
+    let notified = false;
+    if (incident.redirect_requested_by_user_id) {
+      await createNotification(
+        incident.redirect_requested_by_user_id,
+        id,
+        'Redirect Request Rejected',
+        `IMC has rejected the redirect request for incident ${incident.reference_id}. Reason: "${reason}". Please review and provide your department feedback.`,
+        'redirect_rejected'
+      );
+      const userRes = await query('SELECT id, email, full_name FROM users WHERE id = $1', [incident.redirect_requested_by_user_id]);
+      if (userRes.rows[0]?.email) {
+        sendEmail(userRes.rows[0].email, templates.redirectDecision(incident, userRes.rows[0], false, null, reason)).catch(() => { });
+      }
+      notified = true;
+    }
 
     if (incident.redirect_requested_by_dept) {
       const origHodRes = await query(
         `SELECT u.id, u.email, u.full_name FROM users u
-         JOIN departments d ON (d.hod_user_id = u.id OR d.incharge_user_id = u.id OR d.asst_coo_user_id = u.id)
+         JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
          WHERE d.name = $1`, [incident.redirect_requested_by_dept]
       );
-      if (origHodRes.rows.length) {
-        const origHod = origHodRes.rows[0];
-        await createNotification(origHod.id, id, 'Redirect Request Rejected',
-          `IMC has rejected the redirect request for incident ${incident.reference_id}. Please review and provide feedback.`,
-          'redirect_rejected');
-        if (origHod.email) {
-          sendEmail(origHod.email, templates.redirectDecision(incident, origHod, false, null, reason)).catch(() => { });
+      for (const hodUser of origHodRes.rows) {
+        if (hodUser.id !== incident.redirect_requested_by_user_id) {
+          await createNotification(
+            hodUser.id,
+            id,
+            'Redirect Request Rejected',
+            `IMC has rejected the redirect request for incident ${incident.reference_id}. Reason: "${reason}". Please review and provide feedback.`,
+            'redirect_rejected'
+          );
+          if (hodUser.email) {
+            sendEmail(hodUser.email, templates.redirectDecision(incident, hodUser, false, null, reason)).catch(() => { });
+          }
         }
       }
     }
 
-    await auditLog(req.user.id, 'REDIRECT_REJECTED', id, { reason }, req.ip);
+    await auditLog(req.user.id, 'REDIRECT_REJECTED', id, { reason, requestedByDept: incident.redirect_requested_by_dept, requestedByUserId: incident.redirect_requested_by_user_id }, req.ip);
 
     if (req.io) {
       req.io.emit('incident_updated', { id });
@@ -354,9 +402,9 @@ exports.verifyEmployeeTraining = async (req, res) => {
       const deptRes = await client.query('SELECT * FROM departments WHERE id = $1', [emp.department_id]);
       if (deptRes.rows.length) {
         const d = deptRes.rows[0];
-        if (d.hod_user_id !== req.user.id && d.incharge_user_id !== req.user.id && d.asst_coo_user_id !== req.user.id) {
+        if (d.assigned_user_id !== req.user.id && d.hod_user_id !== req.user.id) {
            await client.query('ROLLBACK');
-           return res.status(403).json({ error: 'You are not the HOD for this employee’s department.' });
+           return res.status(403).json({ error: 'You are not the designated feedback staff for this employee’s department.' });
         }
       }
     }
@@ -515,12 +563,12 @@ exports.remindHod = async (req, res) => {
     if (!incResult.rows.length) return res.status(404).json({ error: 'Incident not found' });
     const incident = incResult.rows[0];
 
-    // Find HOD(s) of concerned department(s) who haven't submitted feedback yet
+    // Find assigned staff of concerned department(s) who haven't submitted feedback yet
     const deptRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name
        FROM incident_departments id
        JOIN departments d ON d.id = id.department_id
-       JOIN users u ON (u.id = d.hod_user_id OR u.id = d.incharge_user_id OR u.id = d.asst_coo_user_id)
+       JOIN users u ON (u.id = COALESCE(d.assigned_user_id, d.hod_user_id))
        WHERE id.incident_id = $1
          AND NOT EXISTS (
            SELECT 1 FROM feedbacks f

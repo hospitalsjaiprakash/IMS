@@ -286,9 +286,42 @@ const templates = {
 };
 
 // ─── Send Email Helper ────────────────────────────────────────────────────────
-const sendEmail = async (to, templateData) => {
+const sendEmail = async (to, templateData, options = {}) => {
+  if (!to || !templateData) return false;
+
+  // Authentication processes (signup, welcome email, password reset, OTP, credentials) are always permitted.
+  const isAuth = Boolean(
+    options.isAuth ||
+    templateData.isAuth ||
+    templateData.subject?.toLowerCase().includes('welcome') ||
+    templateData.subject?.toLowerCase().includes('otp') ||
+    templateData.subject?.toLowerCase().includes('password') ||
+    templateData.subject?.toLowerCase().includes('account') ||
+    templateData.subject?.toLowerCase().includes('verification')
+  );
+
+  if (!isAuth) {
+    try {
+      const cfgRes = await query("SELECT value FROM system_config WHERE key = 'email_notifications_enabled'");
+      const enabled = cfgRes.rows.length === 0 || cfgRes.rows[0].value === 'true';
+      if (!enabled) {
+        console.log(`[Email Skipped] General email notifications are disabled in system settings. Skipped sending "${templateData.subject}" to ${to}`);
+        try {
+          const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+          await query(
+            `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, details)
+             VALUES ($1, $2, 'EMAIL', $3, 'SKIPPED', 'Email notifications disabled in System Settings')`,
+            [userRes.rows[0]?.id || null, to, templateData.subject]
+          );
+        } catch (_) {}
+        return true;
+      }
+    } catch (cfgErr) {
+      console.warn('[Email Config Check Warning]', cfgErr.message);
+    }
+  }
+
   if (
-    !to ||
     !process.env.SMTP_USER ||
     !process.env.SMTP_PASS ||
     process.env.SMTP_USER === 'your-gmail@gmail.com' ||

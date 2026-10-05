@@ -48,6 +48,9 @@ export default function DashboardPage() {
   const hodQueue = allReceived.filter(i => ['submitted', 'with_hod', 'with_hod_and_imc'].includes(i.status));
   const overdueCount = hodQueue.filter(i => ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
   const escalatedCount = hodQueue.filter(i => !!i.priority_escalated_by).length;
+  const rejectedRedirectCount = (user?.role === 'hod' && activeView === 'hod')
+    ? (stats?.hodReport?.redirectRejectedCount || allReceived.filter(i => !!i.redirect_rejected_at).length || 0)
+    : (stats?.totals?.redirectRejectedCount || 0);
 
   if (isLoading) {
     return (
@@ -204,6 +207,31 @@ export default function DashboardPage() {
 
       {/* OVERVIEW SECTION */}
       <div className="space-y-6">
+        {/* Redirection Rejected Alert Banner */}
+        {rejectedRedirectCount > 0 && (
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm animate-fade-in">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 text-amber-600">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900">
+                  Redirection Request Rejected — Action Required
+                </h3>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  {rejectedRedirectCount} incident(s) had redirection rejected by IMC. Your department feedback is required to proceed.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate('/incidents', { state: { reviewStage: 'hodPending' } })}
+              className="btn-primary bg-amber-600 hover:bg-amber-700 text-white text-xs px-3.5 py-2 font-semibold whitespace-nowrap self-end sm:self-center shadow-xs"
+            >
+              Give Feedback Now →
+            </button>
+          </div>
+        )}
+
         {/* Warnings Panel */}
         {user?.role === 'hod' && activeView === 'hod' && (overdueCount > 0 || escalatedCount > 0) && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">

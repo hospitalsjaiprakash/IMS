@@ -341,20 +341,31 @@ export default function IncidentDetailPage() {
   const hasImcFeedback = feedbacks?.some(f => f.role === 'imc');
   const canWithdraw = user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status);
 
-  // Rule 1: HOD of all concerned departments should be able to add their own feedback
+  // Rule 1: HOD of all concerned departments (or user who requested redirect) can add feedback
   // Rule 4: HOD feedback cannot be added after IMC has provided feedback
+  const isTargetOrRequestedUser = Boolean(
+    incident.is_target_hod || 
+    (incident.redirect_requested_by_user_id && incident.redirect_requested_by_user_id === user?.id)
+  );
+
+  const isHodRole = ['hod', 'asst_coo', 'coo'].includes(user?.role) || (user?.role === 'employee' && isTargetOrRequestedUser);
+
+  // If redirect was rejected, the user who requested redirection or target HOD must be able to give feedback, even if they originally reported the incident
+  const isReporterAllowed = (!incident.redirect_rejected_at ? user?.id !== incident.reporter_id : true);
+
   const canHodFeedback =
-    user?.role === 'hod' &&
-    incident.is_target_hod &&
-    user?.id !== incident.reporter_id &&
+    isHodRole &&
+    isTargetOrRequestedUser &&
+    isReporterAllowed &&
     ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status) &&
     !incident.user_hod_dept_submitted &&
     !hasImcFeedback;
 
   const canRequestRedirect =
-    user?.role === 'hod' &&
-    incident.is_target_hod &&
+    isHodRole &&
+    isTargetOrRequestedUser &&
     user?.id !== incident.reporter_id &&
+    !incident.redirect_rejected_at &&
     ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status) &&
     !incident.user_hod_dept_submitted &&
     !hasImcFeedback;
@@ -391,8 +402,8 @@ export default function IncidentDetailPage() {
   const canCloseIncident = isLead && incident.status === 'pending_training';
 
   const isHodOfDept = (deptName) => {
-    if (!user || user.role !== 'hod') return false;
-    return departmentsList.some(d => d.name === deptName && (d.hod_user_id === user.id || d.incharge_user_id === user.id || d.asst_coo_user_id === user.id));
+    if (!user) return false;
+    return departmentsList.some(d => d.name === deptName && (d.assigned_user_id === user.id || (!d.assigned_user_id && d.hod_user_id === user.id)));
   };
   
   const hodEmployees = incident.responsible_employees?.filter(emp => isHodOfDept(emp.department_name)) || [];
@@ -446,6 +457,36 @@ export default function IncidentDetailPage() {
           />
         }
       />
+
+      {/* Redirection Rejected Alert Banner */}
+      {incident.redirect_rejected_at && (
+        <div className="mb-4 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm animate-fade-in print:hidden">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
+            <div className="flex-1">
+              <h4 className="text-sm font-bold text-amber-900">
+                Department Redirection Request Rejected
+              </h4>
+              <p className="text-xs text-amber-800 mt-1">
+                <strong>Reason:</strong> {incident.redirect_rejected_reason || 'The redirection request was rejected by IMC. Please provide your department feedback.'}
+              </p>
+              <div className="flex items-center justify-between gap-2 mt-2">
+                <span className="text-[11px] text-amber-700">
+                  Rejected on {formatDateTime(incident.redirect_rejected_at)}
+                </span>
+                {canHodFeedback && (
+                  <button
+                    onClick={() => setShowFeedbackModal(true)}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+                  >
+                    Provide Department Feedback Now
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- NORMAL UI --- */}
       <div className="w-full space-y-5 print:hidden">
@@ -1025,6 +1066,7 @@ export default function IncidentDetailPage() {
               feedbacks={feedbacks}
               attachments={attachments}
               finalReport={finalReport}
+              timelineEvents={data.timelineEvents}
               onViewAttachment={(att) => setPreviewFile(att)}
             />
           </div>

@@ -1,10 +1,71 @@
 const { query } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 
-// GET all master employees and check if they have created an IMS account
+// GET master employees with pagination, advanced search, filtering, and sorting
 exports.getAllEmployees = async (req, res) => {
   try {
-    const result = await query(`
+    const { 
+      page, 
+      limit = 100, 
+      search = '', 
+      department = '', 
+      is_registered, 
+      sort_by = 'name', 
+      sort_order = 'asc',
+      all
+    } = req.query;
+
+    const conditions = [];
+    const params = [];
+    let paramIndex = 1;
+
+    // Industry-standard search matching name, employee_id, department, designation, email, phone
+    if (search && search.trim()) {
+      const term = `%${search.trim()}%`;
+      conditions.push(`(
+        m.name ILIKE $${paramIndex} OR 
+        m.employee_id ILIKE $${paramIndex} OR 
+        m.department ILIKE $${paramIndex} OR 
+        m.designation ILIKE $${paramIndex} OR 
+        m.email ILIKE $${paramIndex} OR 
+        m.phone ILIKE $${paramIndex} OR
+        u.email ILIKE $${paramIndex}
+      )`);
+      params.push(term);
+      paramIndex++;
+    }
+
+    // Department filter
+    if (department && department.trim() && department !== 'all') {
+      conditions.push(`m.department = $${paramIndex}`);
+      params.push(department.trim());
+      paramIndex++;
+    }
+
+    // Registered status filter
+    if (is_registered !== undefined && is_registered !== '' && is_registered !== 'all') {
+      if (is_registered === 'true' || is_registered === true) {
+        conditions.push(`u.id IS NOT NULL`);
+      } else if (is_registered === 'false' || is_registered === false) {
+        conditions.push(`u.id IS NULL`);
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Sorting
+    const allowedSortFields = {
+      name: 'm.name',
+      employee_id: 'm.employee_id',
+      department: 'm.department',
+      designation: 'm.designation',
+      is_registered: 'is_registered'
+    };
+    const sortColumn = allowedSortFields[sort_by] || 'm.name';
+    const orderDirection = sort_order?.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    // Base query
+    const baseQuery = `
       SELECT 
         m.id as master_id, 
         m.employee_id, 
@@ -24,12 +85,59 @@ exports.getAllEmployees = async (req, res) => {
         u.is_management_member
       FROM master_employees m
       LEFT JOIN users u ON m.employee_id = u.employee_id
-      ORDER BY m.name ASC
+      ${whereClause}
+    `;
+
+    // Distinct departments for filter dropdown
+    const deptResult = await query(`
+      SELECT DISTINCT department 
+      FROM master_employees 
+      WHERE department IS NOT NULL AND TRIM(department) != '' 
+      ORDER BY department ASC
     `);
+    const departments = deptResult.rows.map(r => r.department);
+
+    // If caller requests all without pagination (e.g. for user mapping dropdowns)
+    if (all === 'true' && !page) {
+      const result = await query(`${baseQuery} ORDER BY ${sortColumn} ${orderDirection}`, params);
+      return res.json({
+        success: true,
+        data: result.rows,
+        total: result.rows.length,
+        departments
+      });
+    }
+
+    // Count query for pagination
+    const countSql = `
+      SELECT COUNT(*) as total
+      FROM master_employees m
+      LEFT JOIN users u ON m.employee_id = u.employee_id
+      ${whereClause}
+    `;
+    const countResult = await query(countSql, params);
+    const total = parseInt(countResult.rows[0].total, 10);
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, Math.min(200, parseInt(limit, 10) || 100)); // Default 100
+    const offset = (pageNum - 1) * limitNum;
+
+    const dataSql = `
+      ${baseQuery}
+      ORDER BY ${sortColumn} ${orderDirection}
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+    const dataParams = [...params, limitNum, offset];
+    const dataResult = await query(dataSql, dataParams);
 
     res.json({
       success: true,
-      data: result.rows
+      data: dataResult.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      departments
     });
   } catch (error) {
     console.error('Error fetching master employees:', error);

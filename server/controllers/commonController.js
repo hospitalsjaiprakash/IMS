@@ -27,10 +27,18 @@ exports.getDepartments = async (req, res) => {
   try {
     const result = await query(
       `SELECT d.*, 
+         COALESCE(d.assigned_user_id, d.hod_user_id) as assigned_user_id,
+         u_assigned.full_name as assigned_staff_name,
+         u_assigned.employee_id as assigned_employee_id,
+         u_assigned.designation as assigned_designation,
+         u_assigned.department as assigned_department,
+         u_assigned.email as assigned_email,
+         u_assigned.phone as assigned_phone,
          u1.full_name as hod_name, u1.employee_id as hod_employee_id,
          u2.full_name as incharge_name, u2.employee_id as incharge_employee_id,
          u3.full_name as asst_coo_name, u3.employee_id as asst_coo_employee_id
        FROM departments d
+       LEFT JOIN users u_assigned ON u_assigned.id = COALESCE(d.assigned_user_id, d.hod_user_id)
        LEFT JOIN users u1 ON u1.id = d.hod_user_id
        LEFT JOIN users u2 ON u2.id = d.incharge_user_id
        LEFT JOIN users u3 ON u3.id = d.asst_coo_user_id
@@ -44,7 +52,7 @@ exports.getDepartments = async (req, res) => {
 };
 
 /**
- * Download attachment via presigned S3 URL or local path
+ * Download attachment via presigned S3 URL or local path (forces download attachment header)
  */
 exports.downloadAttachment = async (req, res) => {
   try {
@@ -59,16 +67,79 @@ exports.downloadAttachment = async (req, res) => {
       const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
         Bucket: process.env.S3_BUCKET_NAME,
         Key: storedFilename,
-        ResponseContentDisposition: `attachment; filename="${att.original_filename}"`,
-      }), { expiresIn: 60 });
-      return res.json({ url: signedUrl });
+        ResponseContentDisposition: `attachment; filename="${encodeURIComponent(att.original_filename)}"`,
+      }), { expiresIn: 300 });
+      return res.json({ url: signedUrl, filename: att.original_filename });
     } else {
       const filePath = path.resolve(uploadDir, storedFilename);
       if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
-      return res.json({ url: `/uploads/${storedFilename}` });
+      return res.json({ url: `/uploads/${storedFilename}`, filename: att.original_filename });
     }
   } catch (e) {
     console.error('[GET /attachments/:id/download] error:', e);
     res.status(500).json({ error: 'Failed to generate download link' });
+  }
+};
+
+/**
+ * Preview attachment inline via JSON endpoint (returns presigned inline URL or local URL)
+ */
+exports.previewAttachment = async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM attachments WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Attachment not found' });
+    const att = result.rows[0];
+    const storedFilename = att.stored_filename;
+
+    if (s3Client && process.env.S3_BUCKET_NAME) {
+      const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+      const { GetObjectCommand } = require('@aws-sdk/client-s3');
+      const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: storedFilename,
+        ResponseContentDisposition: `inline; filename="${encodeURIComponent(att.original_filename)}"`,
+        ResponseContentType: att.mime_type || undefined,
+      }), { expiresIn: 3600 });
+      return res.json({ url: signedUrl, mimeType: att.mime_type, filename: att.original_filename });
+    } else {
+      const filePath = path.resolve(uploadDir, storedFilename);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+      return res.json({ url: `/uploads/${storedFilename}`, mimeType: att.mime_type, filename: att.original_filename });
+    }
+  } catch (e) {
+    console.error('[GET /attachments/:id/preview] error:', e);
+    res.status(500).json({ error: 'Failed to generate preview link' });
+  }
+};
+
+/**
+ * Direct file view/stream endpoint (useful for <img> tags or direct links)
+ */
+exports.serveAttachmentFile = async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM attachments WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).send('Attachment not found');
+    const att = result.rows[0];
+    const storedFilename = att.stored_filename;
+
+    if (s3Client && process.env.S3_BUCKET_NAME) {
+      const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+      const { GetObjectCommand } = require('@aws-sdk/client-s3');
+      const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: storedFilename,
+        ResponseContentDisposition: `inline; filename="${encodeURIComponent(att.original_filename)}"`,
+        ResponseContentType: att.mime_type || undefined,
+      }), { expiresIn: 3600 });
+      return res.redirect(signedUrl);
+    } else {
+      const filePath = path.resolve(uploadDir, storedFilename);
+      if (!fs.existsSync(filePath)) return res.status(404).send('File not found on disk');
+      if (att.mime_type) res.setHeader('Content-Type', att.mime_type);
+      return res.sendFile(filePath);
+    }
+  } catch (e) {
+    console.error('[GET /attachments/:id/view] error:', e);
+    res.status(500).send('Failed to serve attachment');
   }
 };

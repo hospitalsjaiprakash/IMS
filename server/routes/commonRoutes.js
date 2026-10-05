@@ -7,7 +7,9 @@ const commonController = require('../controllers/commonController');
 router.get('/locations', authenticate, commonController.getLocations);
 router.get('/departments', authenticate, commonController.getDepartments);
 
-// Attachment download link generator
+// Attachment download and preview endpoints
 router.get('/attachments/:id/download', authenticate, commonController.downloadAttachment);
+router.get('/attachments/:id/preview', authenticate, commonController.previewAttachment);
+router.get('/attachments/:id/view', commonController.serveAttachmentFile);
 
 module.exports = router;

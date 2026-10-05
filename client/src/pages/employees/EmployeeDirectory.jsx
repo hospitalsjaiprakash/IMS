@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../store/authStore';
-import { employeeApi } from '../../api';
+import { employeeApi, masterEmployeesApi } from '../../api';
 import api from '../../api';
 import { Spinner, EmptyState, Modal } from '../../components/ui';
 import { Search, Users, Phone, Building, Briefcase, FileText, ArrowLeft, Plus, Upload, CheckCircle, XCircle } from 'lucide-react';
@@ -17,30 +17,68 @@ export default function EmployeeDirectory() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
+  const [selectedDept, setSelectedDept] = useState(searchParams.get('dept') || 'all');
+  const [selectedStatus, setSelectedStatus] = useState(searchParams.get('status') || 'all');
+  const [page, setPage] = useState(parseInt(searchParams.get('page'), 10) || 1);
+  const [limit, setLimit] = useState(100);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
   const [selectedEmpId, setSelectedEmpId] = useState('');
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const fileInputRef = useRef(null);
   const [formData, setFormData] = useState({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
 
-  // Update URL so it can be refreshed/bookmarked
+  // Debounce search term to reflect results smoothly and immediately
   React.useEffect(() => {
     const timer = setTimeout(() => {
-      if (searchTerm) {
-        setSearchParams({ q: searchTerm }, { replace: true });
-      } else {
-        setSearchParams({}, { replace: true });
-      }
-    }, 400);
+      setDebouncedSearch(searchTerm);
+      setPage(1); // Reset to page 1 on search change
+    }, 250);
     return () => clearTimeout(timer);
-  }, [searchTerm, setSearchParams]);
+  }, [searchTerm]);
 
-  // Query for master employees (The Directory List)
-  const { data: employees = [], isLoading: isDirectoryLoading, isError: isDirectoryError } = useQuery({
-    queryKey: ['master-employees'],
-    queryFn: () => api.get('/api/master-employees').then(res => res.data.data),
+  // Sync URL parameters
+  React.useEffect(() => {
+    const params = {};
+    if (debouncedSearch) params.q = debouncedSearch;
+    if (selectedDept !== 'all') params.dept = selectedDept;
+    if (selectedStatus !== 'all') params.status = selectedStatus;
+    if (page > 1) params.page = page;
+    setSearchParams(params, { replace: true });
+  }, [debouncedSearch, selectedDept, selectedStatus, page, setSearchParams]);
+
+  // Query for master employees (Paginated, Searchable, Filterable)
+  const { data: directoryData, isLoading: isDirectoryLoading, isError: isDirectoryError, refetch } = useQuery({
+    queryKey: ['master-employees', { page, limit, search: debouncedSearch, department: selectedDept, status: selectedStatus, sortBy, sortOrder }],
+    queryFn: () => masterEmployeesApi.list({
+      page,
+      limit,
+      search: debouncedSearch,
+      department: selectedDept,
+      is_registered: selectedStatus === 'all' ? undefined : selectedStatus === 'registered',
+      sort_by: sortBy,
+      sort_order: sortOrder
+    }).then(res => res.data),
     enabled: !selectedEmpId,
+    keepPreviousData: true
   });
+
+  const employees = directoryData?.data || [];
+  const totalEmployees = directoryData?.total || 0;
+  const totalPages = directoryData?.totalPages || 1;
+  const departmentsList = directoryData?.departments || [];
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+    setPage(1);
+  };
 
   // Query for selected employee details (Detail View)
   const { data: detailData, isLoading: isDetailLoading } = useQuery({
@@ -60,7 +98,7 @@ export default function EmployeeDirectory() {
 
   // Admin Mutations
   const addMutation = useMutation({
-    mutationFn: (data) => api.post('/api/master-employees', data),
+    mutationFn: (data) => masterEmployeesApi.add(data),
     onSuccess: () => {
       toast.success('Employee added to Directory');
       queryClient.invalidateQueries({ queryKey: ['master-employees'] });
@@ -73,7 +111,7 @@ export default function EmployeeDirectory() {
   });
 
   const bulkAddMutation = useMutation({
-    mutationFn: (employees) => api.post('/api/master-employees/bulk', { employees }),
+    mutationFn: (employees) => masterEmployeesApi.bulkAdd(employees),
     onSuccess: (res) => {
       toast.success(res.data.message || 'Bulk upload successful');
       queryClient.invalidateQueries({ queryKey: ['master-employees'] });
@@ -126,25 +164,19 @@ export default function EmployeeDirectory() {
     e.target.value = null;
   };
 
-  const filteredEmployees = employees.filter(emp => 
-    emp.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    emp.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (emp.department && emp.department.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
-
   const emp = detailData?.selectedEmployee;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="page-header flex justify-between items-end">
+      <div className="page-header flex flex-col sm:flex-row justify-between sm:items-end gap-4">
         <div>
           <h1 className="page-title flex items-center gap-2">
             <Users className="text-indigo-600" /> 
-            {selectedEmpId ? 'Employee Profile' : 'Staff Directory'}
+            {selectedEmpId ? 'Employee Profile' : 'Hospital Personnel Directory'}
           </h1>
           <p className="page-subtitle">
-            {selectedEmpId ? 'View detailed profile and reported incidents' : 'Search and browse all hospital staff members'}
+            {selectedEmpId ? 'View detailed profile and reported incidents' : 'Search, filter, and browse all hospital staff members (100 per page)'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -296,91 +328,222 @@ export default function EmployeeDirectory() {
       ) : (
         /* DIRECTORY VIEW */
         <div className="space-y-6 animate-fade-in">
-          <div className="card p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-              <div className="relative max-w-sm w-full">
+          {/* Controls Bar: Search, Dept Filter, Status Filter, Page Size */}
+          <div className="card p-4 bg-white border border-slate-200 rounded-xl shadow-sm space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+              {/* Search Bar */}
+              <div className="relative md:col-span-5">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input
                   type="text"
-                  placeholder="Search by ID, Name or Department..."
-                  className="input pl-10 bg-white"
+                  placeholder="Search by Name, Employee ID, Phone, Email..."
+                  className="input pl-10 pr-8 bg-slate-50 border-slate-200 focus:bg-white w-full"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold px-1 rounded"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
-              <div className="text-sm text-slate-500">
-                Total Employees: <span className="font-bold text-slate-700">{employees.length}</span>
+
+              {/* Department Filter */}
+              <div className="md:col-span-3">
+                <select
+                  value={selectedDept}
+                  onChange={(e) => { setSelectedDept(e.target.value); setPage(1); }}
+                  className="input bg-slate-50 border-slate-200 w-full text-sm"
+                >
+                  <option value="all">All Departments ({departmentsList.length})</option>
+                  {departmentsList.map(dept => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Account Status Filter */}
+              <div className="md:col-span-2">
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => { setSelectedStatus(e.target.value); setPage(1); }}
+                  className="input bg-slate-50 border-slate-200 w-full text-sm"
+                >
+                  <option value="all">All Status</option>
+                  <option value="registered">Registered Only</option>
+                  <option value="unregistered">Not Registered</option>
+                </select>
+              </div>
+
+              {/* Limit selector */}
+              <div className="md:col-span-2 flex items-center justify-end gap-2 text-sm text-slate-600">
+                <span className="text-xs text-slate-500 whitespace-nowrap">Per page:</span>
+                <select
+                  value={limit}
+                  onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                  className="input bg-slate-50 border-slate-200 py-1.5 px-2 text-sm w-20"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                </select>
               </div>
             </div>
 
-            {isDirectoryLoading && !employees.length ? (
-              <div className="flex justify-center items-center h-64">
+            {/* Active search/filter info bar */}
+            <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                <span>
+                  Showing <strong className="text-slate-800">{totalEmployees === 0 ? 0 : (page - 1) * limit + 1}</strong> to <strong className="text-slate-800">{Math.min(page * limit, totalEmployees)}</strong> of <strong className="text-slate-800">{totalEmployees}</strong> personnel
+                </span>
+                {(debouncedSearch || selectedDept !== 'all' || selectedStatus !== 'all') && (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSelectedDept('all');
+                      setSelectedStatus('all');
+                      setPage(1);
+                    }}
+                    className="text-indigo-600 hover:text-indigo-800 font-medium underline ml-2"
+                  >
+                    Reset Filters
+                  </button>
+                )}
+              </div>
+              <div className="text-slate-400">
+                Page {page} of {totalPages}
+              </div>
+            </div>
+          </div>
+
+          {/* Directory Table */}
+          <div className="card p-0 overflow-hidden bg-white border border-slate-200 rounded-xl shadow-sm">
+            {isDirectoryLoading ? (
+              <div className="flex flex-col justify-center items-center h-64 gap-3">
                 <Spinner size={32} />
+                <span className="text-sm text-slate-500">Loading hospital staff directory...</span>
               </div>
             ) : isDirectoryError ? (
               <div className="p-8 text-center text-red-500">Failed to load employees. Please try again.</div>
-            ) : filteredEmployees.length === 0 ? (
+            ) : employees.length === 0 ? (
               <EmptyState
                 icon={Users}
                 title="No employees found"
-                message={searchTerm ? `No staff matching "${searchTerm}"` : "The directory is empty."}
+                message={debouncedSearch || selectedDept !== 'all' || selectedStatus !== 'all' 
+                  ? "No staff matching your search criteria. Try adjusting your filters." 
+                  : "The hospital personnel directory is empty."}
               />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
-                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Employee</th>
-                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">ID</th>
-                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Department</th>
-                      <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">IMS Account Status</th>
+                      <th 
+                        onClick={() => handleSort('name')}
+                        className="py-3.5 px-4 text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          Employee Name
+                          {sortBy === 'name' && (
+                            <span className="text-indigo-600 text-[10px]">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('employee_id')}
+                        className="py-3.5 px-4 text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          Employee ID
+                          {sortBy === 'employee_id' && (
+                            <span className="text-indigo-600 text-[10px]">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('department')}
+                        className="py-3.5 px-4 text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          Department
+                          {sortBy === 'department' && (
+                            <span className="text-indigo-600 text-[10px]">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          )}
+                        </div>
+                      </th>
+                      <th className="py-3.5 px-4 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                        Designation & Contact
+                      </th>
+                      <th 
+                        onClick={() => handleSort('is_registered')}
+                        className="py-3.5 px-4 text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          IMS Account
+                          {sortBy === 'is_registered' && (
+                            <span className="text-indigo-600 text-[10px]">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          )}
+                        </div>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredEmployees.map((emp) => (
+                    {employees.map((emp) => (
                       <tr 
-                        key={emp.id} 
+                        key={emp.master_id || emp.employee_id} 
                         onClick={() => {
                           if (!emp.is_registered) {
-                            toast.error('This user has not created their IMS account yet. No profile to view.');
+                            toast.error('This user has not created their IMS account yet. No profile or incident history to view.');
                           } else {
                             setSelectedEmpId(emp.employee_id);
                           }
                         }}
-                        className="hover:bg-slate-50 transition-colors cursor-pointer group"
+                        className={`hover:bg-slate-50/80 transition-colors ${emp.is_registered ? 'cursor-pointer group' : 'cursor-default opacity-85'}`}
                       >
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-700 font-bold text-sm uppercase">
-                              {emp.name?.charAt(0)}
+                            <div className="w-9 h-9 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-700 font-bold text-sm uppercase">
+                              {emp.full_name?.charAt(0) || '?'}
                             </div>
                             <div>
                               <div className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">
-                                {emp.name}
+                                {emp.full_name}
                               </div>
-                              <div className="text-xs text-slate-500">{emp.designation || '—'}</div>
+                              <div className="text-xs text-slate-400">{emp.email || 'No email provided'}</div>
                             </div>
                           </div>
                         </td>
                         <td className="py-3 px-4">
-                          <span className="font-mono text-sm text-slate-600 bg-slate-100 px-2 py-1 rounded">
+                          <span className="font-mono text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-1 rounded">
                             {emp.employee_id}
                           </span>
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-1.5 text-sm text-slate-700">
-                            <Building size={14} className="text-slate-400" />
-                            {emp.department || '—'}
+                            <Building size={14} className="text-slate-400 flex-shrink-0" />
+                            <span className="font-medium">{emp.department || '—'}</span>
                           </div>
                         </td>
                         <td className="py-3 px-4">
+                          <div className="text-sm text-slate-700">{emp.designation || '—'}</div>
+                          {emp.phone && (
+                            <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
+                              <Phone size={11} /> {emp.phone}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
                           {emp.is_registered ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                              <CheckCircle size={14} /> Registered
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle size={13} className="text-emerald-500" /> Registered
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                              <XCircle size={14} /> Not Registered
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                              <XCircle size={13} className="text-slate-400" /> Not Registered
                             </span>
                           )}
                         </td>
@@ -388,6 +551,85 @@ export default function EmployeeDirectory() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* Pagination Controls Footer */}
+            {totalPages > 1 && (
+              <div className="p-4 border-t border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+                <div className="text-xs text-slate-500">
+                  Showing page <span className="font-bold text-slate-700">{page}</span> of <span className="font-bold text-slate-700">{totalPages}</span> ({limit} items per page)
+                </div>
+                
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPage(1)}
+                    disabled={page === 1 || isDirectoryLoading}
+                    className="px-2.5 py-1.5 rounded border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="First Page"
+                  >
+                    « First
+                  </button>
+                  <button
+                    onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                    disabled={page === 1 || isDirectoryLoading}
+                    className="px-3 py-1.5 rounded border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ‹ Prev
+                  </button>
+
+                  {/* Dynamic Page Buttons with Smart Range */}
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
+                    .reduce((acc, p, idx, arr) => {
+                      if (idx > 0 && p - arr[idx - 1] > 1) {
+                        acc.push(`ellipsis-${p}`);
+                      }
+                      acc.push(p);
+                      return acc;
+                    }, [])
+                    .map((item) => {
+                      if (typeof item === 'string') {
+                        return (
+                          <span key={item} className="px-2 py-1 text-slate-400 text-xs">
+                            ...
+                          </span>
+                        );
+                      }
+                      const p = item;
+                      const isActive = p === page;
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => setPage(p)}
+                          disabled={isDirectoryLoading}
+                          className={`w-8 h-8 rounded text-xs font-semibold transition-colors ${
+                            isActive
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+
+                  <button
+                    onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={page === totalPages || isDirectoryLoading}
+                    className="px-3 py-1.5 rounded border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Next ›
+                  </button>
+                  <button
+                    onClick={() => setPage(totalPages)}
+                    disabled={page === totalPages || isDirectoryLoading}
+                    className="px-2.5 py-1.5 rounded border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Last Page"
+                  >
+                    Last »
+                  </button>
+                </div>
               </div>
             )}
           </div>

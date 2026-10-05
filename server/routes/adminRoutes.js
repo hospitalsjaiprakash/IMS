@@ -51,7 +51,9 @@ router.post('/users/:id/toggle-status', authenticate, authorize('system_admin'),
 router.get('/management-members', authenticate, authorize('system_admin'), adminController.getManagementMembers);
 router.delete('/management-members/:id', authenticate, authorize('system_admin'), adminController.removeManagementRole);
 
-// Department Mapping
+// Department Mapping & Management
+router.post('/departments', authenticate, authorize('system_admin'), adminController.createDepartment);
+router.delete('/departments/:id', authenticate, authorize('system_admin'), adminController.deleteDepartment);
 router.post('/map-department-leader', authenticate, authorize('system_admin'), adminController.mapDepartmentLeader);
 router.post('/remove-department-leader', authenticate, authorize('system_admin'), adminController.removeDepartmentLeader);
 
