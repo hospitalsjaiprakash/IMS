@@ -74,12 +74,14 @@ const CONFIG_FIELDS = [
     label: 'Email Notifications',
     description: 'Enable or disable general system email notifications. When disabled, incident alerts, reminders, and updates are stopped. Essential authentication emails (signup, password reset, security OTPs) continue to function normally.',
     type: 'boolean',
+    default: true,
   },
   {
     key: 'maintenance_mode',
     label: 'Maintenance Mode',
     description: 'When enabled, users cannot report new incidents (System under maintenance).',
     type: 'boolean',
+    default: false,
   },
 ];
 
@@ -95,8 +97,14 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     if (config) {
+      const merged = { ...config };
+      CONFIG_FIELDS.forEach(f => {
+        if (f.type === 'boolean' && (merged[f.key] === undefined || merged[f.key] === null)) {
+          merged[f.key] = f.default ? 'true' : 'false';
+        }
+      });
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setLocalConfig(config);
+      setLocalConfig(merged);
       setDirty(false);
     }
   }, [config]);
@@ -116,8 +124,28 @@ export default function AdminSettingsPage() {
     setDirty(true);
   };
 
+  const isFieldEnabled = (field) => {
+    const val = localConfig[field.key];
+    if (val === undefined || val === null || val === '') {
+      return field.default ?? false;
+    }
+    return val === 'true' || val === true || val === 1 || val === '1';
+  };
+
+  const handleToggle = (field) => {
+    const currentVal = isFieldEnabled(field);
+    const nextVal = currentVal ? 'false' : 'true';
+    handleChange(field.key, nextVal);
+  };
+
   const handleReset = () => {
-    setLocalConfig(config);
+    const merged = { ...(config || {}) };
+    CONFIG_FIELDS.forEach(f => {
+      if (f.type === 'boolean' && (merged[f.key] === undefined || merged[f.key] === null)) {
+        merged[f.key] = f.default ? 'true' : 'false';
+      }
+    });
+    setLocalConfig(merged);
     setDirty(false);
   };
 
@@ -162,26 +190,46 @@ export default function AdminSettingsPage() {
               </div>
               <p className="text-xs text-slate-500 mt-1 ml-5">{field.description}</p>
             </div>
-            <div className="flex-shrink-0 sm:w-36">
+            <div className="flex-shrink-0 sm:w-36 flex items-center sm:justify-end">
               {field.type === 'boolean' ? (
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={localConfig[field.key] === 'true'}
-                    onChange={e => handleChange(field.key, e.target.checked ? 'true' : 'false')}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-300 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                  <span className="ml-2 text-sm text-slate-600">
-                    {localConfig[field.key] === 'true' ? 'Enabled' : 'Disabled'}
-                  </span>
-                </label>
+                (() => {
+                  const isEnabled = isFieldEnabled(field);
+                  return (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isEnabled}
+                      onClick={() => handleToggle(field)}
+                      className="inline-flex items-center gap-3 cursor-pointer group focus:outline-none select-none py-1"
+                    >
+                      <span
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          isEnabled ? 'bg-blue-600' : 'bg-slate-300'
+                        }`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                            isEnabled ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </span>
+                      <span
+                        className={`text-sm font-semibold transition-colors duration-150 min-w-[60px] text-left ${
+                          isEnabled ? 'text-blue-600' : 'text-slate-500'
+                        }`}
+                      >
+                        {isEnabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </button>
+                  );
+                })()
               ) : (
                 <input
                   type="number"
                   min={field.min}
                   max={field.max}
-                  value={localConfig[field.key] || ''}
+                  value={localConfig[field.key] ?? ''}
                   onChange={e => handleChange(field.key, e.target.value)}
                   className="input text-center font-mono"
                 />
