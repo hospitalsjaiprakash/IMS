@@ -29,6 +29,20 @@ export const useAuthStore = create((set) => ({
     }
   },
 
+  requestRegistrationOtp: async (data) => {
+    set({ loading: true, error: null });
+    try {
+      const response = await authApi.requestRegistrationOtp(data);
+      set({ loading: false });
+      return { success: true, message: response.data.message };
+    } catch (err) {
+      const errData = err.response?.data?.error;
+      const error = typeof errData === 'string' ? errData : (errData?.message || 'Failed to request OTP. Please try again.');
+      set({ error, loading: false });
+      return { success: false, error };
+    }
+  },
+
   register: async (data) => {
     set({ loading: true, error: null });
     try {

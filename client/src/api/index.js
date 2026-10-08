@@ -54,6 +54,7 @@ api.interceptors.response.use(
 // ── Auth ──────────────────────────────────────────
 export const authApi = {
   // Use 60s-timeout instance for login/register — Render cold start can take up to 50s
+  requestRegistrationOtp: (data) => authApi_axios.post('/auth/register-otp', data),
   register: (data) => authApi_axios.post('/auth/register', data),
   login: (data) => authApi_axios.post('/auth/login', data),
   committeeLogin: (data) => authApi_axios.post('/auth/committee-login', data),

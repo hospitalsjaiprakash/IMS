@@ -10,7 +10,7 @@ import logoImg from '../../assets/logo.webp';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { login, register, loading } = useAuthStore();
+  const { login, register, requestRegistrationOtp, loading } = useAuthStore();
   const bgRef = useRef(null);
 
   const handleMouseMove = (e) => {
@@ -38,7 +38,7 @@ export default function LoginPage() {
   const [loginForm, setLoginForm] = useState({ employeeId: '', password: '' });
 
   // Register state
-  const [regForm, setRegForm] = useState({ fullName: '', employeeId: '', email: '', password: '' });
+  const [regForm, setRegForm] = useState({ fullName: '', employeeId: '', email: '', password: '', otp: '' });
 
   // Forgot password state
   const [forgotForm, setForgotForm] = useState({ employeeId: '', email: '', otp: '', newPassword: '' });
@@ -102,6 +102,21 @@ export default function LoginPage() {
     e.preventDefault();
     if (!regForm.fullName.trim() || !regForm.employeeId.trim() || !regForm.email.trim() || !regForm.password) {
       setError('Full Name, Employee ID, Email, and Password are required.');
+      return;
+    }
+    const result = await requestRegistrationOtp(regForm);
+    if (result.success) {
+      setSuccessMsg(result.message || 'OTP sent to your email address.');
+      setMode('register_otp');
+    } else {
+      setError(result.error);
+    }
+  };
+
+  const handleVerifyRegOtpSubmit = async (e) => {
+    e.preventDefault();
+    if (!regForm.otp.trim()) {
+      setError('Please enter the OTP sent to your email.');
       return;
     }
     const result = await register(regForm);
@@ -239,6 +254,17 @@ export default function LoginPage() {
                   <UserPlus size={16} className={mode === 'register' ? 'text-green-600' : 'text-slate-400'} />
                   Create Account
                 </button>
+              </div>
+            ) : mode === 'register_otp' ? (
+              <div className="mb-6 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => { setMode('register'); setError(''); setSuccessMsg(''); }}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-700 hover:text-green-800"
+                >
+                  <ArrowLeft size={16} /> Back to Sign Up
+                </button>
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Verify Email</span>
               </div>
             ) : (
               <div className="mb-6 flex items-center justify-between">
@@ -398,6 +424,35 @@ export default function LoginPage() {
                   type="submit"
                   disabled={loading}
                   className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                >
+                  {loading ? <Spinner size={16} className="text-white" /> : null}
+                  {loading ? 'Sending OTP…' : 'Create Account'}
+                </button>
+              </form>
+            )}
+
+            {mode === 'register_otp' && (
+              <form onSubmit={handleVerifyRegOtpSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Enter OTP</label>
+                  <input
+                    name="otp"
+                    value={regForm.otp}
+                    onChange={handleRegChange}
+                    placeholder="Enter the 6-digit OTP sent to your email"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm tracking-widest text-center font-mono"
+                    maxLength={6}
+                  />
+                  <p className="text-xs text-slate-500 mt-2 text-center">
+                    Sent to <span className="font-medium text-slate-700">{regForm.email}</span>
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+
                 >
                   {loading ? <Spinner size={16} className="text-white" /> : null}
                   {loading ? 'Verifying & Creating…' : 'Verify & Create Account'}

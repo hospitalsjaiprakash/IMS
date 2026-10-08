@@ -7,6 +7,7 @@ const { authLimiter, loginLimiter } = require('../middleware/rateLimiter');
 // Apply base rate limiter to all auth endpoints
 router.use(authLimiter);
 
+router.post('/register-otp', authController.requestRegistrationOtp);
 router.post('/register', authController.register);
 router.post('/login', loginLimiter, authController.login);
 router.post('/committee-login', loginLimiter, authController.committeeLogin);

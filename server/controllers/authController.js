@@ -81,9 +81,9 @@ const welcomeEmailTemplate = (user) => ({
 });
 
 // =============================================
-// REGISTER — Create new employee account
+// REQUEST REGISTRATION OTP
 // =============================================
-exports.register = async (req, res) => {
+exports.requestRegistrationOtp = async (req, res) => {
   try {
     let { fullName, employeeId, email, password } = req.body;
     if (employeeId) employeeId = employeeId.trim().toUpperCase();
@@ -94,6 +94,97 @@ exports.register = async (req, res) => {
     }
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
+    // Check if employee ID already has a password set (already registered)
+    const existing = await query(
+      'SELECT id, employee_id, password_hash, full_name FROM users WHERE employee_id = $1',
+      [employeeId.trim()]
+    );
+
+    if (existing.rows.length > 0 && existing.rows[0].password_hash) {
+      return res.status(409).json({
+        error: 'An account with this Employee ID already exists. Please login instead.',
+        code: 'ALREADY_REGISTERED'
+      });
+    }
+
+    // If user exists in DB (pre-seeded from office portal), validate name match
+    if (existing.rows.length > 0) {
+      const dbUser = existing.rows[0];
+      const nameMatch = dbUser.full_name.toLowerCase().includes(fullName.trim().toLowerCase()) ||
+                        fullName.trim().toLowerCase().includes(dbUser.full_name.toLowerCase());
+      if (!nameMatch) {
+        return res.status(401).json({
+          error: 'Name does not match our records for this Employee ID. Contact HR if you believe this is incorrect.',
+          code: 'NAME_MISMATCH'
+        });
+      }
+    } else {
+      // Employee ID NOT in DB — check Master Employee database
+      let portalData = null;
+      try {
+        const masterRes = await query(
+          'SELECT employee_id, name FROM master_employees WHERE employee_id = $1',
+          [employeeId.trim()]
+        );
+        if (masterRes.rows.length > 0) {
+          portalData = masterRes.rows[0];
+        }
+      } catch (err) {
+        console.error('Error fetching from master_employees:', err);
+      }
+
+      if (!portalData) {
+        return res.status(404).json({
+          error: 'Employee ID not found in hospital records. Please contact HR or the System Administrator.',
+          code: 'EMPLOYEE_NOT_FOUND'
+        });
+      }
+
+      // Validate name from portal
+      const nameMatch = portalData.name?.toLowerCase().includes(fullName.trim().toLowerCase()) ||
+                        fullName.trim().toLowerCase().includes(portalData.name?.toLowerCase());
+      if (!nameMatch) {
+        return res.status(401).json({
+          error: 'Name does not match portal records for this Employee ID.',
+          code: 'NAME_MISMATCH'
+        });
+      }
+    }
+
+    // All validation passed, send OTP
+    const sent = await sendOtp(employeeId.trim(), email.trim(), 'registration');
+    if (sent) {
+      res.json({ success: true, message: 'OTP sent to provided email address.' });
+    } else {
+      res.status(500).json({ error: 'Failed to send OTP email.' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to request OTP. Please try again.' });
+  }
+};
+
+// =============================================
+// REGISTER — Create new employee account
+// =============================================
+exports.register = async (req, res) => {
+  try {
+    let { fullName, employeeId, email, password, otp } = req.body;
+    if (employeeId) employeeId = employeeId.trim().toUpperCase();
+
+    // Basic validation
+    if (!fullName?.trim() || !employeeId?.trim() || !email?.trim() || !password || !otp?.trim()) {
+      return res.status(400).json({ error: 'Full name, Employee ID, email, password, and OTP are required.' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
+    // Verify OTP first
+    const isValid = verifyOtp(employeeId.trim(), 'registration', otp.trim());
+    if (!isValid) {
+      return res.status(400).json({ error: 'Invalid or expired OTP.' });
     }
 
     // Check if employee ID already has a password set (already registered)
