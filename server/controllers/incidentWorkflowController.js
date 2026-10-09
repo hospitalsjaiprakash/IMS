@@ -12,13 +12,7 @@ exports.submitHodFeedback = async (req, res) => {
     await client.query('BEGIN');
 
     const { id } = req.params;
-    let { feedbackText, redirectToImc, redirectReason, acknowledged } = req.body;
-    
-    acknowledged = acknowledged === 'true' || acknowledged === true;
-
-    if (!acknowledged) {
-      return res.status(400).json({ error: 'HOD must acknowledge review before providing feedback.' });
-    }
+    let { feedbackText, redirectToImc, redirectReason } = req.body;
 
     const incidentResult = await client.query(
       'SELECT * FROM incidents WHERE id = $1',

@@ -19,20 +19,18 @@ export default function IncidentActions({
   setShowRedirectModal,
   setShowMdModal,
   setShowReopenModal,
-  setShowAssignInvestigatorModal,
   setShowImcReportModal,
   setShowInvolveDeptModal,
   openEditIncident,
   escalateMutation,
   remindHodMutation,
   closeIncidentMutation,
-  canAssignInvestigator,
   canGenerateImcReport,
   canCloseIncident
 }) {
   const isEmployeeReporter = user?.id === incident.reporter_id && incident.status === 'submitted';
 
-  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canAssignInvestigator && !canGenerateImcReport && !canCloseIncident && !canInvolveDepartments) {
+  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canGenerateImcReport && !canCloseIncident && !canInvolveDepartments) {
     return null;
   }
 
@@ -59,16 +57,6 @@ export default function IncidentActions({
       {canHodFeedback && (
         <button onClick={() => setShowFeedbackModal(true)} className="btn-primary btn-sm">
           <MessageSquare size={14} /> Submit Feedback
-        </button>
-      )}
-      {canAssignInvestigator && (
-        <button 
-          onClick={() => setShowAssignInvestigatorModal(true)} 
-          disabled={!incident.all_hod_feedback_submitted}
-          title={!incident.all_hod_feedback_submitted ? "Investigation can only be decided after receiving feedback from all concerned HODs." : "Assign investigation team"}
-          className="btn-secondary btn-sm border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Pencil size={14} /> Assign Investigator(s)
         </button>
       )}
       {canRequestRedirect && (

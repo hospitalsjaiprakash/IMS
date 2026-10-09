@@ -29,7 +29,7 @@ export function WithdrawModal({ show, onClose, withdrawReason, setWithdrawReason
   );
 }
 
-export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText, hodAcknowledged, setHodAcknowledged, hodAttachments, setHodAttachments, mutate, isPending, canHodFeedback }) {
+export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText, hodAttachments, setHodAttachments, mutate, isPending, canHodFeedback }) {
   return (
     <Modal open={show} onClose={onClose} title="Submit Feedback" size="lg"
       footer={<>
@@ -37,7 +37,7 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
         {canHodFeedback && (
           <button
             onClick={mutate}
-            disabled={!feedbackText.trim() || !hodAcknowledged || isPending}
+            disabled={!feedbackText.trim() || isPending}
             className="btn-primary"
           >
             {isPending && <Spinner size={15} className="text-white" />} Submit Feedback
@@ -45,21 +45,6 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
         )}
       </>}
     >
-      {canHodFeedback && (
-        <div className="mb-4 p-4 rounded-xl border border-amber-200 bg-amber-50">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={hodAcknowledged}
-              onChange={e => setHodAcknowledged(e.target.checked)}
-              className="mt-0.5 w-4 h-4 accent-blue-600"
-            />
-            <span className="text-sm text-slate-700">
-              I acknowledge that I have reviewed the incident details and am providing feedback as Head of Department.
-            </span>
-          </label>
-        </div>
-      )}
       <label className="field-label field-required">Feedback</label>
       <textarea
         value={feedbackText}
@@ -545,195 +530,6 @@ export function FilePreviewModal({ previewFile, onClose }) {
           )}
         </div>
       )}
-    </Modal>
-  );
-}
-
-export function AssignInvestigatorModal({ show, onClose, mutate, isPending }) {
-  const [imcMembers, setImcMembers] = React.useState([]);
-  const [selectedImcIds, setSelectedImcIds] = React.useState([]);
-  const [selectedEmployees, setSelectedEmployees] = React.useState([]);
-  const [employeeSearch, setEmployeeSearch] = React.useState('');
-  const [employeeSearchResults, setEmployeeSearchResults] = React.useState([]);
-  const [isSearchingEmployees, setIsSearchingEmployees] = React.useState(false);
-  const [loading, setLoading] = React.useState(false);
-
-  React.useEffect(() => {
-    if (show) {
-      setLoading(true);
-      const token = sessionStorage.getItem('ims_token');
-      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/auth/committee-members`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      .then(res => res.json())
-      .then(data => {
-        setImcMembers(data.members || []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-    } else {
-      setSelectedImcIds([]);
-      setSelectedEmployees([]);
-      setEmployeeSearch('');
-      setEmployeeSearchResults([]);
-    }
-  }, [show]);
-
-  React.useEffect(() => {
-    if (!employeeSearch.trim() || employeeSearch.length < 2) {
-      setEmployeeSearchResults([]);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setIsSearchingEmployees(true);
-      const token = sessionStorage.getItem('ims_token');
-      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/employee/search?q=${encodeURIComponent(employeeSearch)}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      .then(r => r.json())
-      .then(data => {
-        const results = Array.isArray(data) ? data : (data?.employees || []);
-        setEmployeeSearchResults(results);
-        setIsSearchingEmployees(false);
-      })
-      .catch(() => setIsSearchingEmployees(false));
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [employeeSearch]);
-
-  const toggleImcMember = (id) => {
-    setSelectedImcIds(prev => 
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
-
-  const addEmployeeInvestigator = (emp) => {
-    if (!selectedEmployees.some(e => e.id === emp.id)) {
-      setSelectedEmployees(prev => [...prev, emp]);
-    }
-    setEmployeeSearch('');
-    setEmployeeSearchResults([]);
-  };
-
-  const removeEmployeeInvestigator = (id) => {
-    setSelectedEmployees(prev => prev.filter(e => e.id !== id));
-  };
-
-  const handleSubmit = () => {
-    const allIds = [...selectedImcIds, ...selectedEmployees.map(e => e.id)];
-    mutate(allIds);
-  };
-
-  return (
-    <Modal open={show} onClose={onClose} title="Assign Investigation Team" size="lg"
-      footer={<>
-        <button onClick={onClose} className="btn-secondary">Cancel</button>
-        <button 
-          onClick={handleSubmit} 
-          disabled={selectedImcIds.length === 0 || isPending} 
-          className="btn-primary"
-          title={selectedImcIds.length === 0 ? 'At least one IMC Member must be selected as primary investigator' : ''}
-        >
-          {isPending && <Spinner size={15} className="text-white" />} Assign Team ({selectedImcIds.length + selectedEmployees.length})
-        </button>
-      </>}
-    >
-      <div className="space-y-4">
-        <Alert type="info" message="Primary investigators must be IMC members. You can also search and add any hospital employee as an additional/expert investigator." />
-        
-        {/* Section 1: Primary IMC Investigators */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="field-label font-bold text-slate-800 flex items-center gap-1.5">
-              <Shield size={14} className="text-indigo-600" /> Primary Investigators (IMC Members) <span className="text-red-500">*</span>
-            </label>
-            <span className="text-xs text-indigo-700 font-semibold">{selectedImcIds.length} Selected</span>
-          </div>
-
-          {loading ? (
-            <div className="flex items-center gap-2 text-slate-500 py-3"><Spinner size={16} /> Loading IMC members...</div>
-          ) : imcMembers.length === 0 ? (
-            <p className="text-sm text-slate-500 py-2">No IMC members found.</p>
-          ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {imcMembers.map(member => (
-                <label key={member.id} className="flex items-center gap-3 p-2.5 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={selectedImcIds.includes(member.id)}
-                    onChange={() => toggleImcMember(member.id)}
-                    className="w-4 h-4 accent-indigo-600 rounded"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-slate-800">{member.full_name}</div>
-                    <div className="text-xs text-slate-500">{member.designation} • {member.department}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Section 2: Secondary / Employee Investigators */}
-        <div className="pt-3 border-t border-slate-100">
-          <label className="field-label font-bold text-slate-800 flex items-center gap-1.5 mb-1.5">
-            <Users size={14} className="text-blue-600" /> Additional Employee Investigators (Optional)
-          </label>
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={employeeSearch}
-              onChange={e => setEmployeeSearch(e.target.value)}
-              placeholder="Search hospital personnel by name or ID…"
-              className="input pl-9 text-xs"
-            />
-            {isSearchingEmployees && (
-              <span className="absolute right-3 top-1/2 -translate-y-1/2"><Spinner size={14} /></span>
-            )}
-          </div>
-
-          {employeeSearchResults.length > 0 && (
-            <div className="mt-1 border border-slate-200 rounded-xl bg-white shadow-md max-h-40 overflow-y-auto divide-y divide-slate-100">
-              {employeeSearchResults.map(emp => (
-                <div
-                  key={emp.id}
-                  onClick={() => addEmployeeInvestigator(emp)}
-                  className="p-2.5 hover:bg-blue-50/50 cursor-pointer flex items-center justify-between transition-colors"
-                >
-                  <div>
-                    <p className="text-xs font-semibold text-slate-800">{emp.full_name || emp.name} ({emp.employee_id})</p>
-                    <p className="text-[11px] text-slate-500">{emp.designation} • {emp.department}</p>
-                  </div>
-                  <UserPlus size={14} className="text-blue-600" />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {selectedEmployees.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {selectedEmployees.map(emp => (
-                <span
-                  key={emp.id}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-full text-xs font-medium"
-                >
-                  <span>{emp.full_name || emp.name} ({emp.employee_id})</span>
-                  <button
-                    type="button"
-                    onClick={() => removeEmployeeInvestigator(emp.id)}
-                    className="hover:text-red-600"
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
     </Modal>
   );
 }

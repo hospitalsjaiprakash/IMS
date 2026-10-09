@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { incidentsApi, metaApi, UPLOADS_URL } from '../../api';
+import { incidentsApi, metaApi, authApi, UPLOADS_URL } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip } from 'lucide-react';
+import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users } from 'lucide-react';
 import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
 import { formatDateTime } from '../../utils/helpers';
 
@@ -13,6 +13,7 @@ import IncidentDetailsCard from '../../components/incident-detail/IncidentDetail
 import InteractiveTimeline from '../../components/incident-detail/InteractiveTimeline';
 import IncidentActions from '../../components/incident-detail/IncidentActions';
 import FileUploadArea from '../../components/incident-detail/FileUploadArea';
+import InvestigatorPicker, { isImcUser } from '../../components/incident-detail/InvestigatorPicker';
 
 import {
   WithdrawModal,
@@ -24,7 +25,6 @@ import {
   EditFeedbackModal,
   EditIncidentModal,
   FilePreviewModal,
-  AssignInvestigatorModal,
   ImcReportModal,
   InvolveDepartmentModal
 } from '../../components/incident-detail/modals';
@@ -74,7 +74,6 @@ export default function IncidentDetailPage() {
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [showRedirectModal, setShowRedirectModal] = useState(false);
   const [showRejectRedirectModal, setShowRejectRedirectModal] = useState(false);
-  const [showAssignInvestigatorModal, setShowAssignInvestigatorModal] = useState(false);
   const [showImcReportModal, setShowImcReportModal] = useState(false);
 
   const [editFbModal, setEditFbModal] = useState(null); // { feedbackType, currentText }
@@ -94,7 +93,6 @@ export default function IncidentDetailPage() {
   const [mdResponsibleEmployees, setMdResponsibleEmployees] = useState([]);
   const [mdProposedOutcome, setMdProposedOutcome] = useState('');
   const [reopenReason, setReopenReason] = useState('');
-  const [hodAcknowledged, setHodAcknowledged] = useState(false);
   const [redirectReason, setRedirectReason] = useState('');
   const [redirectTargetDepts, setRedirectTargetDepts] = useState([]);
   const [retainRequestingDept, setRetainRequestingDept] = useState(false);
@@ -109,6 +107,8 @@ export default function IncidentDetailPage() {
   // Investigator States
   const [investigatorRequired, setInvestigatorRequired] = useState(false);
   const [selectedInvestigator, setSelectedInvestigator] = useState('');
+  const [primaryInvestigators, setPrimaryInvestigators] = useState([]);
+  const [secondaryInvestigators, setSecondaryInvestigators] = useState([]);
   const [investigatorReportText, setInvestigatorReportText] = useState('');
   const [investigatorAttachments, setInvestigatorAttachments] = useState([]);
 
@@ -121,7 +121,6 @@ export default function IncidentDetailPage() {
         setShowReopenModal(false);
         setShowRedirectModal(false);
         setShowRejectRedirectModal(false);
-        setShowAssignInvestigatorModal(false);
         setShowImcReportModal(false);
         setShowEditIncModal(false);
         setEditFbModal(null);
@@ -147,7 +146,6 @@ export default function IncidentDetailPage() {
     mutationFn: () => {
       const fd = new FormData();
       fd.append('feedbackText', feedbackText);
-      fd.append('acknowledged', hodAcknowledged);
       hodAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.hodFeedback(id, fd);
     },
@@ -221,7 +219,13 @@ export default function IncidentDetailPage() {
 
   const assignInvestigatorMutation = useMutation({
     mutationFn: (investigatorIds) => incidentsApi.assignInvestigator(id, { investigatorIds }),
-    onSuccess: () => { toast.success('Investigators assigned successfully.'); setShowAssignInvestigatorModal(false); refetch(); },
+    onSuccess: () => {
+      toast.success('Investigators assigned successfully.');
+      setPrimaryInvestigators([]);
+      setSecondaryInvestigators([]);
+      setInvestigatorRequired(false);
+      refetch();
+    },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to assign investigators')
   });
 
@@ -242,10 +246,14 @@ export default function IncidentDetailPage() {
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to submit action')
   });
 
+  const isConvenor = Boolean(user?.is_imc_lead || user?.isImcLead || user?.is_system_admin || user?.role === 'system_admin');
   const { data: imcMembers = [] } = useQuery({
     queryKey: ['imcMembers'],
-    queryFn: () => usersApi.getImcMembers().then(res => res.data),
-    enabled: user?.role === 'imc' && !!user?.isImcLead
+    queryFn: () => authApi.getCommitteeMembers().then(res => {
+      const list = Array.isArray(res.data) ? res.data : (res.data?.members || []);
+      return list.filter(isImcUser);
+    }),
+    enabled: isConvenor
   });
 
   const editFeedbackMutation = useMutation({
@@ -395,7 +403,6 @@ export default function IncidentDetailPage() {
     !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
     !incident.all_hod_feedback_submitted;
 
-  const canAssignInvestigator = ['imc', 'system_admin'].includes(user?.role) && isLead && ['with_imc', 'with_hod_and_imc'].includes(incident.status);
   const canInvestigatorAct = incident.status === 'with_investigator' && (isImcMember || incident.investigators?.some(i => i.investigator_id === user?.id && i.status !== 'completed'));
   const canImcReviewInvestigator = isLead && incident.status === 'with_imc_review';
   const canGenerateImcReport = ['imc', 'system_admin'].includes(user?.role) && isLead && incident.status === 'pending_imc_report';
@@ -438,7 +445,6 @@ export default function IncidentDetailPage() {
             canReopen={canReopen}
             canEscalate={canEscalate}
             canRemindHod={canRemindHod}
-            canAssignInvestigator={canAssignInvestigator}
             canGenerateImcReport={canGenerateImcReport}
             canCloseIncident={canCloseIncident}
             canInvolveDepartments={canInvolveDepartments}
@@ -447,7 +453,6 @@ export default function IncidentDetailPage() {
             setShowRedirectModal={setShowRedirectModal}
             setShowMdModal={setShowMdModal}
             setShowReopenModal={setShowReopenModal}
-            setShowAssignInvestigatorModal={setShowAssignInvestigatorModal}
             setShowImcReportModal={setShowImcReportModal}
             setShowInvolveDeptModal={setShowInvolveDeptModal}
             openEditIncident={openEditIncident}
@@ -775,26 +780,48 @@ export default function IncidentDetailPage() {
                         </div>
 
                         {investigatorRequired ? (
-                          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-                            <label className="field-label mb-1">Select Investigator <span className="text-red-500">*</span></label>
-                            <select
-                              value={selectedInvestigator}
-                              onChange={(e) => setSelectedInvestigator(e.target.value)}
-                              className="select w-full"
-                            >
-                              <option value="">-- Choose IMC Member --</option>
-                              {imcMembers.map(m => (
-                                <option key={m.id} value={m.id}>{m.full_name}</option>
-                              ))}
-                            </select>
-                            <div className="flex justify-end mt-4">
+                          <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-5">
+                            <InvestigatorPicker
+                              id="primary-investigator-search"
+                              label="Select Primary Investigator(s) — IMC Members"
+                              icon={Shield}
+                              required
+                              mode="imc"
+                              imcMembers={imcMembers}
+                              selected={primaryInvestigators}
+                              onChange={setPrimaryInvestigators}
+                              placeholder="Type IMC member name or employee ID…"
+                              accent="indigo"
+                            />
+                            <div className="border-t border-indigo-100" />
+                            <InvestigatorPicker
+                              id="secondary-investigator-search"
+                              label="Select Secondary Investigator(s) — Non-IMC Employees"
+                              icon={Users}
+                              mode="non_imc"
+                              imcMembers={imcMembers}
+                              selected={secondaryInvestigators}
+                              onChange={setSecondaryInvestigators}
+                              excludeIds={primaryInvestigators.map(p => p.id)}
+                              placeholder="Type employee name or employee ID…"
+                              accent="blue"
+                            />
+                            <div className="flex justify-end">
                               <button
-                                onClick={() => assignInvestigatorMutation.mutate([selectedInvestigator])}
-                                disabled={!selectedInvestigator || assignInvestigatorMutation.isPending}
-                                className="btn-primary btn-sm"
+                                onClick={() => assignInvestigatorMutation.mutate([
+                                  ...primaryInvestigators.map(p => p.id),
+                                  ...secondaryInvestigators.map(s => s.id)
+                                ])}
+                                disabled={!incident.all_hod_feedback_submitted || primaryInvestigators.length === 0 || assignInvestigatorMutation.isPending}
+                                title={
+                                  !incident.all_hod_feedback_submitted
+                                    ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}`
+                                    : primaryInvestigators.length === 0 ? 'Select at least one primary investigator (IMC member)' : ''
+                                }
+                                className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 {assignInvestigatorMutation.isPending ? <Spinner size={12} /> : null}
-                                Assign Investigator
+                                Assign Investigator(s) ({primaryInvestigators.length + secondaryInvestigators.length})
                               </button>
                             </div>
                           </div>
@@ -1115,8 +1142,6 @@ export default function IncidentDetailPage() {
         onClose={() => setShowFeedbackModal(false)}
         feedbackText={feedbackText}
         setFeedbackText={setFeedbackText}
-        hodAcknowledged={hodAcknowledged}
-        setHodAcknowledged={setHodAcknowledged}
         hodAttachments={hodAttachments}
         setHodAttachments={setHodAttachments}
         mutate={() => hodFeedbackMutation.mutate()}
@@ -1135,12 +1160,6 @@ export default function IncidentDetailPage() {
         incidentProposedOutcome={incident?.proposed_outcome}
         mutate={(decision) => mdMutation.mutate(decision)}
         isPending={mdMutation.isPending}
-      />
-      <AssignInvestigatorModal
-        show={showAssignInvestigatorModal}
-        onClose={() => setShowAssignInvestigatorModal(false)}
-        mutate={(ids) => assignInvestigatorMutation.mutate(ids)}
-        isPending={assignInvestigatorMutation.isPending}
       />
       <ReopenModal
         show={showReopenModal}

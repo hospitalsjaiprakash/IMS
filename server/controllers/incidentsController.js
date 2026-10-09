@@ -419,7 +419,51 @@ exports.getIncidents = async (req, res) => {
         EXISTS(SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') as has_management_feedback,
         (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod' ORDER BY f.created_at DESC LIMIT 1) as hod_feedback,
         (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc' ORDER BY f.created_at DESC LIMIT 1) as imc_feedback,
-        (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management' ORDER BY f.created_at DESC LIMIT 1) as management_feedback
+        (SELECT feedback_text FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management' ORDER BY f.created_at DESC LIMIT 1) as management_feedback,
+        (
+          SELECT COALESCE(json_agg(
+            json_build_object(
+              'id', f.id,
+              'feedback_text', f.feedback_text,
+              'created_at', f.created_at,
+              'author_name', u2.full_name,
+              'department_name', COALESCE(d2.name, u2.department),
+              'designation', u2.designation
+            ) ORDER BY f.created_at ASC
+          ), '[]'::json)
+          FROM feedbacks f
+          LEFT JOIN users u2 ON u2.id = f.author_id
+          LEFT JOIN departments d2 ON d2.id = f.department_id
+          WHERE f.incident_id = i.id AND f.role = 'hod'
+        ) as hod_feedbacks,
+        (
+          SELECT COALESCE(json_agg(
+            json_build_object(
+              'id', f.id,
+              'feedback_text', f.feedback_text,
+              'created_at', f.created_at,
+              'author_name', u2.full_name,
+              'designation', u2.designation
+            ) ORDER BY f.created_at ASC
+          ), '[]'::json)
+          FROM feedbacks f
+          LEFT JOIN users u2 ON u2.id = f.author_id
+          WHERE f.incident_id = i.id AND f.role = 'imc'
+        ) as imc_feedbacks,
+        (
+          SELECT COALESCE(json_agg(
+            json_build_object(
+              'id', f.id,
+              'feedback_text', f.feedback_text,
+              'created_at', f.created_at,
+              'author_name', u2.full_name,
+              'designation', u2.designation
+            ) ORDER BY f.created_at ASC
+          ), '[]'::json)
+          FROM feedbacks f
+          LEFT JOIN users u2 ON u2.id = f.author_id
+          WHERE f.incident_id = i.id AND f.role = 'head_management'
+        ) as management_feedbacks
        FROM incidents i
        LEFT JOIN users u ON u.id = i.reporter_id
        LEFT JOIN main_locations ml ON ml.id = i.main_location_id

@@ -601,16 +601,78 @@ export default function DashboardPage() {
               {selectedInc.status !== 'withdrawn' && (
                 <>
                   <div>
-                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by HOD</span>
-                    <p className="text-slate-700 bg-amber-50 p-3 rounded-xl border border-amber-100 text-sm">{selectedInc.hod_feedback || 'No feedback yet'}</p>
+                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1.5 px-1">
+                      Feedback by HOD{selectedInc.hod_feedbacks?.length > 1 ? 's' : ''}
+                    </span>
+                    {selectedInc.hod_feedbacks && selectedInc.hod_feedbacks.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedInc.hod_feedbacks.map((fb, idx) => (
+                          <div key={fb.id || idx} className="bg-amber-50 p-3 rounded-xl border border-amber-100 text-sm">
+                            <div className="flex items-center justify-between text-xs font-semibold text-amber-900 mb-1">
+                              <span>{fb.author_name} {fb.department_name ? `(${fb.department_name})` : ''}</span>
+                              {fb.created_at && (
+                                <span className="font-normal text-amber-700/80 text-[11px]">{formatDate(fb.created_at)}</span>
+                              )}
+                            </div>
+                            <p className="text-slate-700 leading-relaxed">{fb.feedback_text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-700 bg-amber-50 p-3 rounded-xl border border-amber-100 text-sm">
+                        {selectedInc.hod_feedback || 'No feedback yet'}
+                      </p>
+                    )}
                   </div>
+
                   <div>
-                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by IMC</span>
-                    <p className="text-slate-700 bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-sm">{selectedInc.imc_feedback || 'No feedback yet'}</p>
+                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1.5 px-1">
+                      Feedback by IMC
+                    </span>
+                    {selectedInc.imc_feedbacks && selectedInc.imc_feedbacks.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedInc.imc_feedbacks.map((fb, idx) => (
+                          <div key={fb.id || idx} className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-sm">
+                            <div className="flex items-center justify-between text-xs font-semibold text-indigo-900 mb-1">
+                              <span>{fb.author_name} {fb.designation ? `(${fb.designation})` : ''}</span>
+                              {fb.created_at && (
+                                <span className="font-normal text-indigo-700/80 text-[11px]">{formatDate(fb.created_at)}</span>
+                              )}
+                            </div>
+                            <p className="text-slate-700 leading-relaxed">{fb.feedback_text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-700 bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-sm">
+                        {selectedInc.imc_feedback || 'No feedback yet'}
+                      </p>
+                    )}
                   </div>
+
                   <div>
-                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1 px-1">Feedback by Management</span>
-                    <p className="text-slate-700 bg-purple-50 p-3 rounded-xl border border-purple-100 text-sm">{selectedInc.management_feedback || 'No feedback yet'}</p>
+                    <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider mb-1.5 px-1">
+                      Feedback by Management
+                    </span>
+                    {selectedInc.management_feedbacks && selectedInc.management_feedbacks.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedInc.management_feedbacks.map((fb, idx) => (
+                          <div key={fb.id || idx} className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-sm">
+                            <div className="flex items-center justify-between text-xs font-semibold text-purple-900 mb-1">
+                              <span>{fb.author_name} {fb.designation ? `(${fb.designation})` : ''}</span>
+                              {fb.created_at && (
+                                <span className="font-normal text-purple-700/80 text-[11px]">{formatDate(fb.created_at)}</span>
+                              )}
+                            </div>
+                            <p className="text-slate-700 leading-relaxed">{fb.feedback_text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-700 bg-purple-50 p-3 rounded-xl border border-purple-100 text-sm">
+                        {selectedInc.management_feedback || 'No feedback yet'}
+                      </p>
+                    )}
                   </div>
                 </>
               )}
