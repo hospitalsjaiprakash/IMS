@@ -295,6 +295,10 @@ exports.getIncidents = async (req, res) => {
         i.reporter_id = $${paramIdx} 
         OR i.redirect_requested_by_user_id = $${paramIdx}
         OR EXISTS (
+          SELECT 1 FROM investigators inv
+          WHERE inv.incident_id = i.id AND inv.investigator_id = $${paramIdx}
+        )
+        OR EXISTS (
           SELECT 1 FROM incident_departments id2
           JOIN departments d ON d.id = id2.department_id
           WHERE id2.incident_id = i.id AND (
@@ -634,9 +638,27 @@ exports.getIncident = async (req, res) => {
 
     const incident = result.rows[0];
 
-    // Access control for employees - can only see own
+    // Access control for employees - can see own incident, if assigned as investigator, or if assigned HOD staff
     if (role === 'employee' && incident.reporter_id !== userId) {
-      return res.status(403).json({ error: 'Access denied' });
+      const isAuthorizedEmployee = await query(
+        `SELECT 1 FROM incidents i
+         WHERE i.id = $1 AND (
+           i.reporter_id = $2
+           OR i.redirect_requested_by_user_id = $2
+           OR EXISTS (SELECT 1 FROM investigators inv WHERE inv.incident_id = i.id AND inv.investigator_id = $2)
+           OR EXISTS (
+             SELECT 1 FROM incident_departments id2
+             JOIN departments d ON d.id = id2.department_id
+             WHERE id2.incident_id = i.id AND (
+               d.assigned_user_id = $2 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $2)
+             )
+           )
+         )`,
+        [incident.id, userId]
+      );
+      if (isAuthorizedEmployee.rows.length === 0) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
     }
 
     // Get departments with per-department feedback status
@@ -699,8 +721,21 @@ exports.getIncident = async (req, res) => {
       [incident.id]
     );
 
-    const invs = await query(`SELECT i.*, u.full_name, u.email FROM investigators i JOIN users u ON u.id = i.investigator_id WHERE i.incident_id = $1 ORDER BY i.assigned_at DESC`, [incident.id]);
+    const invs = await query(
+      `SELECT i.*, 
+              u.full_name, u.email, u.employee_id, u.department, u.designation, u.role, 
+              u.is_imc_member, u.is_imc_lead
+       FROM investigators i 
+       JOIN users u ON u.id = i.investigator_id 
+       WHERE i.incident_id = $1 
+       ORDER BY i.assigned_at ASC`,
+      [incident.id]
+    );
     incident.investigators = invs.rows;
+    incident.all_investigators_submitted = invs.rows.length > 0 && invs.rows.every(i => i.status === 'completed');
+    incident.pending_investigators_count = invs.rows.filter(i => i.status !== 'completed').length;
+    incident.latest_investigation_report = feedbacks.rows.filter(f => f.role === 'investigator').pop() || null;
+    incident.investigation_attachments = attachments.rows.filter(a => a.stage === 'investigator_report');
 
     const respEmps = await query(
       `SELECT r.*, u.full_name, u.employee_id as emp_id, d.name as department_name 

@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, authApi, UPLOADS_URL } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users } from 'lucide-react';
+import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText } from 'lucide-react';
 import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
 import { formatDateTime } from '../../utils/helpers';
 
@@ -40,7 +40,7 @@ const TIMELINE_STAGES = [
 ];
 
 const statusOrder = {
-  submitted: 0, with_hod: 1, with_hod_and_imc: 1, with_imc: 2,
+  submitted: 0, with_hod: 1, with_hod_and_imc: 1, with_imc: 2, with_investigator: 2, with_imc_review: 2,
   redirect_requested: 2, with_head_management: 3, pending_imc_report: 4, pending_training: 5, resolved: 6, closed: 6,
 };
 
@@ -50,6 +50,8 @@ function StatusMessage({ status }) {
     with_hod: { type: 'info', msg: 'Your incident has been routed to the Head of Department and is currently awaiting their review and feedback.' },
     with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is currently awaiting simultaneous review and feedback from both the HOD and IMC.' },
     with_imc: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from the Incident Management Committee.' },
+    with_investigator: { type: 'info', msg: 'An investigation team has been assigned and is currently conducting a root-cause investigation.' },
+    with_imc_review: { type: 'info', msg: 'The joint investigation report has been submitted and is currently being evaluated by the IMC Convenor.' },
     with_head_management: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from Hospital Management.' },
     pending_imc_report: { type: 'info', msg: 'Management has submitted their decision. Awaiting IMC Convenor to generate the official report.' },
     pending_training: { type: 'warning', msg: 'Mandatory CAPA / Training is required before this incident can be fully closed.' },
@@ -111,6 +113,10 @@ export default function IncidentDetailPage() {
   const [secondaryInvestigators, setSecondaryInvestigators] = useState([]);
   const [investigatorReportText, setInvestigatorReportText] = useState('');
   const [investigatorAttachments, setInvestigatorAttachments] = useState([]);
+  const [satisfactionDecision, setSatisfactionDecision] = useState('satisfied'); // 'satisfied' | 'unsatisfied'
+  const [reassignMode, setReassignMode] = useState(false);
+  const [reassignPrimary, setReassignPrimary] = useState([]);
+  const [reassignSecondary, setReassignSecondary] = useState([]);
 
   useEffect(() => {
     const handleKey = (e) => {
@@ -242,7 +248,14 @@ export default function IncidentDetailPage() {
 
   const rejectInvestigatorReportMutation = useMutation({
     mutationFn: (data) => incidentsApi.rejectInvestigatorReport(id, data),
-    onSuccess: () => { toast.success('Action submitted.'); refetch(); },
+    onSuccess: () => {
+      toast.success('Reinvestigation requested successfully.');
+      setFeedbackText('');
+      setReassignPrimary([]);
+      setReassignSecondary([]);
+      setReassignMode(false);
+      refetch();
+    },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to submit action')
   });
 
@@ -341,10 +354,22 @@ export default function IncidentDetailPage() {
     setShowEditIncModal(true);
   };
 
+  useEffect(() => {
+    const inc = data?.incident;
+    if (inc?.status === 'with_investigator' && inc?.latest_investigation_report?.feedback_text && !investigatorReportText) {
+      setInvestigatorReportText(inc.latest_investigation_report.feedback_text);
+    }
+  }, [data?.incident?.status, data?.incident?.latest_investigation_report?.feedback_text]);
+
   if (isLoading) return <SkeletonDetail />;
   if (error || !data) return <Alert type="error" title="Not found" message="Incident not found or access denied." />;
 
   const { incident, feedbacks, attachments, finalReport } = data;
+
+  const latestInvReport = incident.latest_investigation_report || feedbacks?.filter(f => f.role === 'investigator').pop() || null;
+  const investigationAttachmentsList = incident.investigation_attachments?.length > 0 
+    ? incident.investigation_attachments 
+    : (attachments?.filter(a => a.stage === 'investigator_report') || []);
 
   const hasImcFeedback = feedbacks?.some(f => f.role === 'imc');
   const canWithdraw = user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status);
@@ -384,7 +409,7 @@ export default function IncidentDetailPage() {
   const canImcAct =
     isLead &&
     user?.id !== incident.reporter_id &&
-    (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training', 'with_imc_review'].includes(incident.status) ||
+    (['with_imc', 'with_hod_and_imc', 'redirect_requested', 'pending_training'].includes(incident.status) ||
       (incident.status === 'resolved' && incident.has_responsible_person && !incident.training_completed));
 
   const canInvolveDepartments =
@@ -403,8 +428,24 @@ export default function IncidentDetailPage() {
     !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
     !incident.all_hod_feedback_submitted;
 
-  const canInvestigatorAct = incident.status === 'with_investigator' && (isImcMember || incident.investigators?.some(i => i.investigator_id === user?.id && i.status !== 'completed'));
-  const canImcReviewInvestigator = isLead && incident.status === 'with_imc_review';
+  const myInvestigationAssignment = incident.investigators?.find(i => i.investigator_id === user?.id);
+  const isAssignedInvestigator = Boolean(myInvestigationAssignment);
+  const isAssignedPrimary = Boolean(
+    isAssignedInvestigator && (
+      myInvestigationAssignment.role === 'imc' ||
+      myInvestigationAssignment.is_imc_member ||
+      myInvestigationAssignment.is_imc_lead ||
+      user?.role === 'imc' ||
+      user?.is_imc_member ||
+      user?.is_imc_lead ||
+      user?.role === 'system_admin'
+    )
+  );
+  const isAssignedSecondary = Boolean(isAssignedInvestigator && !isAssignedPrimary);
+  const hasInvestigatorsAssigned = Boolean(incident.investigators && incident.investigators.length > 0);
+  const allInvestigatorsCompleted = Boolean(incident.all_investigators_submitted || (hasInvestigatorsAssigned && incident.investigators.every(i => i.status === 'completed')));
+  const canInvestigatorAct = incident.status === 'with_investigator' && isAssignedPrimary;
+  const canImcReviewInvestigator = isLead && (incident.status === 'with_imc_review' || (incident.status === 'with_investigator' && hasInvestigatorsAssigned && allInvestigatorsCompleted));
   const canGenerateImcReport = ['imc', 'system_admin'].includes(user?.role) && isLead && incident.status === 'pending_imc_report';
   const canCloseIncident = isLead && incident.status === 'pending_training';
 
@@ -910,161 +951,582 @@ export default function IncidentDetailPage() {
               </div>
             )}
 
-            {canInvestigatorAct && (
-              <div className="card p-5 border border-indigo-200">
-                <div className="flex items-center gap-2 mb-4">
-                  <MessageSquare className="text-indigo-600" size={18} />
-                  <h2 className="text-sm font-semibold text-slate-800">Submit Investigation Report</h2>
+            {/* 1. Investigation Team Status Card (Visible while investigation is in progress) */}
+            {incident.status === 'with_investigator' && hasInvestigatorsAssigned && (
+              <div className="card p-5 border border-indigo-200 bg-gradient-to-br from-indigo-50/40 via-white to-slate-50 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Shield className="text-indigo-600" size={18} />
+                    <h2 className="text-sm font-bold text-slate-800">Investigation Panel in Progress</h2>
+                  </div>
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
+                    Awaiting Centralized Report
+                  </span>
                 </div>
+
+                <p className="text-xs text-slate-600">
+                  The IMC Convenor has appointed the following investigation panel to investigate as a collective team. A single centralized investigation report will be submitted by the Primary Investigator(s) on behalf of the panel.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {incident.investigators.map(inv => {
+                    const isPrimary = Boolean(inv.role === 'imc' || inv.is_imc_member || inv.is_imc_lead);
+                    return (
+                      <div
+                        key={inv.id || inv.investigator_id}
+                        className="p-3 rounded-xl border bg-white border-slate-200 shadow-2xs"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-bold text-slate-800 truncate">
+                                {inv.full_name}
+                              </span>
+                              {inv.employee_id && (
+                                <span className="text-[11px] text-slate-500 font-mono">
+                                  ({inv.employee_id})
+                                </span>
+                              )}
+                              <span
+                                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                                  isPrimary
+                                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                    : 'bg-blue-100 text-blue-700 border border-blue-200'
+                                }`}
+                              >
+                                {isPrimary ? 'Primary (IMC)' : 'Secondary'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                              {[inv.designation, inv.department].filter(Boolean).join(' • ') || 'Hospital Staff'}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                            <Clock size={11} /> Investigating
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {isAssignedSecondary && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800 flex items-center gap-2">
+                    <Users size={16} className="text-blue-600 flex-shrink-0" />
+                    <span>
+                      You are assigned as a Secondary Investigator on this panel. The Primary Investigator(s) will compile and submit the centralized investigation report on behalf of the team.
+                    </span>
+                  </div>
+                )}
+
+                {!isAssignedPrimary && !isAssignedSecondary && (
+                  <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex items-center gap-2">
+                    <Clock size={15} className="text-slate-500 flex-shrink-0" />
+                    <span>
+                      Investigation in progress. Awaiting joint report submission from the primary investigator(s).
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 2. Centralized Joint Investigation Report Form (Primary Investigator on behalf of panel) */}
+            {canInvestigatorAct && (
+              <div className="card p-5 border border-indigo-300 bg-white shadow-sm space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="text-indigo-600" size={18} />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-800">Submit Joint Investigation Report</h2>
+                      <p className="text-xs text-slate-500">Submitting on behalf of the entire investigation panel</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200 uppercase tracking-wider">
+                    Primary Investigator
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-600">
+                  As an assigned Primary Investigator, provide the unified findings and root-cause analysis agreed upon by the panel. Submitting this centralized report will complete the investigation on behalf of all assigned members and forward the case to the IMC Convenor.
+                </p>
+
                 <div className="space-y-4">
                   <div>
-                    <label className="field-label mb-1">Your Findings & Report <span className="text-red-500">*</span></label>
+                    <label className="field-label mb-1">
+                      Detailed Investigation Findings & Explanation <span className="text-red-500">*</span>
+                    </label>
                     <textarea
                       value={investigatorReportText}
                       onChange={e => setInvestigatorReportText(e.target.value)}
-                      placeholder="Enter the detailed investigation findings, witness statements, and analysis..."
+                      placeholder="Provide a detailed explanation of the investigation findings, root cause analysis, sequence of events, and panel observations..."
                       className="textarea"
-                      rows={4}
+                      rows={5}
+                      required
                     />
+                  </div>
+
+                  <div>
+                    <label className="field-label mb-1">
+                      Supporting Attachments (Optional)
+                    </label>
+                    <p className="text-[11px] text-slate-500 mb-2">
+                      Upload any on-site photographs, evidence, or supporting documents (non-mandatory).
+                    </p>
                     <FileUploadArea files={investigatorAttachments} setFiles={setInvestigatorAttachments} />
                   </div>
-                  <div className="flex justify-end mt-4">
+
+                  <div className="flex justify-end pt-2">
                     <button
                       onClick={() => investigatorReportMutation.mutate()}
                       disabled={!investigatorReportText.trim() || investigatorReportMutation.isPending}
-                      className="btn-primary btn-sm"
+                      className="btn-primary btn-sm flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
                     >
                       {investigatorReportMutation.isPending ? <Spinner size={12} /> : null}
-                      Submit Report to IMC Convenor
+                      Submit Joint Report to IMC Convenor
                     </button>
                   </div>
                 </div>
               </div>
             )}
 
+            {/* 3. Review Investigator Reports & IMC Convenor Decision Card */}
             {canImcReviewInvestigator && (
-              <div className="card p-5 border border-amber-200">
-                <div className="flex items-center gap-2 mb-4">
-                  <MessageSquare className="text-amber-600" size={18} />
-                  <h2 className="text-sm font-semibold text-slate-800">Review Investigator Report</h2>
+              <div className="card p-5 border border-indigo-300 shadow-sm space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Shield className="text-indigo-600" size={18} />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-800">IMC Convenor Review of Investigation</h2>
+                      <p className="text-xs text-slate-500">Joint investigation report has been submitted by the panel. Evaluate findings below.</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Joint Report Submitted
+                  </span>
                 </div>
-                <div className="space-y-4">
-                  <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
-                    <p className="text-xs font-semibold text-amber-800 mb-2">The Investigator has submitted their report. Please review it below in the "Review History" section, then choose an action:</p>
-                    
-                    <div className="flex flex-col gap-3 mt-4">
+
+                {/* Unified Joint Investigation Report */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Joint Investigation Findings (Submitted on Behalf of Panel)
+                    </h3>
+                    {latestInvReport?.created_at && (
+                      <span className="text-[11px] text-slate-400">
+                        Submitted {formatDateTime(latestInvReport.created_at)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="p-4 rounded-xl border border-indigo-100 bg-white shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
+                          {latestInvReport?.full_name?.charAt(0) || 'P'}
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-800">
+                            {latestInvReport?.full_name || 'Primary Investigator'}
+                          </span>
+                          <span className="text-[11px] text-slate-500 ml-1.5">
+                            ({latestInvReport?.designation || 'Lead Primary Investigator'})
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+                        Submitted on Behalf of Team
+                      </span>
+                    </div>
+
+                    {/* Appointed Panel Roster */}
+                    {incident.investigators?.length > 0 && (
+                      <div className="bg-slate-50/80 p-2.5 rounded-lg border border-slate-200">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                          Investigation Panel:
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {incident.investigators.map(inv => {
+                            const isPrimary = Boolean(inv.role === 'imc' || inv.is_imc_member || inv.is_imc_lead);
+                            return (
+                              <span
+                                key={inv.id || inv.investigator_id}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 text-[11px]"
+                              >
+                                <span className="font-semibold text-slate-700">{inv.full_name}</span>
+                                {inv.employee_id && <span className="text-[10px] text-slate-400 font-mono">({inv.employee_id})</span>}
+                                <span className={`text-[9px] font-bold px-1 py-0.2 rounded ${
+                                  isPrimary ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {isPrimary ? 'Primary' : 'Secondary'}
+                                </span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                      <p className="text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">
+                        Investigation Findings & Analysis:
+                      </p>
+                      <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
+                        {latestInvReport?.feedback_text || incident.investigators?.find(i => i.report_text)?.report_text || 'No report text provided.'}
+                      </p>
+                    </div>
+
+                    {/* Evidence Attachments */}
+                    {investigationAttachmentsList.length > 0 && (
+                      <div className="pt-2 border-t border-slate-100">
+                        <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                          <Paperclip size={13} className="text-indigo-600" />
+                          Attached Evidence & Documents ({investigationAttachmentsList.length})
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {investigationAttachmentsList.map(att => (
+                            <a
+                              key={att.id}
+                              href={`${UPLOADS_URL}/${att.stored_filename}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 transition-colors shadow-2xs"
+                            >
+                              <FileText size={13} className="text-indigo-600" />
+                              <span className="truncate max-w-[200px]">{att.original_filename}</span>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Lead Satisfaction Decision */}
+                <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                      Are you satisfied with the investigation done by the investigators?
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setSatisfactionDecision('satisfied')}
+                      className={`p-3 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                        satisfactionDecision === 'satisfied'
+                          ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-200'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 mt-0.5">
+                        <CheckCircle size={16} />
+                      </div>
                       <div>
-                        <label className="field-label mb-1">Feedback to Investigator (Optional)</label>
+                        <p className="text-xs font-bold text-slate-800">Yes, Satisfied</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">Accept investigation findings and submit report directly to Management.</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSatisfactionDecision('unsatisfied')}
+                      className={`p-3 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                        satisfactionDecision === 'unsatisfied'
+                          ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-200'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="p-2 rounded-lg bg-amber-100 text-amber-700 mt-0.5">
+                        <AlertTriangle size={16} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">No, Need Re-investigation</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">Findings incomplete or unsatisfactory. Mandate re-investigation.</p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* BRANCH 1: Unsatisfied -> Mandate Reinvestigation */}
+                  {satisfactionDecision === 'unsatisfied' && (
+                    <div className="mt-4 pt-4 border-t border-slate-200 space-y-4 bg-amber-50/40 p-4 rounded-xl border border-amber-200">
+                      <div>
+                        <label className="field-label mb-1">
+                          Remarks & Re-investigation Instructions <span className="text-red-500">*</span>
+                        </label>
                         <textarea
                           value={feedbackText}
                           onChange={e => setFeedbackText(e.target.value)}
-                          placeholder="Provide feedback on why the report is rejected or needs more work..."
+                          placeholder="Explain why the investigation is unsatisfactory and what additional points/witnesses need investigation..."
                           className="textarea"
-                          rows={2}
+                          rows={3}
+                          required
                         />
                       </div>
-                      
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => rejectInvestigatorReportMutation.mutate({ action: 'reinvestigate', feedbackText })}
-                          disabled={rejectInvestigatorReportMutation.isPending}
-                          className="btn-secondary btn-sm text-red-600 border-red-200 hover:bg-red-50"
-                        >
-                          Reject & Reinvestigate (Same Person)
-                        </button>
-                        
-                        <div className="flex gap-2 items-center">
-                          <select
-                            value={selectedInvestigator}
-                            onChange={e => setSelectedInvestigator(e.target.value)}
-                            className="select h-8 text-sm py-0"
-                          >
-                            <option value="">-- Select New Investigator --</option>
-                            {imcMembers.map(m => (
-                              <option key={m.id} value={m.id}>{m.full_name}</option>
-                            ))}
-                          </select>
+
+                      <div className="space-y-3">
+                        <label className="field-label mb-0">Who should re-investigate?</label>
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-slate-700">
+                            <input
+                              type="radio"
+                              name="reinvMode"
+                              checked={!reassignMode}
+                              onChange={() => setReassignMode(false)}
+                              className="w-4 h-4 text-amber-600"
+                            />
+                            Send back to Same Team
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-slate-700">
+                            <input
+                              type="radio"
+                              name="reinvMode"
+                              checked={reassignMode}
+                              onChange={() => setReassignMode(true)}
+                              className="w-4 h-4 text-amber-600"
+                            />
+                            Re-assign / Modify Investigators
+                          </label>
+                        </div>
+
+                        {reassignMode && (
+                          <div className="bg-white border border-amber-200 rounded-xl p-4 space-y-4 mt-3">
+                            <InvestigatorPicker
+                              id="reassign-primary"
+                              label="Select Primary Investigator(s) — IMC Members"
+                              icon={Shield}
+                              required
+                              mode="imc"
+                              imcMembers={imcMembers}
+                              selected={reassignPrimary}
+                              onChange={setReassignPrimary}
+                              placeholder="Type IMC member name or employee ID…"
+                              accent="indigo"
+                            />
+                            <InvestigatorPicker
+                              id="reassign-secondary"
+                              label="Select Secondary Investigator(s) — Non-IMC Employees"
+                              icon={Users}
+                              mode="non_imc"
+                              imcMembers={imcMembers}
+                              selected={reassignSecondary}
+                              onChange={setReassignSecondary}
+                              excludeIds={[
+                                ...reassignPrimary.map(p => p.id),
+                                ...reassignPrimary.map(p => p.employee_id)
+                              ].filter(Boolean)}
+                              placeholder="Type employee name or employee ID…"
+                              accent="blue"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex justify-end pt-2">
                           <button
-                            onClick={() => rejectInvestigatorReportMutation.mutate({ action: 'reassign', newInvestigatorId: selectedInvestigator, feedbackText })}
-                            disabled={!selectedInvestigator || rejectInvestigatorReportMutation.isPending}
-                            className="btn-secondary btn-sm text-orange-600 border-orange-200 hover:bg-orange-50"
+                            type="button"
+                            onClick={() => {
+                              if (reassignMode) {
+                                rejectInvestigatorReportMutation.mutate({
+                                  action: 'reassign',
+                                  feedbackText,
+                                  investigatorIds: [
+                                    ...reassignPrimary.map(p => p.id || p.employee_id),
+                                    ...reassignSecondary.map(s => s.id || s.employee_id)
+                                  ]
+                                });
+                              } else {
+                                rejectInvestigatorReportMutation.mutate({
+                                  action: 'reinvestigate',
+                                  feedbackText
+                                });
+                              }
+                            }}
+                            disabled={
+                              !feedbackText.trim() ||
+                              (reassignMode && reassignPrimary.length === 0) ||
+                              rejectInvestigatorReportMutation.isPending
+                            }
+                            className="btn-primary btn-sm bg-amber-600 hover:bg-amber-700 border-amber-600 disabled:opacity-50"
                           >
-                            Reassign to New Person
+                            {rejectInvestigatorReportMutation.isPending ? <Spinner size={12} /> : null}
+                            {reassignMode ? 'Re-assign & Send for Re-investigation' : 'Send for Re-investigation (Same Team)'}
                           </button>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="pt-4 border-t border-slate-100">
-                    <h3 className="text-sm font-semibold text-slate-800 mb-2">Accept & Proceed to Management</h3>
-                    <div className="space-y-4">
+                  {/* BRANCH 2: Satisfied -> Submit to Management */}
+                  {satisfactionDecision === 'satisfied' && (
+                    <div className="mt-4 pt-4 border-t border-slate-200 space-y-4 bg-emerald-50/40 p-4 rounded-xl border border-emerald-200">
                       <div>
-                        <label className="field-label mb-1">Final Quality Review & Findings</label>
+                        <label className="field-label mb-1">
+                          Final IMC Quality Assessment & Findings <span className="text-red-500">*</span>
+                        </label>
                         <textarea
                           value={feedbackText}
                           onChange={e => setFeedbackText(e.target.value)}
-                          placeholder="Enter your final quality assessment..."
+                          placeholder="Enter comprehensive IMC review, root cause findings, and quality observations to be forwarded to Management..."
                           className="textarea"
                           rows={3}
+                          required
                         />
                         <FileUploadArea files={imcAttachments} setFiles={setImcAttachments} />
                       </div>
-                      <div>
-                        <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
-                        <select
-                          value={imcSeverity}
-                          onChange={(e) => setImcSeverity(e.target.value)}
-                          className="select w-full"
-                          required
-                        >
-                          <option value="">Select Severity...</option>
-                          <option value="Minor">Minor</option>
-                          <option value="Major">Major</option>
-                          <option value="Grave">Grave</option>
-                        </select>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
+                          <select
+                            value={imcSeverity}
+                            onChange={e => setImcSeverity(e.target.value)}
+                            className="select w-full"
+                            required
+                          >
+                            <option value="">Select Severity...</option>
+                            <option value="Minor">Minor</option>
+                            <option value="Major">Major</option>
+                            <option value="Grave">Grave</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="field-label mb-1">Proposed Outcome <span className="text-red-500">*</span></label>
+                          <select
+                            value={imcProposedOutcome}
+                            onChange={e => setImcProposedOutcome(e.target.value)}
+                            className="select w-full"
+                            required
+                          >
+                            <option value="">Select Relevant Option</option>
+                            <option value="No Action">No Action</option>
+                            <option value="Counselling / Education / Training">Counselling / Education / Training</option>
+                            <option value="Issue a Warning Letter">Issue a Warning Letter</option>
+                            <option value="Issue an Advisory Letter">Issue an Advisory Letter</option>
+                            <option value="Financial Penalty">Financial Penalty</option>
+                            <option value="Suspension for a Stipulated Period">Suspension for a Stipulated Period</option>
+                            <option value="Transfer to Other Dept.">Transfer to Other Dept.</option>
+                            <option value="Demotion">Demotion</option>
+                            <option value="Termination">Termination</option>
+                            <option value="Legal Action">Legal Action</option>
+                            <option value="Disciplinary Committee">Disciplinary Committee</option>
+                            <option value="Conflict Resolution Committee">Conflict Resolution Committee</option>
+                            <option value="New Protocol and Process Flow">New Protocol and Process Flow</option>
+                            <option value="Modifying Protocol and Process Flow">Modifying Protocol and Process Flow</option>
+                            <option value="Inappropriate Complaint">Inappropriate Complaint</option>
+                            <option value="Others">Others</option>
+                          </select>
+                        </div>
                       </div>
-                      <div>
-                        <label className="field-label mb-1">Proposed Outcome <span className="text-red-500">*</span></label>
-                        <select
-                          value={imcProposedOutcome}
-                          onChange={(e) => setImcProposedOutcome(e.target.value)}
-                          className="select w-full"
-                          required
-                        >
-                          <option value="">Select Relevant Option</option>
-                          <option value="No Action">No Action</option>
-                          <option value="Counselling / Education / Training">Counselling / Education / Training</option>
-                          <option value="Issue a Warning Letter">Issue a Warning Letter</option>
-                          <option value="Issue an Advisory Letter">Issue an Advisory Letter</option>
-                          <option value="Financial Penalty">Financial Penalty</option>
-                          <option value="Suspension for a Stipulated Period">Suspension for a Stipulated Period</option>
-                          <option value="Transfer to Other Dept.">Transfer to Other Dept.</option>
-                          <option value="Demotion">Demotion</option>
-                          <option value="Termination">Termination</option>
-                          <option value="Legal Action">Legal Action</option>
-                          <option value="Disciplinary Committee">Disciplinary Committee</option>
-                          <option value="Conflict Resolution Committee">Conflict Resolution Committee</option>
-                          <option value="New Protocol and Process Flow">New Protocol and Process Flow</option>
-                          <option value="Modifying Protocol and Process Flow">Modifying Protocol and Process Flow</option>
-                          <option value="Inappropriate Complaint">Inappropriate Complaint</option>
-                          <option value="Others">Others</option>
-                        </select>
-                      </div>
-                      <div className="flex justify-end mt-2">
+
+                      <div className="flex justify-end pt-2">
                         <button
                           onClick={() => imcFeedbackMutation.mutate(true)}
-                          disabled={!incident.all_hod_feedback_submitted || !feedbackText.trim() || !imcSeverity || !imcProposedOutcome || imcFeedbackMutation.isPending}
-                          className="btn-primary btn-sm bg-green-600 hover:bg-green-700 border-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title={!incident.all_hod_feedback_submitted ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}` : ''}
+                          disabled={
+                            !feedbackText.trim() ||
+                            !imcSeverity ||
+                            !imcProposedOutcome ||
+                            imcFeedbackMutation.isPending
+                          }
+                          className="btn-primary btn-sm bg-emerald-600 hover:bg-emerald-700 border-emerald-600 disabled:opacity-50"
                         >
                           {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
-                          Accept Report & Forward to Management
+                          Submit Feedback Directly to Management
                         </button>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
+              </div>
+            )}
+
+            {/* Centralized Joint Investigation Report Card (Visible for general viewing when submitted) */}
+            {latestInvReport && !canImcReviewInvestigator && (
+              <div className="card p-5 border border-indigo-200 bg-white shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="text-emerald-600" size={20} />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-800">Joint Investigation Report</h2>
+                      <p className="text-xs text-slate-500">
+                        Submitted on behalf of the panel by <span className="font-semibold text-slate-700">{latestInvReport.full_name}</span>
+                        {latestInvReport.created_at && <> • {formatDateTime(latestInvReport.created_at)}</>}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Report Submitted
+                  </span>
+                </div>
+
+                {/* Appointed Panel Roster */}
+                {incident.investigators?.length > 0 && (
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-2">
+                      Appointed Investigation Panel:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {incident.investigators.map(inv => {
+                        const isPrimary = Boolean(inv.role === 'imc' || inv.is_imc_member || inv.is_imc_lead);
+                        return (
+                          <div
+                            key={inv.id || inv.investigator_id}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs shadow-2xs"
+                          >
+                            <span className="font-semibold text-slate-800">{inv.full_name}</span>
+                            {inv.employee_id && <span className="text-[10px] text-slate-400 font-mono">({inv.employee_id})</span>}
+                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                              isPrimary ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-blue-100 text-blue-700 border border-blue-200'
+                            }`}>
+                              {isPrimary ? 'Primary (IMC)' : 'Secondary'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Report Findings Text */}
+                <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-1.5">
+                  <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                    Investigation Findings & Analysis:
+                  </p>
+                  <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
+                    {latestInvReport.feedback_text}
+                  </p>
+                </div>
+
+                {/* Evidence Attachments if any */}
+                {investigationAttachmentsList?.length > 0 && (
+                  <div className="pt-2 border-t border-slate-100">
+                    <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                      <Paperclip size={13} className="text-indigo-600" />
+                      Attached Evidence & Documents ({investigationAttachmentsList.length})
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {investigationAttachmentsList.map(att => (
+                        <a
+                          key={att.id}
+                          href={`${UPLOADS_URL}/${att.stored_filename}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 transition-colors shadow-2xs"
+                        >
+                          <FileText size={13} className="text-indigo-600" />
+                          <span className="truncate max-w-[200px]">{att.original_filename}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {incident.status === 'with_imc_review' && (
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-xs text-purple-900 flex items-center gap-2">
+                    <Clock size={15} className="text-purple-600 flex-shrink-0" />
+                    <span>The joint investigation report is currently under review and satisfaction assessment by the IMC Convenor.</span>
+                  </div>
+                )}
               </div>
             )}
 

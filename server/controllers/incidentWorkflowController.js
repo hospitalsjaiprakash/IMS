@@ -269,6 +269,22 @@ exports.submitImcFeedback = async (req, res) => {
       });
     }
 
+    // Rule: If investigators were assigned, joint investigation report must be submitted before Lead can forward to management
+    const invPending = await client.query(
+      `SELECT COUNT(*) as total, 
+              COUNT(CASE WHEN status != 'completed' THEN 1 END) as pending
+       FROM investigators WHERE incident_id = $1`,
+      [id]
+    );
+    const totalInvs = parseInt(invPending.rows[0]?.total || '0', 10);
+    const pendingInvs = parseInt(invPending.rows[0]?.pending || '0', 10);
+    if (totalInvs > 0 && pendingInvs > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Cannot submit feedback to Management yet. The joint investigation report has not been submitted by the investigators.`
+      });
+    }
+
     await client.query(
       `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text)
        VALUES ($1, $2, 'imc', $3)`,
@@ -547,7 +563,78 @@ exports.closeIncident = async (req, res) => {
 };
 
 // =============================================
-// SUBMIT INVESTIGATION REPORT (Involved IMC Member / Assigned Investigator)
+// HELPER: RESOLVE & VALIDATE INVESTIGATORS
+// =============================================
+async function resolveAndValidateInvestigators(investigatorIds, queryFn = query) {
+  let invUsers = [];
+  for (const rawId of investigatorIds) {
+    if (!rawId) continue;
+    const invId = String(rawId).trim();
+    // 1. Check users table
+    let uRes = await queryFn(
+      'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id::text = $1 OR employee_id = $1',
+      [invId]
+    );
+    if (uRes.rows.length) {
+      invUsers.push(uRes.rows[0]);
+      continue;
+    }
+
+    // 2. If not in users, check master_employees (by id or employee_id)
+    const mRes = await queryFn(
+      'SELECT * FROM master_employees WHERE id::text = $1 OR employee_id = $1',
+      [invId]
+    );
+    if (mRes.rows.length) {
+      const mEmp = mRes.rows[0];
+      const newUserRes = await queryFn(
+        `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, TRUE, NULL)
+         ON CONFLICT (employee_id) DO UPDATE SET
+           full_name = EXCLUDED.full_name,
+           department = EXCLUDED.department,
+           designation = EXCLUDED.designation,
+           is_active = TRUE
+         RETURNING id, full_name, email, role, is_imc_member, is_imc_lead`,
+        [
+          mEmp.employee_id,
+          mEmp.name,
+          mEmp.email || `${mEmp.employee_id}@jphrc.org`,
+          mEmp.department,
+          mEmp.designation,
+          mEmp.role || 'employee'
+        ]
+      );
+      if (newUserRes.rows.length) {
+        invUsers.push(newUserRes.rows[0]);
+        continue;
+      }
+    }
+
+    throw new Error(`One or more selected investigators (${invId}) were not found in hospital user records.`);
+  }
+
+  // Deduplicate investigators
+  const uniqueInvUsers = [];
+  const seenInvIds = new Set();
+  for (const inv of invUsers) {
+    if (!seenInvIds.has(inv.id)) {
+      seenInvIds.add(inv.id);
+      uniqueInvUsers.push(inv);
+    }
+  }
+
+  // Must include at least one IMC member as primary investigator
+  const hasImcMember = uniqueInvUsers.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
+  if (!hasImcMember) {
+    throw new Error('Primary investigators must include at least one IMC member.');
+  }
+
+  return uniqueInvUsers;
+}
+
+// =============================================
+// SUBMIT INVESTIGATION REPORT (Centralized Joint Report - Primary Investigator on behalf of Team)
 // =============================================
 exports.submitInvestigatorReport = async (req, res) => {
   const client = await getClient();
@@ -561,23 +648,50 @@ exports.submitInvestigatorReport = async (req, res) => {
       return res.status(400).json({ error: 'Investigation findings text is required.' });
     }
 
-    // Verify user authorization: must be an assigned investigator or an IMC member
-    const isImc = Boolean(req.user.role === 'imc' || req.user.is_imc_member || req.user.is_imc_lead);
+    // Verify user authorization: must be an assigned investigator for this incident
     const assignedCheck = await client.query(
-      `SELECT * FROM investigators WHERE incident_id = $1 AND investigator_id = $2`,
+      `SELECT inv.*, u.role, u.is_imc_member, u.is_imc_lead 
+       FROM investigators inv
+       JOIN users u ON u.id = inv.investigator_id
+       WHERE inv.incident_id = $1 AND inv.investigator_id = $2`,
       [id, req.user.id]
     );
 
-    if (!assignedCheck.rows.length && !isImc) {
+    if (!assignedCheck.rows.length) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Only assigned investigators or involved IMC members can submit the investigation report.' });
+      return res.status(403).json({ error: 'Only assigned investigators can submit an investigation report.' });
     }
 
-    // Update active investigator assignments for this incident
+    const assignedInv = assignedCheck.rows[0];
+    const isPrimary = Boolean(
+      assignedInv.role === 'imc' ||
+      assignedInv.is_imc_member ||
+      assignedInv.is_imc_lead ||
+      req.user.role === 'imc' ||
+      req.user.is_imc_member ||
+      req.user.is_imc_lead ||
+      req.user.is_system_admin
+    );
+
+    if (!isPrimary) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'Only primary investigators (IMC members) can submit the centralized investigation report on behalf of the panel.'
+      });
+    }
+
+    // Verify incident is awaiting report
+    const incStatusCheck = await client.query('SELECT status FROM incidents WHERE id = $1', [id]);
+    if (incStatusCheck.rows.length && incStatusCheck.rows[0].status !== 'with_investigator') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Incident is not currently awaiting investigation report submission.' });
+    }
+
+    // Update ALL assigned investigators for this incident to 'completed'
     await client.query(
       `UPDATE investigators 
        SET report_text = $1, status = 'completed', completed_at = NOW() 
-       WHERE incident_id = $2 AND status != 'completed'`,
+       WHERE incident_id = $2`,
       [reportText.trim(), id]
     );
 
@@ -587,7 +701,7 @@ exports.submitInvestigatorReport = async (req, res) => {
       [id, req.user.id, reportText.trim()]
     );
 
-    // Save attached files (photos, official report PDFs, etc.)
+    // Save attached files (photos, evidence, supporting docs)
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         await client.query(
@@ -603,19 +717,45 @@ exports.submitInvestigatorReport = async (req, res) => {
 
     await client.query('COMMIT');
 
+    const incRes = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
+    const refId = incRes.rows[0]?.reference_id || id;
+
     // Notify IMC Convenor
-    const convenorRes = await query(`SELECT id, email, full_name FROM users WHERE (role = 'imc' AND is_imc_lead = TRUE) OR is_system_admin = TRUE`);
+    const convenorRes = await query(
+      `SELECT id, email, full_name FROM users WHERE (role = 'imc' AND is_imc_lead = TRUE) OR is_system_admin = TRUE`
+    );
     for (const member of convenorRes.rows) {
       await createNotification(
         member.id,
         id,
-        'Investigation Report Ready for Review',
-        `An investigation report has been submitted. Please evaluate findings to forward to Management or request reinvestigation.`,
+        'Joint Investigation Report Submitted',
+        `Joint investigation report for incident ${refId} has been submitted by ${req.user.full_name} on behalf of the panel. Ready for your review and satisfaction assessment.`,
         'investigator_report_submitted'
       );
     }
 
-    res.json({ success: true, message: 'Investigation report submitted successfully.' });
+    // Notify other assigned panel members
+    const otherInvs = await query(
+      `SELECT u.id, u.email, u.full_name FROM investigators inv
+       JOIN users u ON u.id = inv.investigator_id
+       WHERE inv.incident_id = $1 AND inv.investigator_id != $2`,
+      [id, req.user.id]
+    );
+    for (const inv of otherInvs.rows) {
+      await createNotification(
+        inv.id,
+        id,
+        'Investigation Report Submitted',
+        `The joint investigation report for incident ${refId} has been submitted by ${req.user.full_name} on behalf of the panel.`,
+        'investigator_report_submitted'
+      );
+    }
+
+    res.json({
+      success: true,
+      allCompleted: true,
+      message: 'Joint investigation report submitted successfully on behalf of the panel. Incident is now ready for IMC Convenor review.'
+    });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('[POST /incidents/:id/investigator-report] error:', error);
@@ -632,10 +772,8 @@ exports.rejectInvestigatorReport = async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    let { feedbackText, investigatorIds, newInvestigatorId } = req.body;
-    if (!investigatorIds && newInvestigatorId) {
-      investigatorIds = [newInvestigatorId];
-    }
+    const { id } = req.params;
+    let { feedbackText, investigatorIds, action } = req.body;
     
     if (!req.user.is_imc_lead && !req.user.is_system_admin) {
       await client.query('ROLLBACK');
@@ -653,16 +791,21 @@ exports.rejectInvestigatorReport = async (req, res) => {
       [id, req.user.id, feedbackText.trim()]
     );
     
-    // If new or reallocated investigator IDs are provided, reassign them
-    if (Array.isArray(investigatorIds) && investigatorIds.length > 0) {
-      const invUsers = await client.query('SELECT id, email, full_name, role, is_imc_member, is_imc_lead FROM users WHERE id = ANY($1)', [investigatorIds]);
-      const hasImc = invUsers.rows.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
-      if (!hasImc) {
+    let assignedInvs = [];
+
+    // If action is 'reassign' and new investigator IDs are provided, reassign them
+    if (action === 'reassign' && Array.isArray(investigatorIds) && investigatorIds.length > 0) {
+      try {
+        assignedInvs = await resolveAndValidateInvestigators(investigatorIds, (sql, p) => client.query(sql, p));
+      } catch (validationErr) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'At least one IMC member must be included in the investigation team.' });
+        return res.status(400).json({ error: validationErr.message });
       }
 
-      for (const inv of invUsers.rows) {
+      // Remove previous investigator assignments
+      await client.query('DELETE FROM investigators WHERE incident_id = $1', [id]);
+
+      for (const inv of assignedInvs) {
         await client.query(
           `INSERT INTO investigators (incident_id, investigator_id, assigned_by, status) 
            VALUES ($1, $2, $3, 'assigned')`,
@@ -670,8 +813,16 @@ exports.rejectInvestigatorReport = async (req, res) => {
         );
       }
     } else {
-      // Re-open existing completed investigators
-      await client.query(`UPDATE investigators SET status = 'assigned' WHERE incident_id = $1`, [id]);
+      // Re-open existing investigators for same team
+      await client.query(`UPDATE investigators SET status = 'assigned', completed_at = NULL WHERE incident_id = $1`, [id]);
+      const prevInvs = await client.query(
+        `SELECT DISTINCT u.id, u.email, u.full_name 
+         FROM investigators inv
+         JOIN users u ON u.id = inv.investigator_id
+         WHERE inv.incident_id = $1`,
+        [id]
+      );
+      assignedInvs = prevInvs.rows;
     }
     
     await client.query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
@@ -682,14 +833,7 @@ exports.rejectInvestigatorReport = async (req, res) => {
     const refId = incRes.rows[0]?.reference_id || id;
 
     // Notify assigned investigators
-    const assignedInvs = await query(`
-      SELECT DISTINCT u.id, u.email, u.full_name 
-      FROM investigators inv
-      JOIN users u ON u.id = inv.investigator_id
-      WHERE inv.incident_id = $1 AND inv.status = 'assigned'
-    `, [id]);
-
-    for (const inv of assignedInvs.rows) {
+    for (const inv of assignedInvs) {
       await createNotification(
         inv.id,
         id,
@@ -697,13 +841,19 @@ exports.rejectInvestigatorReport = async (req, res) => {
         `The IMC Convenor has requested reinvestigation for incident ${refId}. Remarks: "${feedbackText.trim()}"`,
         'investigator_assigned'
       );
+      if (inv.email) {
+        sendEmail(inv.email, {
+          subject: `Reinvestigation Mandated for Incident ${refId}`,
+          html: `<p>Dear ${inv.full_name},</p><p>The IMC Convenor has requested further investigation for incident <b>${refId}</b>.</p><p><b>Remarks:</b> ${feedbackText.trim()}</p>`
+        }).catch(() => {});
+      }
     }
 
     res.json({ success: true, message: 'Incident successfully scheduled for reinvestigation.' });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('[POST /incidents/:id/reject-investigator-report] error:', error);
-    res.status(500).json({ error: 'Failed to request reinvestigation.' });
+    res.status(500).json({ error: error.message || 'Failed to request reinvestigation.' });
   } finally {
     client.release();
   }
@@ -770,72 +920,12 @@ exports.assignInvestigator = async (req, res) => {
       });
     }
 
-    // Resolve investigators: can be in users table or master_employees (unregistered)
-    let invUsers = [];
-    for (const rawId of investigatorIds) {
-      if (!rawId) continue;
-      const invId = String(rawId).trim();
-      // First check users table
-      let uRes = await query(
-        'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id::text = $1 OR employee_id = $1',
-        [invId]
-      );
-      if (uRes.rows.length) {
-        invUsers.push(uRes.rows[0]);
-        continue;
-      }
-
-      // If not in users, check master_employees (by id or employee_id)
-      const mRes = await query(
-        'SELECT * FROM master_employees WHERE id::text = $1 OR employee_id = $1',
-        [invId]
-      );
-      if (mRes.rows.length) {
-        const mEmp = mRes.rows[0];
-        // Provision user account for unregistered employee so they can be assigned as investigator
-        const defaultHash = await bcrypt.hash('123456', 12);
-        const newUserRes = await query(
-          `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-           VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
-           ON CONFLICT (employee_id) DO UPDATE SET
-             full_name = EXCLUDED.full_name,
-             department = EXCLUDED.department,
-             designation = EXCLUDED.designation,
-             is_active = TRUE
-           RETURNING id, full_name, email, role, is_imc_member, is_imc_lead`,
-          [
-            mEmp.employee_id,
-            mEmp.name,
-            mEmp.email || `${mEmp.employee_id}@jphrc.org`,
-            mEmp.department,
-            mEmp.designation,
-            mEmp.role || 'employee',
-            defaultHash
-          ]
-        );
-        if (newUserRes.rows.length) {
-          invUsers.push(newUserRes.rows[0]);
-          continue;
-        }
-      }
-
-      return res.status(400).json({ error: 'One or more selected investigators were not found in hospital user records.' });
-    }
-
-    // Deduplicate investigators
-    const uniqueInvUsers = [];
-    const seenInvIds = new Set();
-    for (const inv of invUsers) {
-      if (!seenInvIds.has(inv.id)) {
-        seenInvIds.add(inv.id);
-        uniqueInvUsers.push(inv);
-      }
-    }
-
-    // Must include at least one IMC member as primary investigator
-    const hasImcMember = uniqueInvUsers.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
-    if (!hasImcMember) {
-      return res.status(400).json({ error: 'Primary investigators must include at least one IMC member.' });
+    // Resolve investigators using the shared helper
+    let uniqueInvUsers;
+    try {
+      uniqueInvUsers = await resolveAndValidateInvestigators(investigatorIds);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
     }
 
     for (const inv of uniqueInvUsers) {
@@ -857,7 +947,7 @@ exports.assignInvestigator = async (req, res) => {
     const incResult = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
     const refId = incResult.rows[0]?.reference_id || 'Unknown';
 
-    for (const inv of invRes.rows) {
+    for (const inv of uniqueInvUsers) {
       await createNotification(
         inv.id,
         id,
@@ -876,7 +966,7 @@ exports.assignInvestigator = async (req, res) => {
     res.json({ success: true, message: 'Investigators successfully assigned.' });
   } catch (e) {
     console.error('[POST /incidents/:id/assign-investigator] error:', e);
-    res.status(500).json({ error: 'Failed to assign investigator' });
+    res.status(500).json({ error: e.message || 'Failed to assign investigator' });
   }
 };
 
