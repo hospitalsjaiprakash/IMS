@@ -33,13 +33,20 @@ export default function InvestigatorPicker({
   const [open, setOpen] = React.useState(false);
   const wrapperRef = React.useRef(null);
 
-  const imcIdSet = React.useMemo(() => new Set(imcMembers.map(m => m.id)), [imcMembers]);
+  const imcIdSet = React.useMemo(() => new Set(imcMembers.map(m => m.id).filter(Boolean)), [imcMembers]);
   const imcEmpIdSet = React.useMemo(
     () => new Set(imcMembers.map(m => (m.employee_id || '').toLowerCase()).filter(Boolean)),
     [imcMembers]
   );
   const takenIds = React.useMemo(
-    () => new Set([...selected.map(s => s.id), ...excludeIds]),
+    () => new Set([...selected.map(s => s.id), ...excludeIds].filter(Boolean)),
+    [selected, excludeIds]
+  );
+  const takenCodes = React.useMemo(
+    () => new Set([
+      ...selected.map(s => (s.employee_id || '').toLowerCase()),
+      ...excludeIds.map(x => String(x || '').toLowerCase())
+    ].filter(Boolean)),
     [selected, excludeIds]
   );
 
@@ -68,11 +75,15 @@ export default function InvestigatorPicker({
         .then(res => {
           if (cancelled) return;
           const data = res.data;
-          setRemoteResults(Array.isArray(data) ? data : (data?.employees || []));
+          const list = Array.isArray(data) ? data : (data?.employees || []);
+          setRemoteResults(list);
         })
-        .catch(() => { if (!cancelled) setRemoteResults([]); })
+        .catch(err => {
+          console.error('Employee search error:', err);
+          if (!cancelled) setRemoteResults([]);
+        })
         .finally(() => { if (!cancelled) setSearching(false); });
-    }, 300);
+    }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [term, mode]);
 
@@ -80,31 +91,35 @@ export default function InvestigatorPicker({
     const q = term.trim().toLowerCase();
     if (!q) return [];
     if (mode === 'imc') {
-      return imcMembers.filter(m =>
-        !takenIds.has(m.id) &&
-        ((m.full_name || '').toLowerCase().includes(q) || (m.employee_id || '').toLowerCase().includes(q))
-      ).slice(0, 20);
+      return imcMembers.filter(m => {
+        const mId = m.id;
+        const mCode = (m.employee_id || '').toLowerCase();
+        if (mId && takenIds.has(mId)) return false;
+        if (mCode && takenCodes.has(mCode)) return false;
+        return (m.full_name || '').toLowerCase().includes(q) || mCode.includes(q);
+      }).slice(0, 20);
     }
     return remoteResults.filter(emp => {
       const empId = emp.id;
       const empCode = (emp.employee_id || '').toLowerCase();
-      if (takenIds.has(empId)) return false;
+      if (empId && takenIds.has(empId)) return false;
+      if (empCode && takenCodes.has(empCode)) return false;
       if (isImcUser(emp)) return false;
       if (empId && imcIdSet.has(empId)) return false;
       if (empCode && imcEmpIdSet.has(empCode)) return false;
       return true;
     });
-  }, [term, mode, imcMembers, remoteResults, takenIds, imcIdSet, imcEmpIdSet]);
+  }, [term, mode, imcMembers, remoteResults, takenIds, takenCodes, imcIdSet, imcEmpIdSet]);
 
   const add = (emp) => {
-    if (!selected.some(s => s.id === emp.id || (s.employee_id && emp.employee_id && s.employee_id === emp.employee_id))) {
+    if (!selected.some(s => (s.id && emp.id && s.id === emp.id) || (s.employee_id && emp.employee_id && s.employee_id.toLowerCase() === emp.employee_id.toLowerCase()))) {
       onChange([...selected, emp]);
     }
     setTerm('');
     setOpen(false);
   };
 
-  const remove = (empId) => onChange(selected.filter(s => s.id !== empId));
+  const remove = (identifier) => onChange(selected.filter(s => s.id !== identifier && s.employee_id !== identifier));
 
   const chipClass = accent === 'blue'
     ? 'bg-blue-50 border-blue-200 text-blue-800'
@@ -143,9 +158,13 @@ export default function InvestigatorPicker({
 
         {showDropdown && (
           <div className="absolute z-30 left-0 right-0 mt-1 border border-slate-200 rounded-xl bg-white shadow-lg max-h-56 overflow-y-auto divide-y divide-slate-100">
-            {suggestions.length === 0 ? (
+            {searching ? (
+              <div className="p-3 text-xs text-slate-500 flex items-center gap-2">
+                <Spinner size={12} /> Searching employees…
+              </div>
+            ) : suggestions.length === 0 ? (
               <div className="p-3 text-xs text-slate-500">
-                {searching ? 'Searching…' : (mode === 'imc' ? 'No matching IMC member found.' : 'No matching employee found.')}
+                {mode === 'imc' ? 'No matching IMC member found.' : 'No matching employee found.'}
               </div>
             ) : suggestions.map(emp => (
               <button
@@ -181,11 +200,11 @@ export default function InvestigatorPicker({
         <div className="mt-2 flex flex-wrap gap-2">
           {selected.map(emp => (
             <span
-              key={emp.id}
+              key={emp.id || emp.employee_id}
               className={`inline-flex items-center gap-1.5 px-3 py-1 border rounded-full text-xs font-medium ${chipClass}`}
             >
               <span>{emp.full_name || emp.name}{emp.employee_id ? ` (${emp.employee_id})` : ''}</span>
-              <button type="button" onClick={() => remove(emp.id)} className="hover:text-red-600" aria-label="Remove">
+              <button type="button" onClick={() => remove(emp.id || emp.employee_id)} className="hover:text-red-600" aria-label="Remove">
                 <X size={12} />
               </button>
             </span>

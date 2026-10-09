@@ -876,7 +876,7 @@ exports.searchEmployeeProfile = async (req, res) => {
     // Search both master_employees and users to include all hospital personnel
     const userResult = await query(
       `SELECT DISTINCT ON (COALESCE(u.employee_id, m.employee_id))
-         COALESCE(u.id, m.id) as id,
+         COALESCE(u.id::text, m.id::text) as id,
          COALESCE(u.employee_id, m.employee_id) as employee_id,
          COALESCE(u.full_name, m.name) as full_name,
          COALESCE(u.email, m.email) as email,
@@ -884,6 +884,8 @@ exports.searchEmployeeProfile = async (req, res) => {
          COALESCE(u.department, m.department) as department,
          COALESCE(u.designation, m.designation) as designation,
          COALESCE(u.role, m.role, 'employee') as role,
+         COALESCE(u.is_imc_member, false) as is_imc_member,
+         COALESCE(u.is_imc_lead, false) as is_imc_lead,
          CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered
        FROM master_employees m
        FULL OUTER JOIN users u ON u.employee_id = m.employee_id

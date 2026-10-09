@@ -802,15 +802,18 @@ export default function IncidentDetailPage() {
                               imcMembers={imcMembers}
                               selected={secondaryInvestigators}
                               onChange={setSecondaryInvestigators}
-                              excludeIds={primaryInvestigators.map(p => p.id)}
+                              excludeIds={[
+                                ...primaryInvestigators.map(p => p.id),
+                                ...primaryInvestigators.map(p => p.employee_id)
+                              ].filter(Boolean)}
                               placeholder="Type employee name or employee ID…"
                               accent="blue"
                             />
                             <div className="flex justify-end">
                               <button
                                 onClick={() => assignInvestigatorMutation.mutate([
-                                  ...primaryInvestigators.map(p => p.id),
-                                  ...secondaryInvestigators.map(s => s.id)
+                                  ...primaryInvestigators.map(p => p.id || p.employee_id),
+                                  ...secondaryInvestigators.map(s => s.id || s.employee_id)
                                 ])}
                                 disabled={!incident.all_hod_feedback_submitted || primaryInvestigators.length === 0 || assignInvestigatorMutation.isPending}
                                 title={

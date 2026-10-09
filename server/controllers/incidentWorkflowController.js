@@ -772,10 +772,12 @@ exports.assignInvestigator = async (req, res) => {
 
     // Resolve investigators: can be in users table or master_employees (unregistered)
     let invUsers = [];
-    for (const invId of investigatorIds) {
+    for (const rawId of investigatorIds) {
+      if (!rawId) continue;
+      const invId = String(rawId).trim();
       // First check users table
       let uRes = await query(
-        'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id = $1',
+        'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id::text = $1 OR employee_id = $1',
         [invId]
       );
       if (uRes.rows.length) {
@@ -785,7 +787,7 @@ exports.assignInvestigator = async (req, res) => {
 
       // If not in users, check master_employees (by id or employee_id)
       const mRes = await query(
-        'SELECT * FROM master_employees WHERE id = $1 OR employee_id = $1',
+        'SELECT * FROM master_employees WHERE id::text = $1 OR employee_id = $1',
         [invId]
       );
       if (mRes.rows.length) {
@@ -820,18 +822,34 @@ exports.assignInvestigator = async (req, res) => {
       return res.status(400).json({ error: 'One or more selected investigators were not found in hospital user records.' });
     }
 
+    // Deduplicate investigators
+    const uniqueInvUsers = [];
+    const seenInvIds = new Set();
+    for (const inv of invUsers) {
+      if (!seenInvIds.has(inv.id)) {
+        seenInvIds.add(inv.id);
+        uniqueInvUsers.push(inv);
+      }
+    }
+
     // Must include at least one IMC member as primary investigator
-    const hasImcMember = invUsers.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
+    const hasImcMember = uniqueInvUsers.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
     if (!hasImcMember) {
       return res.status(400).json({ error: 'Primary investigators must include at least one IMC member.' });
     }
 
-    for (const inv of invUsers) {
-      await query(
-        `INSERT INTO investigators (incident_id, investigator_id, assigned_by) 
-         VALUES ($1, $2, $3)`,
-        [id, inv.id, req.user.id]
+    for (const inv of uniqueInvUsers) {
+      const existing = await query(
+        'SELECT id FROM investigators WHERE incident_id = $1 AND investigator_id = $2',
+        [id, inv.id]
       );
+      if (existing.rows.length === 0) {
+        await query(
+          `INSERT INTO investigators (incident_id, investigator_id, assigned_by) 
+           VALUES ($1, $2, $3)`,
+          [id, inv.id, req.user.id]
+        );
+      }
     }
 
     await query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
