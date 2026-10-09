@@ -85,17 +85,21 @@ export default function InvestigatorPicker({
         ((m.full_name || '').toLowerCase().includes(q) || (m.employee_id || '').toLowerCase().includes(q))
       ).slice(0, 20);
     }
-    return remoteResults.filter(emp =>
-      !takenIds.has(emp.id) &&
-      !isImcUser(emp) &&
-      !imcIdSet.has(emp.id) &&
-      !imcEmpIdSet.has((emp.employee_id || '').toLowerCase())
-    );
+    return remoteResults.filter(emp => {
+      const empId = emp.id;
+      const empCode = (emp.employee_id || '').toLowerCase();
+      if (takenIds.has(empId)) return false;
+      if (isImcUser(emp)) return false;
+      if (empId && imcIdSet.has(empId)) return false;
+      if (empCode && imcEmpIdSet.has(empCode)) return false;
+      return true;
+    });
   }, [term, mode, imcMembers, remoteResults, takenIds, imcIdSet, imcEmpIdSet]);
 
   const add = (emp) => {
-    if (mode === 'non_imc' && emp.is_registered === false) return;
-    if (!selected.some(s => s.id === emp.id)) onChange([...selected, emp]);
+    if (!selected.some(s => s.id === emp.id || (s.employee_id && emp.employee_id && s.employee_id === emp.employee_id))) {
+      onChange([...selected, emp]);
+    }
     setTerm('');
     setOpen(false);
   };
@@ -141,33 +145,34 @@ export default function InvestigatorPicker({
           <div className="absolute z-30 left-0 right-0 mt-1 border border-slate-200 rounded-xl bg-white shadow-lg max-h-56 overflow-y-auto divide-y divide-slate-100">
             {suggestions.length === 0 ? (
               <div className="p-3 text-xs text-slate-500">
-                {searching ? 'Searching…' : (mode === 'imc' ? 'No matching IMC member found.' : 'No matching non-IMC employee found.')}
+                {searching ? 'Searching…' : (mode === 'imc' ? 'No matching IMC member found.' : 'No matching employee found.')}
               </div>
-            ) : suggestions.map(emp => {
-              const disabled = mode === 'non_imc' && emp.is_registered === false;
-              return (
-                <button
-                  type="button"
-                  key={emp.id}
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => add(emp)}
-                  disabled={disabled}
-                  title={disabled ? 'This employee has not registered on IMS yet and cannot be assigned.' : ''}
-                  className={`w-full text-left p-2.5 flex items-center justify-between gap-2 transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'}`}
-                >
-                  <div className="min-w-0">
+            ) : suggestions.map(emp => (
+              <button
+                type="button"
+                key={emp.id || emp.employee_id}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => add(emp)}
+                className="w-full text-left p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 cursor-pointer transition-colors"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <p className="text-xs font-semibold text-slate-800 truncate">
                       {emp.full_name || emp.name}{emp.employee_id ? ` (${emp.employee_id})` : ''}
                     </p>
-                    <p className="text-[11px] text-slate-500 truncate">
-                      {[emp.designation, emp.department].filter(Boolean).join(' • ') || '—'}
-                      {disabled && ' • Not registered'}
-                    </p>
+                    {emp.is_registered === false && (
+                      <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-medium">
+                        Unregistered
+                      </span>
+                    )}
                   </div>
-                  {!disabled && <UserPlus size={14} className={iconClass} />}
-                </button>
-              );
-            })}
+                  <p className="text-[11px] text-slate-500 truncate">
+                    {[emp.designation, emp.department].filter(Boolean).join(' • ') || '—'}
+                  </p>
+                </div>
+                <UserPlus size={14} className={iconClass} />
+              </button>
+            ))}
           </div>
         )}
       </div>

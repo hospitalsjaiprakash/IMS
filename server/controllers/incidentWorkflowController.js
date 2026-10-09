@@ -2,6 +2,7 @@ const { query, getClient } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
+const bcrypt = require('bcryptjs');
 
 // =============================================
 // SUBMIT HOD FEEDBACK
@@ -769,22 +770,63 @@ exports.assignInvestigator = async (req, res) => {
       });
     }
 
-    // Validate selected users
-    const invRes = await query(
-      'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id = ANY($1)',
-      [investigatorIds]
-    );
-    if (invRes.rows.length !== investigatorIds.length) {
+    // Resolve investigators: can be in users table or master_employees (unregistered)
+    let invUsers = [];
+    for (const invId of investigatorIds) {
+      // First check users table
+      let uRes = await query(
+        'SELECT id, full_name, email, role, is_imc_member, is_imc_lead FROM users WHERE id = $1',
+        [invId]
+      );
+      if (uRes.rows.length) {
+        invUsers.push(uRes.rows[0]);
+        continue;
+      }
+
+      // If not in users, check master_employees (by id or employee_id)
+      const mRes = await query(
+        'SELECT * FROM master_employees WHERE id = $1 OR employee_id = $1',
+        [invId]
+      );
+      if (mRes.rows.length) {
+        const mEmp = mRes.rows[0];
+        // Provision user account for unregistered employee so they can be assigned as investigator
+        const defaultHash = await bcrypt.hash('123456', 12);
+        const newUserRes = await query(
+          `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
+           VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+           ON CONFLICT (employee_id) DO UPDATE SET
+             full_name = EXCLUDED.full_name,
+             department = EXCLUDED.department,
+             designation = EXCLUDED.designation,
+             is_active = TRUE
+           RETURNING id, full_name, email, role, is_imc_member, is_imc_lead`,
+          [
+            mEmp.employee_id,
+            mEmp.name,
+            mEmp.email || `${mEmp.employee_id}@jphrc.org`,
+            mEmp.department,
+            mEmp.designation,
+            mEmp.role || 'employee',
+            defaultHash
+          ]
+        );
+        if (newUserRes.rows.length) {
+          invUsers.push(newUserRes.rows[0]);
+          continue;
+        }
+      }
+
       return res.status(400).json({ error: 'One or more selected investigators were not found in hospital user records.' });
     }
 
     // Must include at least one IMC member as primary investigator
-    const hasImcMember = invRes.rows.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
+    const hasImcMember = invUsers.some(u => u.role === 'imc' || u.is_imc_member || u.is_imc_lead);
     if (!hasImcMember) {
       return res.status(400).json({ error: 'Primary investigators must include at least one IMC member.' });
     }
 
-    for (const inv of invRes.rows) {
+    for (const inv of invUsers) {
       await query(
         `INSERT INTO investigators (incident_id, investigator_id, assigned_by) 
          VALUES ($1, $2, $3)`,

@@ -187,7 +187,7 @@ export const masterEmployeesApi = {
 
 // ── Employee Search & Directory ───────────────────
 export const employeeApi = {
-  search: (query) => api.get('/employee/search', { params: { query } }),
+  search: (query) => api.get('/employee/search', { params: { query, q: query } }),
   directory: () => api.get('/employees/directory'),
 };
 
