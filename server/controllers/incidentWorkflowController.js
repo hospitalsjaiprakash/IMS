@@ -358,7 +358,10 @@ exports.submitManagementAction = async (req, res) => {
     }
 
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
-    if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!incidentResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Incident not found' });
+    }
     const incident = incidentResult.rows[0];
 
     if (notes) {
@@ -367,6 +370,17 @@ exports.submitManagementAction = async (req, res) => {
          VALUES ($1, $2, 'head_management', $3)`,
         [id, req.user.id, notes]
       );
+    }
+
+    // Save attached files (supporting documents / executive notes)
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        await client.query(
+          `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type) 
+           VALUES ($1, $2, 'md_decision', $3, $4, $5, $6)`,
+          [id, req.user.id, file.originalname, (file.filename || file.key), file.size, file.mimetype]
+        );
+      }
     }
 
     if (proposedOutcome) {
@@ -386,6 +400,12 @@ exports.submitManagementAction = async (req, res) => {
       );
       await client.query('COMMIT');
       await auditLog(req.user.id, 'MANAGEMENT_RETURNED', id, { decision, nextStatus }, req.ip);
+
+      const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
+      for (const member of imcMembers.rows) {
+        await createNotification(member.id, id, 'Incident Reverted by Management', `Management returned incident for ${decision === 'DISAGREE_REINVESTIGATE' ? 're-investigation' : 'revised feedback'}.`, 'management_action');
+      }
+
       return res.json({ success: true, message: 'Reverted to IMC.' });
     }
 
@@ -436,7 +456,7 @@ exports.submitManagementAction = async (req, res) => {
 
     await client.query('COMMIT');
     
-    const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc'");
+    const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
     for (const member of imcMembers.rows) {
       await createNotification(member.id, id, 'Management Decision Received', 'Please generate the official IMC report.', 'management_action');
     }

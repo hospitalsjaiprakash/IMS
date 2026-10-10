@@ -35,7 +35,7 @@ router.get('/management/dashboard', authenticate, authorize('head_management'), 
 router.get('/management/incidents', authenticate, authorize('head_management'), incidentsController.getIncidents);
 router.get('/management/incidents/export', authenticate, authorize('head_management'), incidentsController.exportIncidents);
 router.get('/management/incidents/:id', authenticate, authorize('head_management'), incidentsController.getIncident);
-router.post('/management/incidents/:id/decision', authenticate, authorize('head_management'), incidentWorkflowController.submitManagementAction);
+router.post('/management/incidents/:id/decision', authenticate, authorize('head_management', 'system_admin'), setUploadStage('md_decision'), uploadIncidentAttachments, incidentWorkflowController.submitManagementAction);
 router.post('/management/incidents/:id/escalate', authenticate, authorize('head_management'), incidentActionsController.escalatePriority);
 router.post('/management/incidents/:id/remind-hod', authenticate, authorize('head_management'), incidentActionsController.remindHod);
 

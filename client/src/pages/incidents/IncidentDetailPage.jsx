@@ -190,6 +190,9 @@ export default function IncidentDetailPage() {
       setMdActions('');
       setMdProposedOutcome('');
       refetch();
+    },
+    onError: (err) => {
+      toast.error(err?.response?.data?.error || 'Failed to submit management action');
     }
   });
 
@@ -417,13 +420,21 @@ export default function IncidentDetailPage() {
     user?.id !== incident.reporter_id &&
     ['with_imc', 'with_hod', 'with_hod_and_imc', 'redirect_requested'].includes(incident.status);
 
-  const canMdAct = user?.role === 'head_management' && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
-  const canReopen = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
-  const canEscalate = (user?.role === 'head_management' || user?.role === 'imc') && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !incident.priority_escalated_by;
+  const isManagement = Boolean(
+    user?.role === 'head_management' ||
+    user?.is_management_member ||
+    user?.isManagementMember ||
+    user?.role === 'system_admin' ||
+    user?.is_system_admin ||
+    user?.isSystemAdmin
+  );
+  const canMdAct = isManagement && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
+  const canReopen = (isManagement || isImcMember) && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
+  const canEscalate = (isManagement || isImcMember) && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !incident.priority_escalated_by;
 
   // Remind HOD if any concerned department HOD has not yet submitted feedback
   const canRemindHod =
-    (user?.role === 'head_management' || user?.role === 'imc') &&
+    (isManagement || isImcMember) &&
     user?.id !== incident.reporter_id &&
     !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
     !incident.all_hod_feedback_submitted;

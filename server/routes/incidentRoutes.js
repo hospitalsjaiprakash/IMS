@@ -47,6 +47,6 @@ router.post('/:id/remind-hod', authenticate, authorize('imc', 'head_management')
 router.post('/:id/reopen', authenticate, authorize('head_management', 'imc'), incidentWorkflowController.reopenIncident);
 
 // Management action
-router.post('/:id/management-action', authenticate, authorize('head_management'), incidentWorkflowController.submitManagementAction);
+router.post('/:id/management-action', authenticate, authorize('head_management', 'system_admin'), setUploadStage('md_decision'), uploadIncidentAttachments, incidentWorkflowController.submitManagementAction);
 
 module.exports = router;
