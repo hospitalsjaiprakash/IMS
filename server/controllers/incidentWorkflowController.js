@@ -648,7 +648,7 @@ exports.submitInvestigatorReport = async (req, res) => {
       return res.status(400).json({ error: 'Investigation findings text is required.' });
     }
 
-    // Verify user authorization: must be an assigned investigator for this incident
+    // Verify user authorization: must be an assigned investigator for this incident or an IMC member
     const assignedCheck = await client.query(
       `SELECT inv.*, u.role, u.is_imc_member, u.is_imc_lead 
        FROM investigators inv
@@ -657,20 +657,26 @@ exports.submitInvestigatorReport = async (req, res) => {
       [id, req.user.id]
     );
 
-    if (!assignedCheck.rows.length) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Only assigned investigators can submit an investigation report.' });
-    }
-
-    const assignedInv = assignedCheck.rows[0];
-    const isPrimary = Boolean(
-      assignedInv.role === 'imc' ||
-      assignedInv.is_imc_member ||
-      assignedInv.is_imc_lead ||
+    const isUserImc = Boolean(
       req.user.role === 'imc' ||
       req.user.is_imc_member ||
       req.user.is_imc_lead ||
       req.user.is_system_admin
+    );
+
+    if (!assignedCheck.rows.length && !isUserImc) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only assigned investigators or IMC members can submit an investigation report.' });
+    }
+
+    const assignedInv = assignedCheck.rows[0];
+    const isPrimary = Boolean(
+      isUserImc ||
+      (assignedInv && (
+        assignedInv.role === 'imc' ||
+        assignedInv.is_imc_member ||
+        assignedInv.is_imc_lead
+      ))
     );
 
     if (!isPrimary) {
@@ -678,6 +684,15 @@ exports.submitInvestigatorReport = async (req, res) => {
       return res.status(403).json({
         error: 'Only primary investigators (IMC members) can submit the centralized investigation report on behalf of the panel.'
       });
+    }
+
+    // If an IMC member is submitting on behalf of the panel but was not previously in the investigators table, record them on the panel
+    if (!assignedCheck.rows.length && isUserImc) {
+      await client.query(
+        `INSERT INTO investigators (incident_id, investigator_id, assigned_by, status, report_text, completed_at)
+         VALUES ($1, $2, $2, 'completed', $3, NOW())`,
+        [id, req.user.id, reportText.trim()]
+      );
     }
 
     // Verify incident is awaiting report
@@ -722,7 +737,7 @@ exports.submitInvestigatorReport = async (req, res) => {
 
     // Notify IMC Convenor
     const convenorRes = await query(
-      `SELECT id, email, full_name FROM users WHERE (role = 'imc' AND is_imc_lead = TRUE) OR is_system_admin = TRUE`
+      `SELECT id, email, full_name FROM users WHERE is_imc_lead = TRUE OR (role = 'imc' AND is_imc_lead = TRUE) OR is_system_admin = TRUE`
     );
     for (const member of convenorRes.rows) {
       await createNotification(

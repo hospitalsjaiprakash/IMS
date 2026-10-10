@@ -12,7 +12,7 @@ const authenticate = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await query(
-      'SELECT id, employee_id, full_name, email, role, department, designation, is_imc_lead FROM users WHERE id = $1',
+      'SELECT id, employee_id, full_name, email, role, department, designation, is_imc_lead, is_imc_member, is_management_member, is_system_admin FROM users WHERE id = $1',
       [decoded.userId]
     );
 
@@ -35,7 +35,20 @@ const authenticate = async (req, res, next) => {
 
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    if (!req.user) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const userRole = req.user.role;
+    const isAllowed = roles.some(role => {
+      if (role === userRole) return true;
+      if (role === 'imc' && (req.user.is_imc_member || req.user.is_imc_lead || userRole === 'imc')) return true;
+      if (role === 'system_admin' && (req.user.is_system_admin || userRole === 'system_admin')) return true;
+      if (role === 'head_management' && (req.user.is_management_member || userRole === 'head_management')) return true;
+      return false;
+    });
+
+    if (!isAllowed) {
       return res.status(403).json({ error: 'Access denied. Insufficient permissions.' });
     }
     next();

@@ -37,7 +37,7 @@ router.post('/:id/close', authenticate, authorize('imc', 'system_admin'), incide
 
 // Investigator workflow
 router.post('/:id/assign-investigator', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.assignInvestigator);
-router.post('/:id/investigator-report', authenticate, authorize('imc', 'system_admin', 'employee'), setUploadStage('investigator_report'), uploadIncidentAttachments, incidentWorkflowController.submitInvestigatorReport);
+router.post('/:id/investigator-report', authenticate, authorize('imc', 'system_admin', 'employee', 'hod'), setUploadStage('investigator_report'), uploadIncidentAttachments, incidentWorkflowController.submitInvestigatorReport);
 router.post('/:id/reject-investigator-report', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.rejectInvestigatorReport);
 
 

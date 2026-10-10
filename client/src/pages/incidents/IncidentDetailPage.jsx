@@ -435,16 +435,13 @@ export default function IncidentDetailPage() {
       myInvestigationAssignment.role === 'imc' ||
       myInvestigationAssignment.is_imc_member ||
       myInvestigationAssignment.is_imc_lead ||
-      user?.role === 'imc' ||
-      user?.is_imc_member ||
-      user?.is_imc_lead ||
-      user?.role === 'system_admin'
+      isImcMember
     )
   );
-  const isAssignedSecondary = Boolean(isAssignedInvestigator && !isAssignedPrimary);
+  const isAssignedSecondary = Boolean(isAssignedInvestigator && !isAssignedPrimary && !isImcMember);
   const hasInvestigatorsAssigned = Boolean(incident.investigators && incident.investigators.length > 0);
   const allInvestigatorsCompleted = Boolean(incident.all_investigators_submitted || (hasInvestigatorsAssigned && incident.investigators.every(i => i.status === 'completed')));
-  const canInvestigatorAct = incident.status === 'with_investigator' && isAssignedPrimary;
+  const canInvestigatorAct = incident.status === 'with_investigator' && (isAssignedPrimary || isImcMember);
   const canImcReviewInvestigator = isLead && (incident.status === 'with_imc_review' || (incident.status === 'with_investigator' && hasInvestigatorsAssigned && allInvestigatorsCompleted));
   const canGenerateImcReport = ['imc', 'system_admin'].includes(user?.role) && isLead && incident.status === 'pending_imc_report';
   const canCloseIncident = isLead && incident.status === 'pending_training';
@@ -1019,7 +1016,7 @@ export default function IncidentDetailPage() {
                   </div>
                 )}
 
-                {!isAssignedPrimary && !isAssignedSecondary && (
+                {!isAssignedPrimary && !isAssignedSecondary && !isImcMember && (
                   <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex items-center gap-2">
                     <Clock size={15} className="text-slate-500 flex-shrink-0" />
                     <span>
