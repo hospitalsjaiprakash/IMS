@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, authApi, UPLOADS_URL } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText } from 'lucide-react';
+import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText, Lock } from 'lucide-react';
 import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
 import { formatDateTime } from '../../utils/helpers';
 
@@ -560,11 +560,37 @@ export default function IncidentDetailPage() {
                 <h2 className="text-sm font-semibold text-slate-800 mb-4">Review History</h2>
                 <div className="space-y-4">
                   {feedbacks.map(fb => {
-                    // Rule 2: No one can edit the review/feedback given by any other person, except the person itself.
-                    // Rule 5: After IMC has given the feedback, the feedbacks given by the HODs of concerned department can not be modified.
                     const isAuthor = fb.author_id === user?.id;
-                    const isLockedHod = fb.role === 'hod' && hasImcFeedback;
-                    const canEditThisFb = isAuthor && !isLockedHod;
+
+                    const isFeedbackLocked = () => {
+                      if (['resolved', 'closed', 'withdrawn'].includes(incident?.status)) return true;
+                      if (fb.role === 'hod') {
+                        return (feedbacks || []).some(f => ['imc', 'head_management'].includes(f.role) && new Date(f.created_at) >= new Date(fb.created_at));
+                      }
+                      if (fb.role === 'investigator') {
+                        return (feedbacks || []).some(f => ['imc', 'head_management'].includes(f.role) && new Date(f.created_at) >= new Date(fb.created_at));
+                      }
+                      if (fb.role === 'imc') {
+                        return (feedbacks || []).some(f => f.role === 'head_management' && new Date(f.created_at) >= new Date(fb.created_at));
+                      }
+                      if (fb.role === 'head_management') {
+                        return ['pending_training', 'resolved', 'closed'].includes(incident?.status);
+                      }
+                      return false;
+                    };
+
+                    const isLocked = isFeedbackLocked();
+                    const canEditThisFb = isAuthor && !isLocked;
+
+                    const getLockTitle = () => {
+                      if (['resolved', 'closed', 'withdrawn'].includes(incident?.status)) return 'Feedback is locked because the incident is resolved or closed';
+                      if (fb.role === 'hod') return 'HOD feedback cannot be edited after IMC/Management has provided review';
+                      if (fb.role === 'investigator') return 'Investigation report cannot be edited after upper review';
+                      if (fb.role === 'imc') return 'IMC feedback cannot be edited after Management has given their decision';
+                      if (fb.role === 'head_management') return 'Management decision cannot be edited after final report';
+                      return 'Feedback is locked';
+                    };
+
                     return (
                       <div 
                         key={fb.id} 
@@ -599,14 +625,14 @@ export default function IncidentDetailPage() {
                                 <Pencil size={11} /> Edit
                               </button>
                             )}
-                            {isAuthor && isLockedHod && (
-                              <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-lg" title="HOD feedback cannot be edited after IMC has provided feedback">
-                                Locked
+                            {isAuthor && isLocked && (
+                              <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-lg" title={getLockTitle()}>
+                                <Lock size={11} /> Locked
                               </span>
                             )}
                           </div>
                         </div>
-                        <p className="text-sm text-slate-700 leading-relaxed mt-2">{fb.feedback_text}</p>
+                        <p className="text-sm text-slate-700 leading-relaxed mt-2 whitespace-pre-line">{fb.feedback_text}</p>
                         
                         {/* Attachments specific to this feedback */}
                         {(() => {

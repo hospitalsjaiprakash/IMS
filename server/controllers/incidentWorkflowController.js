@@ -311,7 +311,7 @@ exports.submitImcFeedback = async (req, res) => {
 
     if (forwardToMd) {
       await client.query(
-        `UPDATE incidents SET status = 'with_head_management', updated_at = NOW() WHERE id = $1`,
+        `UPDATE incidents SET status = 'with_head_management', management_decision = NULL, management_notes = NULL, updated_at = NOW() WHERE id = $1`,
         [id]
       );
 
@@ -364,13 +364,22 @@ exports.submitManagementAction = async (req, res) => {
     }
     const incident = incidentResult.rows[0];
 
-    if (notes) {
-      await client.query(
-        `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text)
-         VALUES ($1, $2, 'head_management', $3)`,
-        [id, req.user.id, notes]
-      );
-    }
+    const decisionLabels = {
+      'AGREE': 'Approved / Agreed with IMC',
+      'DISAGREE_MODIFY': `Modified Proposed Outcome${proposedOutcome ? `: ${proposedOutcome}` : ''}`,
+      'DISAGREE_REINVESTIGATE': 'Rejected & Re-investigation Requested',
+      'DISAGREE_REVISE_FEEDBACK': 'Rejected & Revised Feedback Requested'
+    };
+    const decisionLabel = decisionLabels[decision] || decision;
+    const finalFeedbackText = notes && String(notes).trim()
+      ? `Decision: ${decisionLabel}\n\nNotes: ${String(notes).trim()}`
+      : `Decision: ${decisionLabel}`;
+
+    await client.query(
+      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text)
+       VALUES ($1, $2, 'head_management', $3)`,
+      [id, req.user.id, finalFeedbackText]
+    );
 
     // Save attached files (supporting documents / executive notes)
     if (req.files && req.files.length > 0) {

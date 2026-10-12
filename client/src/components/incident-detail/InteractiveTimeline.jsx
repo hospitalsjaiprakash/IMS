@@ -287,18 +287,43 @@ export default function InteractiveTimeline({
     }
 
     // 7. Investigator Report Submitted
+    const invFeedbacks = feedbacks.filter(f => f.role === 'investigator');
     const invReportLog = timelineEvents.find(e => e.action === 'INVESTIGATOR_REPORT_SUBMITTED');
-    const invReportFeedback = feedbacks.find(f => f.role === 'investigator');
-    if (invReportLog || invReportFeedback) {
-      const ts = invReportLog ? new Date(invReportLog.created_at) : new Date(invReportFeedback.created_at);
+    if (invFeedbacks.length > 0) {
+      invFeedbacks.forEach((invFb, idx) => {
+        events.push({
+          id: `investigator-report-${invFb.id || idx}`,
+          timestamp: new Date(invFb.created_at),
+          type: 'investigation_reported',
+          title: invFeedbacks.length > 1 ? `Investigation Findings (${idx + 1}/${invFeedbacks.length})` : 'Investigation Findings Submitted',
+          subtitle: `Findings compiled by ${invFb.full_name} (${invFb.designation || 'Investigator'})`,
+          actor: {
+            name: invFb.full_name,
+            role: 'Investigation Team',
+            tag: 'Findings'
+          },
+          badgeColor: 'bg-cyan-100 text-cyan-800 border-cyan-200',
+          icon: ShieldCheck,
+          iconColor: 'text-cyan-600 bg-cyan-50 border-cyan-200',
+          content: (
+            <div className="text-xs space-y-2 text-slate-700">
+              <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-cyan-400 italic text-slate-700 shadow-2xs whitespace-pre-line">
+                "{invFb.feedback_text}"
+              </blockquote>
+              <StageAttachments attachments={attachments} stage="investigator_report" onViewAttachment={onViewAttachment} />
+            </div>
+          )
+        });
+      });
+    } else if (invReportLog) {
       events.push({
-        id: 'investigator-report',
-        timestamp: ts,
+        id: 'investigator-report-log',
+        timestamp: new Date(invReportLog.created_at),
         type: 'investigation_reported',
         title: 'Investigation Findings Submitted',
-        subtitle: `Findings compiled by ${invReportFeedback?.full_name || invReportLog?.full_name || 'Lead Investigator'}`,
+        subtitle: `Findings compiled by ${invReportLog.full_name || 'Lead Investigator'}`,
         actor: {
-          name: invReportFeedback?.full_name || invReportLog?.full_name || 'Investigator',
+          name: invReportLog.full_name || 'Investigator',
           role: 'Investigation Team',
           tag: 'Findings'
         },
@@ -307,11 +332,6 @@ export default function InteractiveTimeline({
         iconColor: 'text-cyan-600 bg-cyan-50 border-cyan-200',
         content: (
           <div className="text-xs space-y-2 text-slate-700">
-            {invReportFeedback?.feedback_text && (
-              <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-cyan-400 italic text-slate-700 shadow-2xs">
-                "{invReportFeedback.feedback_text}"
-              </blockquote>
-            )}
             <StageAttachments attachments={attachments} stage="investigator_report" onViewAttachment={onViewAttachment} />
           </div>
         )
@@ -337,7 +357,7 @@ export default function InteractiveTimeline({
         iconColor: 'text-emerald-600 bg-emerald-50 border-emerald-200',
         content: (
           <div className="text-xs space-y-2 text-slate-700">
-            <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-emerald-400 italic text-slate-700 shadow-2xs">
+            <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-emerald-400 italic text-slate-700 shadow-2xs whitespace-pre-line">
               "{fb.feedback_text}"
             </blockquote>
             <StageAttachments attachments={attachments} stage="hod_feedback" onViewAttachment={onViewAttachment} />
@@ -346,15 +366,15 @@ export default function InteractiveTimeline({
       });
     });
 
-    // 9. IMC Quality Review & Assessment
-    const imcFeedback = feedbacks.find(f => f.role === 'imc');
-    if (imcFeedback) {
+    // 9. IMC Quality Review & Assessment (supports multiple cycles/re-evaluations)
+    const imcFeedbacks = feedbacks.filter(f => f.role === 'imc');
+    imcFeedbacks.forEach((imcFeedback, idx) => {
       events.push({
-        id: 'imc-review',
+        id: `imc-review-${imcFeedback.id || idx}`,
         timestamp: new Date(imcFeedback.created_at),
         type: 'imc_review',
-        title: 'IMC Quality Review & Classification',
-        subtitle: `Assessment by ${imcFeedback.full_name} (IMC Convenor)`,
+        title: imcFeedbacks.length > 1 ? `IMC Quality Review (${idx + 1}/${imcFeedbacks.length})` : 'IMC Quality Review & Classification',
+        subtitle: `Assessment by ${imcFeedback.full_name} (${imcFeedback.designation || 'IMC Convenor'})`,
         actor: {
           name: imcFeedback.full_name,
           role: 'Incident Management Committee',
@@ -375,47 +395,186 @@ export default function InteractiveTimeline({
                 </span>
               )}
             </div>
-            <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-purple-400 italic text-slate-700 shadow-2xs">
+            <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-purple-400 italic text-slate-700 shadow-2xs whitespace-pre-line">
               "{imcFeedback.feedback_text}"
             </blockquote>
             <StageAttachments attachments={attachments} stage="imc_feedback" onViewAttachment={onViewAttachment} />
           </div>
         )
       });
-    }
+    });
 
-    // 10. Management Action / Decision
-    const mgmtFeedback = feedbacks.find(f => f.role === 'head_management');
-    if (incident.management_decision || mgmtFeedback) {
-      const ts = incident.management_decision_at ? new Date(incident.management_decision_at) : (mgmtFeedback ? new Date(mgmtFeedback.created_at) : new Date());
+    // 10. Management Action / Decision(s) (supports multiple decisions: reverts, re-evaluations, approvals)
+    const mgmtLogs = (timelineEvents || []).filter(e => e.action === 'MANAGEMENT_DECISION' || e.action === 'MANAGEMENT_RETURNED');
+    const mgmtFeedbacks = (feedbacks || []).filter(f => f.role === 'head_management');
+
+    const formatDecisionLabel = (decision) => {
+      if (!decision) return 'Action Approved';
+      const map = {
+        'AGREE': 'Approved / Agreed with IMC',
+        'DISAGREE_MODIFY': 'Outcome Modified by Management',
+        'DISAGREE_REINVESTIGATE': 'Rejected & Re-investigation Requested',
+        'DISAGREE_REVISE_FEEDBACK': 'Rejected & Revised Feedback Requested'
+      };
+      return map[decision] || decision.replace(/_/g, ' ');
+    };
+
+    if (mgmtLogs.length > 0) {
+      const matchedFbIds = new Set();
+
+      mgmtLogs.forEach((log, idx) => {
+        const isReturned = log.action === 'MANAGEMENT_RETURNED';
+        const decisionCode = log.details?.decision || (isReturned ? 'DISAGREE_REINVESTIGATE' : 'AGREE');
+        const decisionLabel = formatDecisionLabel(decisionCode);
+        const logTime = new Date(log.created_at).getTime();
+
+        // Match closest feedback in head_management
+        let matchedFb = null;
+        let minDiff = Infinity;
+        for (const fb of mgmtFeedbacks) {
+          if (matchedFbIds.has(fb.id)) continue;
+          const diff = Math.abs(new Date(fb.created_at).getTime() - logTime);
+          if (diff < minDiff && diff < 300000) {
+            minDiff = diff;
+            matchedFb = fb;
+          }
+        }
+        if (!matchedFb && mgmtFeedbacks[idx] && !matchedFbIds.has(mgmtFeedbacks[idx].id)) {
+          matchedFb = mgmtFeedbacks[idx];
+        }
+        if (matchedFb) {
+          matchedFbIds.add(matchedFb.id);
+        }
+
+        const actorName = log.full_name || matchedFb?.full_name || 'Hospital Executive Leadership';
+        const actorDesignation = log.user_designation || matchedFb?.designation || 'Director / Leadership';
+
+        events.push({
+          id: `management-action-${log.id || idx}`,
+          timestamp: new Date(log.created_at),
+          type: isReturned ? 'management_returned' : 'management_decision',
+          title: isReturned ? 'Executive Management Review - Reverted' : 'Executive Management Decision',
+          subtitle: `${isReturned ? 'Returned' : 'Approved'} by ${actorName} (${actorDesignation})`,
+          actor: {
+            name: actorName,
+            role: 'Head Management',
+            tag: isReturned ? 'Returned to IMC' : 'Governance'
+          },
+          badgeColor: isReturned ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-violet-100 text-violet-800 border-violet-200',
+          icon: isReturned ? Undo2 : Award,
+          iconColor: isReturned ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-violet-600 bg-violet-50 border-violet-200',
+          content: (
+            <div className="text-xs space-y-2 text-slate-700">
+              <div className={`font-semibold p-2 rounded-lg border ${
+                isReturned ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-violet-50 border-violet-200 text-violet-900'
+              }`}>
+                Decision: <span className="uppercase font-bold">{decisionLabel}</span>
+              </div>
+              {matchedFb?.feedback_text ? (
+                <blockquote className={`bg-white p-2.5 rounded-lg border-l-2 italic text-slate-700 shadow-2xs whitespace-pre-line ${
+                  isReturned ? 'border-amber-400' : 'border-violet-400'
+                }`}>
+                  "{matchedFb.feedback_text}"
+                </blockquote>
+              ) : (
+                incident.management_notes && (
+                  <p className="bg-white p-2.5 rounded-lg border border-slate-200 text-slate-700 leading-relaxed whitespace-pre-wrap">
+                    {incident.management_notes}
+                  </p>
+                )
+              )}
+              <StageAttachments attachments={attachments} stage="md_decision" onViewAttachment={onViewAttachment} />
+            </div>
+          )
+        });
+      });
+
+      // Include any management feedback not matched to an audit log
+      mgmtFeedbacks.forEach((fb, idx) => {
+        if (!matchedFbIds.has(fb.id)) {
+          const isReturned = (fb.feedback_text || '').toLowerCase().includes('reject') || (fb.feedback_text || '').toLowerCase().includes('re-investigat');
+          events.push({
+            id: `management-fb-extra-${fb.id || idx}`,
+            timestamp: new Date(fb.created_at),
+            type: isReturned ? 'management_returned' : 'management_decision',
+            title: isReturned ? 'Executive Management Review - Reverted' : 'Executive Management Decision',
+            subtitle: `${isReturned ? 'Returned' : 'Approved'} by ${fb.full_name} (${fb.designation || 'Head Management'})`,
+            actor: {
+              name: fb.full_name,
+              role: 'Head Management',
+              tag: isReturned ? 'Returned to IMC' : 'Governance'
+            },
+            badgeColor: isReturned ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-violet-100 text-violet-800 border-violet-200',
+            icon: isReturned ? Undo2 : Award,
+            iconColor: isReturned ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-violet-600 bg-violet-50 border-violet-200',
+            content: (
+              <div className="text-xs space-y-2 text-slate-700">
+                <blockquote className={`bg-white p-2.5 rounded-lg border-l-2 italic text-slate-700 shadow-2xs whitespace-pre-line ${
+                  isReturned ? 'border-amber-400' : 'border-violet-400'
+                }`}>
+                  "{fb.feedback_text}"
+                </blockquote>
+                <StageAttachments attachments={attachments} stage="md_decision" onViewAttachment={onViewAttachment} />
+              </div>
+            )
+          });
+        }
+      });
+    } else if (mgmtFeedbacks.length > 0) {
+      mgmtFeedbacks.forEach((fb, idx) => {
+        const isReturned = (fb.feedback_text || '').toLowerCase().includes('reject') || (fb.feedback_text || '').toLowerCase().includes('re-investigat');
+        events.push({
+          id: `management-fb-${fb.id || idx}`,
+          timestamp: new Date(fb.created_at),
+          type: isReturned ? 'management_returned' : 'management_decision',
+          title: isReturned ? 'Executive Management Review - Reverted' : 'Executive Management Decision',
+          subtitle: `${isReturned ? 'Returned' : 'Approved'} by ${fb.full_name} (${fb.designation || 'Head Management'})`,
+          actor: {
+            name: fb.full_name,
+            role: 'Head Management',
+            tag: isReturned ? 'Returned to IMC' : 'Governance'
+          },
+          badgeColor: isReturned ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-violet-100 text-violet-800 border-violet-200',
+          icon: isReturned ? Undo2 : Award,
+          iconColor: isReturned ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-violet-600 bg-violet-50 border-violet-200',
+          content: (
+            <div className="text-xs space-y-2 text-slate-700">
+              <blockquote className={`bg-white p-2.5 rounded-lg border-l-2 italic text-slate-700 shadow-2xs whitespace-pre-line ${
+                isReturned ? 'border-amber-400' : 'border-violet-400'
+              }`}>
+                "{fb.feedback_text}"
+              </blockquote>
+              <StageAttachments attachments={attachments} stage="md_decision" onViewAttachment={onViewAttachment} />
+            </div>
+          )
+        });
+      });
+    } else if (incident.management_decision) {
+      const ts = incident.management_decision_at ? new Date(incident.management_decision_at) : new Date();
+      const isReturned = incident.management_decision.startsWith('DISAGREE');
       events.push({
-        id: 'management-decision',
+        id: 'management-decision-single',
         timestamp: ts,
-        type: 'management_decision',
-        title: 'Executive Management Decision',
-        subtitle: `Approved by ${mgmtFeedback?.full_name || 'Hospital Leadership'}`,
+        type: isReturned ? 'management_returned' : 'management_decision',
+        title: isReturned ? 'Executive Management Review - Reverted' : 'Executive Management Decision',
+        subtitle: `Decision recorded by Hospital Leadership`,
         actor: {
-          name: mgmtFeedback?.full_name || 'Hospital Executive Leadership',
+          name: 'Hospital Executive Leadership',
           role: 'Head Management',
-          tag: 'Governance'
+          tag: isReturned ? 'Returned to IMC' : 'Governance'
         },
-        badgeColor: 'bg-violet-100 text-violet-800 border-violet-200',
-        icon: Award,
-        iconColor: 'text-violet-600 bg-violet-50 border-violet-200',
+        badgeColor: isReturned ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-violet-100 text-violet-800 border-violet-200',
+        icon: isReturned ? Undo2 : Award,
+        iconColor: isReturned ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-violet-600 bg-violet-50 border-violet-200',
         content: (
           <div className="text-xs space-y-2 text-slate-700">
             <div className="font-semibold text-slate-800 bg-violet-50 p-2 rounded-lg border border-violet-100">
-              Decision: <span className="uppercase text-violet-900 font-bold">{incident.management_decision?.replace(/_/g, ' ') || 'Action Approved'}</span>
+              Decision: <span className="uppercase text-violet-900 font-bold">{formatDecisionLabel(incident.management_decision)}</span>
             </div>
             {incident.management_notes && (
               <p className="bg-white p-2.5 rounded-lg border border-slate-200 text-slate-700 leading-relaxed whitespace-pre-wrap">
                 {incident.management_notes}
               </p>
-            )}
-            {mgmtFeedback?.feedback_text && (
-              <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-violet-400 italic text-slate-700 shadow-2xs">
-                "{mgmtFeedback.feedback_text}"
-              </blockquote>
             )}
             <StageAttachments attachments={attachments} stage="md_decision" onViewAttachment={onViewAttachment} />
           </div>

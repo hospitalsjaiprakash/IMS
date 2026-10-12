@@ -527,14 +527,53 @@ exports.editFeedback = async (req, res) => {
       return res.status(403).json({ error: 'You can only edit your own feedback.' });
     }
 
-    // Rule: After IMC has given the feedback, the feedbacks given by the HODs of concerned department can not be modified.
+    // Check incident status
+    const incRes = await query('SELECT status, management_decision FROM incidents WHERE id = $1', [id]);
+    if (!incRes.rows.length) return res.status(404).json({ error: 'Incident not found.' });
+    const incident = incRes.rows[0];
+
+    if (['resolved', 'closed', 'withdrawn'].includes(incident.status)) {
+      return res.status(403).json({ error: 'Feedbacks cannot be modified after the incident has been resolved or closed.' });
+    }
+
+    // Rule 1: HOD feedback cannot be modified once IMC or Management has submitted feedback / decision
     if (fb.role === 'hod') {
-      const imcCheck = await query(
-        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role = 'imc'",
-        [id]
+      const upperCheck = await query(
+        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role IN ('imc', 'head_management') AND created_at >= $2",
+        [id, fb.created_at]
       );
-      if (imcCheck.rows.length > 0) {
-        return res.status(403).json({ error: 'HOD feedback cannot be modified after IMC has submitted quality review feedback.' });
+      if (upperCheck.rows.length > 0) {
+        return res.status(403).json({ error: 'HOD feedback cannot be modified after upper-level review (IMC/Management) has been submitted.' });
+      }
+    }
+
+    // Rule 2: Investigator report cannot be modified once IMC review has been conducted or Management acted
+    if (fb.role === 'investigator') {
+      const upperCheck = await query(
+        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role IN ('imc', 'head_management') AND created_at >= $2",
+        [id, fb.created_at]
+      );
+      if (upperCheck.rows.length > 0) {
+        return res.status(403).json({ error: 'Investigation report cannot be modified after upper-level review has been conducted.' });
+      }
+    }
+
+    // Rule 3: IMC feedback cannot be modified once Management has given their decision/feedback
+    // (Until management gives feedback, e.g. even if forwarded to management, IMC can edit)
+    if (fb.role === 'imc') {
+      const upperCheck = await query(
+        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role = 'head_management' AND created_at >= $2",
+        [id, fb.created_at]
+      );
+      if (upperCheck.rows.length > 0) {
+        return res.status(403).json({ error: 'IMC feedback cannot be modified after Management has given their decision.' });
+      }
+    }
+
+    // Rule 4: Management decision cannot be modified once final report is generated
+    if (fb.role === 'head_management') {
+      if (['pending_training', 'resolved', 'closed'].includes(incident.status)) {
+        return res.status(403).json({ error: 'Management decision cannot be modified after final report generation.' });
       }
     }
 
