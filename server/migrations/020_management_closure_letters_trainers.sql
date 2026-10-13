@@ -3,6 +3,7 @@
 -- =============================================
 
 -- 1. Update incidents status constraint to include all streamlined lifecycle stages
+ALTER TABLE incidents ALTER COLUMN status TYPE VARCHAR(60);
 ALTER TABLE incidents DROP CONSTRAINT IF EXISTS incidents_status_check;
 ALTER TABLE incidents ADD CONSTRAINT incidents_status_check 
   CHECK (status IN (
