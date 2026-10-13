@@ -1,6 +1,6 @@
 import React from 'react';
 import { Building, Users, AlertTriangle, FileText, User, CheckCircle, Paperclip } from 'lucide-react';
-import { formatDate, formatDateTime, getStatusLabel } from '../../utils/helpers';
+import { formatDate, formatDateTime, getStatusLabel, parseProposedOutcomes } from '../../utils/helpers';
 import { UPLOADS_URL } from '../../api';
 
 function DetailRow({ icon: Icon, label, value }) {
@@ -120,7 +120,22 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
           <DetailRow icon={Users} label="Occurred To" value={incident.occurred_to} />
           <DetailRow icon={AlertTriangle} label="Severity" value={incident.severity} />
           {incident.proposed_outcome && (
-            <DetailRow icon={FileText} label="Proposed Outcome" value={incident.proposed_outcome} />
+            <div className="flex items-start gap-3">
+              <FileText size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 flex justify-between gap-4 min-w-0">
+                <span className="text-slate-500 flex-shrink-0">Proposed Outcome(s)</span>
+                <div className="flex flex-wrap justify-end gap-1.5 max-w-[70%]">
+                  {parseProposedOutcomes(incident.proposed_outcome).map((out, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                    >
+                      {out}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
           <DetailRow icon={FileText} label="Category" value={incident.incident_category} />
           <DetailRow icon={FileText} label="Type" value={incident.incident_type} />

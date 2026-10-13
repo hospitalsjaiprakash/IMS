@@ -185,3 +185,38 @@ export const clsx = (...classes) => classes.filter(Boolean).join(' ');
 
 export const truncate = (str, n = 60) =>
   str && str.length > n ? str.slice(0, n) + '…' : str;
+
+export const PROPOSED_OUTCOME_OPTIONS = [
+  'No Action',
+  'Counselling / Education / Training',
+  'Issue a Warning Letter',
+  'Issue an Advisory Letter',
+  'Financial Penalty',
+  'Suspension for a Stipulated Period',
+  'Transfer to Other Dept.',
+  'Demotion',
+  'Termination',
+  'Legal Action',
+  'Disciplinary Committee',
+  'Conflict Resolution Committee',
+  'New Protocol and Process Flow',
+  'Modifying Protocol and Process Flow',
+  'Inappropriate Complaint',
+  'Others'
+];
+
+export const parseProposedOutcomes = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      } catch (e) {}
+    }
+    return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return [];
+};

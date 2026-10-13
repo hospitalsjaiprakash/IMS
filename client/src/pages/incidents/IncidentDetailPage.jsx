@@ -6,7 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText, Lock } from 'lucide-react';
 import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
-import { formatDateTime } from '../../utils/helpers';
+import { formatDateTime, parseProposedOutcomes } from '../../utils/helpers';
 
 import IncidentHeader from '../../components/incident-detail/IncidentHeader';
 import IncidentDetailsCard from '../../components/incident-detail/IncidentDetailsCard';
@@ -15,6 +15,7 @@ import IncidentActions from '../../components/incident-detail/IncidentActions';
 import FileUploadArea from '../../components/incident-detail/FileUploadArea';
 import InvestigatorPicker, { isImcUser } from '../../components/incident-detail/InvestigatorPicker';
 import ResponsibleEmployeePicker from '../../components/incident-detail/ResponsibleEmployeePicker';
+import ProposedOutcomeMultiSelect from '../../components/incident-detail/ProposedOutcomeMultiSelect';
 import LetterDraftingModal from '../../components/incident-detail/LetterDraftingModal';
 import LettersCard from '../../components/incident-detail/LettersCard';
 import TrainerAssignmentModal from '../../components/incident-detail/TrainerAssignmentModal';
@@ -214,11 +215,13 @@ export default function IncidentDetailPage() {
         fd.append('notes', mdActions);
         fd.append('correctiveActions', mdActions);
       }
-      if (mdProposedOutcome) fd.append('proposedOutcome', mdProposedOutcome);
-      if (mdPenaltyAmount) fd.append('penaltyAmount', mdPenaltyAmount);
-      if (mdResponsibleEmployees.length > 0) {
-        fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
+      if (decisionType === 'DISAGREE_MODIFY') {
+        if (mdProposedOutcome) fd.append('proposedOutcome', mdProposedOutcome);
+        if (mdResponsibleEmployees && mdResponsibleEmployees.length >= 0) {
+          fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
+        }
       }
+      if (mdPenaltyAmount) fd.append('penaltyAmount', mdPenaltyAmount);
       mdAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.managementAction(id, fd);
     },
@@ -1009,31 +1012,13 @@ export default function IncidentDetailPage() {
                               </select>
                             </div>
                             <div>
-                              <label className="field-label mb-1">Proposed Outcome <span className="text-red-500">*</span></label>
-                              <select
-                                value={imcProposedOutcome}
-                                onChange={(e) => setImcProposedOutcome(e.target.value)}
-                                className="select w-full"
+                              <ProposedOutcomeMultiSelect
+                                selected={parseProposedOutcomes(imcProposedOutcome)}
+                                onChange={(newList) => setImcProposedOutcome(newList.join(', '))}
+                                label="Proposed Outcome(s)"
                                 required
-                              >
-                                <option value="">Select Relevant Option</option>
-                                <option value="No Action">No Action</option>
-                                <option value="Counselling / Education / Training">Counselling / Education / Training</option>
-                                <option value="Issue a Warning Letter">Issue a Warning Letter</option>
-                                <option value="Issue an Advisory Letter">Issue an Advisory Letter</option>
-                                <option value="Financial Penalty">Financial Penalty</option>
-                                <option value="Suspension for a Stipulated Period">Suspension for a Stipulated Period</option>
-                                <option value="Transfer to Other Dept.">Transfer to Other Dept.</option>
-                                <option value="Demotion">Demotion</option>
-                                <option value="Termination">Termination</option>
-                                <option value="Legal Action">Legal Action</option>
-                                <option value="Disciplinary Committee">Disciplinary Committee</option>
-                                <option value="Conflict Resolution Committee">Conflict Resolution Committee</option>
-                                <option value="New Protocol and Process Flow">New Protocol and Process Flow</option>
-                                <option value="Modifying Protocol and Process Flow">Modifying Protocol and Process Flow</option>
-                                <option value="Inappropriate Complaint">Inappropriate Complaint</option>
-                                <option value="Others">Others</option>
-                              </select>
+                                placeholder="Select one or more proposed outcomes..."
+                              />
                             </div>
 
                             {(() => {
@@ -1066,7 +1051,7 @@ export default function IncidentDetailPage() {
                                   !incident.all_hod_feedback_submitted ||
                                   !feedbackText.trim() ||
                                   !imcSeverity ||
-                                  !imcProposedOutcome ||
+                                  parseProposedOutcomes(imcProposedOutcome).length === 0 ||
                                   (
                                     ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
                                     imcResponsibleEmployees.length === 0 &&
@@ -1538,31 +1523,13 @@ export default function IncidentDetailPage() {
                         </div>
 
                         <div>
-                          <label className="field-label mb-1">Proposed Outcome <span className="text-red-500">*</span></label>
-                          <select
-                            value={imcProposedOutcome}
-                            onChange={e => setImcProposedOutcome(e.target.value)}
-                            className="select w-full"
+                          <ProposedOutcomeMultiSelect
+                            selected={parseProposedOutcomes(imcProposedOutcome)}
+                            onChange={(newList) => setImcProposedOutcome(newList.join(', '))}
+                            label="Proposed Outcome(s)"
                             required
-                          >
-                            <option value="">Select Relevant Option</option>
-                            <option value="No Action">No Action</option>
-                            <option value="Counselling / Education / Training">Counselling / Education / Training</option>
-                            <option value="Issue a Warning Letter">Issue a Warning Letter</option>
-                            <option value="Issue an Advisory Letter">Issue an Advisory Letter</option>
-                            <option value="Financial Penalty">Financial Penalty</option>
-                            <option value="Suspension for a Stipulated Period">Suspension for a Stipulated Period</option>
-                            <option value="Transfer to Other Dept.">Transfer to Other Dept.</option>
-                            <option value="Demotion">Demotion</option>
-                            <option value="Termination">Termination</option>
-                            <option value="Legal Action">Legal Action</option>
-                            <option value="Disciplinary Committee">Disciplinary Committee</option>
-                            <option value="Conflict Resolution Committee">Conflict Resolution Committee</option>
-                            <option value="New Protocol and Process Flow">New Protocol and Process Flow</option>
-                            <option value="Modifying Protocol and Process Flow">Modifying Protocol and Process Flow</option>
-                            <option value="Inappropriate Complaint">Inappropriate Complaint</option>
-                            <option value="Others">Others</option>
-                          </select>
+                            placeholder="Select one or more proposed outcomes..."
+                          />
                         </div>
                       </div>
 
@@ -1595,7 +1562,7 @@ export default function IncidentDetailPage() {
                           disabled={
                             !feedbackText.trim() ||
                             !imcSeverity ||
-                            !imcProposedOutcome ||
+                            parseProposedOutcomes(imcProposedOutcome).length === 0 ||
                             (
                               ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
                               imcResponsibleEmployees.length === 0 &&

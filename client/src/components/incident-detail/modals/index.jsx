@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users, CheckCircle } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../../../components/ui';
 import { UPLOADS_URL, API_BASE_URL, attachmentsApi } from '../../../api';
-import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../../utils/helpers';
+import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS, parseProposedOutcomes } from '../../../utils/helpers';
 import FileUploadArea from '../FileUploadArea';
+import ProposedOutcomeMultiSelect from '../ProposedOutcomeMultiSelect';
+import ResponsibleEmployeePicker from '../ResponsibleEmployeePicker';
 
 export function WithdrawModal({ show, onClose, withdrawReason, setWithdrawReason, mutate, isPending }) {
   return (
@@ -148,7 +150,9 @@ export function ManagementDecisionModal({
           onClick={() => mutate(decision)}
           disabled={
             isPending ||
-            (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision) ? !mdActions?.trim() : (decision === 'DISAGREE_MODIFY' && !mdProposedOutcome))
+            (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision)
+              ? !mdActions?.trim()
+              : (decision === 'DISAGREE_MODIFY' && parseProposedOutcomes(mdProposedOutcome).length === 0))
           }
           className="btn-primary text-xs"
         >
@@ -167,6 +171,28 @@ export function ManagementDecisionModal({
           </select>
         </div>
 
+        {decision === 'AGREE' && (
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+              IMC Recommended Outcome(s)
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {parseProposedOutcomes(incidentProposedOutcome).length > 0 ? (
+                parseProposedOutcomes(incidentProposedOutcome).map((out, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                  >
+                    {out}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-slate-500 italic">No specific outcome recorded</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {(decision === 'DISAGREE_REINVESTIGATE' || decision === 'DISAGREE_REVISE_FEEDBACK') ? (
           <div>
             <label className="field-label field-required text-xs">{decision === 'DISAGREE_REINVESTIGATE' ? 'Re-investigation' : 'Revision'} Notes / Directive</label>
@@ -175,31 +201,20 @@ export function ManagementDecisionModal({
         ) : (
           <>
             {decision === 'DISAGREE_MODIFY' && (
-              <div>
-                <label className="field-label field-required text-xs">Modified Proposed Outcome</label>
-                <select
-                  value={mdProposedOutcome}
-                  onChange={(e) => setMdProposedOutcome(e.target.value)}
-                  className="select w-full text-xs font-semibold"
-                >
-                  <option value="">Select Relevant Option...</option>
-                  <option value="No Action">No Action</option>
-                  <option value="Counselling / Education / Training">Counselling / Education / Training</option>
-                  <option value="Issue a Warning Letter">Issue a Warning Letter</option>
-                  <option value="Issue an Advisory Letter">Issue an Advisory Letter</option>
-                  <option value="Financial Penalty">Financial Penalty</option>
-                  <option value="Suspension for a Stipulated Period">Suspension for a Stipulated Period</option>
-                  <option value="Transfer to Other Dept.">Transfer to Other Dept.</option>
-                  <option value="Demotion">Demotion</option>
-                  <option value="Termination">Termination</option>
-                  <option value="Legal Action">Legal Action</option>
-                  <option value="Disciplinary Committee">Disciplinary Committee</option>
-                  <option value="Conflict Resolution Committee">Conflict Resolution Committee</option>
-                  <option value="New Protocol and Process Flow">New Protocol and Process Flow</option>
-                  <option value="Modifying Protocol and Process Flow">Modifying Protocol and Process Flow</option>
-                  <option value="Inappropriate Complaint">Inappropriate Complaint</option>
-                  <option value="Others">Others</option>
-                </select>
+              <div className="space-y-3 p-3 bg-indigo-50/50 border border-indigo-200 rounded-xl">
+                <ProposedOutcomeMultiSelect
+                  selected={parseProposedOutcomes(mdProposedOutcome)}
+                  onChange={(newList) => setMdProposedOutcome(newList.join(', '))}
+                  label="Modified Proposed Outcome(s)"
+                  required
+                  placeholder="Select one or more modified outcomes..."
+                />
+
+                <ResponsibleEmployeePicker
+                  selected={mdResponsibleEmployees || []}
+                  onChange={(newEmps) => setMdResponsibleEmployees && setMdResponsibleEmployees(newEmps)}
+                  label="Modify Responsible / Involved Employee(s)"
+                />
               </div>
             )}
 

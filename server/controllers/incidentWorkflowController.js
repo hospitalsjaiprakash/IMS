@@ -4,6 +4,69 @@ const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
 const bcrypt = require('bcryptjs');
 
+function formatProposedOutcome(outcome) {
+  if (!outcome) return null;
+  if (Array.isArray(outcome)) {
+    return outcome.filter(Boolean).join(', ');
+  }
+  if (typeof outcome === 'string') {
+    const trimmed = outcome.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean).join(', ');
+      } catch (e) {}
+    }
+    return trimmed;
+  }
+  return String(outcome);
+}
+
+async function resolveEmployeeUserId(emp, client) {
+  if (!emp) return null;
+  const candidates = [
+    emp.user_id,
+    emp.userId,
+    emp.employee_id,
+    emp.emp_id,
+    emp.id
+  ].filter(Boolean).map(String);
+
+  // 1. Direct match in users table by UUID or employee code
+  for (const candidate of candidates) {
+    const uRes = await client.query(
+      `SELECT id FROM users WHERE id::text = $1 OR employee_id = $1 LIMIT 1`,
+      [candidate]
+    );
+    if (uRes.rows.length > 0) {
+      return uRes.rows[0].id;
+    }
+  }
+
+  // 2. Check master_employees and provision if needed
+  for (const candidate of candidates) {
+    const mRes = await client.query(
+      `SELECT * FROM master_employees WHERE id::text = $1 OR employee_id = $1 LIMIT 1`,
+      [candidate]
+    );
+    if (mRes.rows.length > 0) {
+      const m = mRes.rows[0];
+      const nu = await client.query(
+        `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
+         VALUES ($1, $2, $3, $4, $5, 'employee', TRUE, NULL)
+         ON CONFLICT (employee_id) DO UPDATE SET full_name = EXCLUDED.full_name
+         RETURNING id`,
+        [m.employee_id, m.name, m.email || `${m.employee_id}@jphrc.org`, m.department, m.designation]
+      );
+      if (nu.rows.length > 0) {
+        return nu.rows[0].id;
+      }
+    }
+  }
+
+  return null;
+}
+
 // =============================================
 // SUBMIT HOD FEEDBACK
 // =============================================
@@ -316,21 +379,24 @@ exports.submitImcFeedback = async (req, res) => {
              const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
              if (dRes.rows.length) deptId = dRes.rows[0].id;
           }
-          const empUserId = emp.id || emp.employee_id;
-          await client.query(
-            `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [id, empUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
-          );
+          const validUserId = await resolveEmployeeUserId(emp, client);
+          if (validUserId) {
+            await client.query(
+              `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [id, validUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
+            );
+          }
         }
         await client.query(`UPDATE incidents SET has_responsible_person = ${imcResponsibleEmployees.length > 0} WHERE id = $1`, [id]);
       }
     }
 
-    if (severity || proposedOutcome) {
+    const cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
+    if (severity || cleanProposedOutcome) {
       await client.query(
         `UPDATE incidents SET severity = COALESCE($1, severity), proposed_outcome = COALESCE($2, proposed_outcome), updated_at = NOW() WHERE id = $3`,
-        [severity || null, proposedOutcome || null, id]
+        [severity || null, cleanProposedOutcome || null, id]
       );
     }
 
@@ -398,9 +464,11 @@ exports.submitManagementAction = async (req, res) => {
     }
     const incident = incidentResult.rows[0];
 
+    const cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
+
     const decisionLabels = {
       'AGREE': 'Approved / Agreed with IMC',
-      'DISAGREE_MODIFY': `Modified Proposed Outcome${proposedOutcome ? `: ${proposedOutcome}` : ''}`,
+      'DISAGREE_MODIFY': `Modified Proposed Outcome${cleanProposedOutcome ? `: ${cleanProposedOutcome}` : ''}`,
       'DISAGREE_REINVESTIGATE': 'Rejected & Re-investigation Requested',
       'DISAGREE_REVISE_FEEDBACK': 'Rejected & Revised Feedback Requested'
     };
@@ -426,8 +494,8 @@ exports.submitManagementAction = async (req, res) => {
       }
     }
 
-    if (proposedOutcome) {
-      await client.query(`UPDATE incidents SET proposed_outcome = $1 WHERE id = $2`, [proposedOutcome, id]);
+    if (decision === 'DISAGREE_MODIFY' && cleanProposedOutcome) {
+      await client.query(`UPDATE incidents SET proposed_outcome = $1 WHERE id = $2`, [cleanProposedOutcome, id]);
     }
 
     // Save Management-specified penalty deduction amount if applicable
@@ -464,8 +532,8 @@ exports.submitManagementAction = async (req, res) => {
       return res.json({ success: true, message: 'Reverted to IMC.' });
     }
 
-    // Update responsible / involved employees if modified by Management
-    if (responsibleEmployees !== undefined) {
+    // Update responsible / involved employees if explicitly modified by Management
+    if (decision === 'DISAGREE_MODIFY' && responsibleEmployees !== undefined) {
       if (typeof responsibleEmployees === 'string') {
         try { responsibleEmployees = JSON.parse(responsibleEmployees); } catch(e) {}
       }
@@ -475,21 +543,23 @@ exports.submitManagementAction = async (req, res) => {
       
       requireTraining = requireTraining === 'true' || requireTraining === true || responsibleEmployees.some(e => e.needs_training);
 
+      await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
+
       if (responsibleEmployees.length > 0) {
-        await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
-        
         for (const emp of responsibleEmployees) {
           let deptId = emp.department_id;
           if (!deptId && emp.department) {
              const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
              if (dRes.rows.length) deptId = dRes.rows[0].id;
           }
-          const empUserId = emp.id || emp.employee_id;
-          await client.query(
-            `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [id, empUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
-          );
+          const validUserId = await resolveEmployeeUserId(emp, client);
+          if (validUserId) {
+            await client.query(
+              `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [id, validUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
+            );
+          }
         }
         await client.query(`UPDATE incidents SET has_responsible_person = TRUE WHERE id = $1`, [id]);
       } else {
@@ -498,20 +568,34 @@ exports.submitManagementAction = async (req, res) => {
     }
 
     // Determine workflow path based on outcome
-    const effectiveOutcome = proposedOutcome || incident.proposed_outcome || '';
+    const effectiveOutcome = (decision === 'DISAGREE_MODIFY' && cleanProposedOutcome)
+      ? cleanProposedOutcome
+      : (incident.proposed_outcome || '');
     const outcomeLower = effectiveOutcome.toLowerCase();
 
     // Check if incident involves formal letters / disciplinary actions
-    const hasEmployeeRoster = (responsibleEmployees && responsibleEmployees.length > 0) || (incident.has_responsible_person);
+    const respCountRes = await client.query(`SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
+    const hasEmployeeRoster = parseInt(respCountRes.rows[0].count) > 0 || incident.has_responsible_person;
+
     const isLetterOutcome = [
       'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
       'suspension', 'transfer', 'demotion', 'termination', 'disciplinary'
     ].some(k => outcomeLower.includes(k)) || (hasEmployeeRoster && !outcomeLower.includes('training') && !outcomeLower.includes('no action'));
 
     // Check if incident involves training / equipment mishandling
-    const isTrainingOutcome = requireTraining || [
+    const trainingRespCheck = await client.query(`SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE`, [id]);
+    const hasTrainingEmployee = parseInt(trainingRespCheck.rows[0].count) > 0;
+
+    const isTrainingOutcome = requireTraining || hasTrainingEmployee || [
       'training', 'counselling', 'education', 'mishandling'
     ].some(k => outcomeLower.includes(k));
+
+    if (isTrainingOutcome) {
+      await client.query(
+        `UPDATE incident_responsible_employees SET needs_training = TRUE WHERE incident_id = $1`,
+        [id]
+      );
+    }
 
     let nextStatus = 'closed';
     let returnMessage = 'Management agreed with IMC. Incident has been officially CLOSED.';
@@ -602,7 +686,8 @@ exports.submitManagementAction = async (req, res) => {
     res.json({ success: true, message: returnMessage, nextStatus });
   } catch (error) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Failed to submit management action' });
+    console.error('submitManagementAction error:', error);
+    res.status(500).json({ error: error.message || 'Failed to submit management action' });
   } finally {
     client.release();
   }

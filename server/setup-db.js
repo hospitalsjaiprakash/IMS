@@ -33,6 +33,8 @@ const migrations = [
   '015_reference_id_constraints.sql',
   '016_master_employees.sql',
   '017_seed_mock_data.sql',
+  '020_management_closure_letters_trainers.sql',
+  '021_proposed_outcome_text.sql',
 ];
 
 function splitSqlStatements(sql) {
