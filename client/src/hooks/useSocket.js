@@ -30,15 +30,17 @@ export function useSocket() {
     socket.on('incident_created', (data) => {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
     });
 
-    // When an incident is updated (withdrawn, feedback, status change), invalidate it
+    // When an incident is updated (withdrawn, feedback, status change, letters forwarded), invalidate it
     socket.on('incident_updated', (data) => {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       if (data?.id) {
         queryClient.invalidateQueries({ queryKey: ['incident', data.id] });
       }
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
     });
 
     socket.on('new_notification', (data) => {

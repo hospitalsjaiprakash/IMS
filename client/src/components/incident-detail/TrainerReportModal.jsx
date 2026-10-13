@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Upload, FileCheck, Calendar, Clock, BookOpen, AlertCircle, CheckCircle2, User, Award } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi } from '../../api';
@@ -12,6 +13,7 @@ export default function TrainerReportModal({
   trainerAssignment,
   onSuccess
 }) {
+  const queryClient = useQueryClient();
   const [completionDate, setCompletionDate] = useState(new Date().toISOString().split('T')[0]);
   const [durationHours, setDurationHours] = useState('1.5');
   const [methodology, setMethodology] = useState('Practical Demonstration & Hands-on SOP Simulation');
@@ -42,6 +44,10 @@ export default function TrainerReportModal({
 
       await trainersApi.submitReport(incident.id, fd);
       toast.success('Training report submitted successfully. Forwarded to IMC for quality review.');
+      queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { 
   FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, 
   Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink, Mail, User, Briefcase 
@@ -27,6 +28,7 @@ export default function LetterDraftingModal({
   existingLetters = [],
   onSaveSuccess
 }) {
+  const queryClient = useQueryClient();
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [letterType, setLetterType] = useState('warning_letter');
   const [refNumber, setRefNumber] = useState('');
@@ -248,6 +250,10 @@ export default function LetterDraftingModal({
       });
 
       toast.success(existingLetter ? 'Letter draft updated.' : 'Letter draft saved successfully.');
+      queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
       if (onSaveSuccess) onSaveSuccess();
       onClose();
     } catch (err) {

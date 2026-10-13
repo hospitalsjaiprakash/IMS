@@ -182,6 +182,10 @@ exports.assignTrainer = async (req, res) => {
       trainingTopic
     }, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'training_in_progress' });
+    }
+
     res.json({
       success: true,
       message: `Trainer ${trainerUser.full_name} assigned successfully.`,
@@ -324,6 +328,10 @@ exports.submitTrainerReport = async (req, res) => {
       assignmentId
     }, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'pending_imc_training_review' });
+    }
+
     res.json({
       success: true,
       message: 'Training completion report and evidence submitted successfully. Awaiting IMC verification.'
@@ -385,6 +393,12 @@ exports.imcVerifyTraining = async (req, res) => {
         'training_assigned'
       );
 
+      await auditLog(req.user.id, 'IMC_TRAINING_REWORK_REQUESTED', id, { assignmentId, reviewNotes }, req.ip);
+
+      if (req.io) {
+        req.io.emit('incident_updated', { id, status: 'training_in_progress' });
+      }
+
       return res.json({ success: true, message: 'Returned to Trainer for follow-up session.' });
     }
 
@@ -423,6 +437,10 @@ exports.imcVerifyTraining = async (req, res) => {
       assignmentId,
       traineeName: assignment.trainee_name
     }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'with_head_management' });
+    }
 
     res.json({
       success: true,
@@ -504,6 +522,10 @@ exports.managementCloseTraining = async (req, res) => {
     await auditLog(req.user.id, 'MANAGEMENT_TRAINING_CLOSED', id, {
       closureNotes
     }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'closed' });
+    }
 
     res.json({
       success: true,

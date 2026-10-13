@@ -373,7 +373,7 @@ exports.getIncidents = async (req, res) => {
     }
 
     if (status === 'active') {
-      whereClause += ` AND i.status NOT IN ('resolved', 'withdrawn')`;
+      whereClause += ` AND i.status NOT IN ('resolved', 'withdrawn', 'closed')`;
     } else if (status) { whereClause += ` AND i.status = $${paramIdx++}`; params.push(status); }
     if (severity) { whereClause += ` AND i.severity = $${paramIdx++}`; params.push(severity); }
     if (incidentCategory) { whereClause += ` AND i.incident_category = $${paramIdx++}`; params.push(incidentCategory); }
@@ -388,17 +388,17 @@ exports.getIncidents = async (req, res) => {
     if (reviewStage === 'hodGiven') {
       whereClause += ` AND EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')`;
     } else if (reviewStage === 'hodPending') {
-      whereClause += ` AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod') AND i.status NOT IN ('resolved', 'withdrawn')`;
+      whereClause += ` AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod') AND i.status NOT IN ('resolved', 'withdrawn', 'closed')`;
     } else if (reviewStage === 'imcGiven') {
       whereClause += ` AND EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc')`;
     } else if (reviewStage === 'imcPending') {
-      whereClause += ` AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc') AND i.status NOT IN ('resolved', 'withdrawn')`;
+      whereClause += ` AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc') AND i.status NOT IN ('resolved', 'withdrawn', 'closed')`;
     } else if (reviewStage === 'mgmtGiven') {
       whereClause += ` AND EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management')`;
     } else if (reviewStage === 'mgmtPending') {
-      whereClause += ` AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') AND i.status NOT IN ('resolved', 'withdrawn')`;
+      whereClause += ` AND (i.status IN ('with_head_management', 'pending_management_letter_approval') OR (NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management') AND i.status NOT IN ('resolved', 'withdrawn', 'closed')))`;
     } else if (reviewStage === 'trainingPending') {
-      whereClause += ` AND i.status = 'pending_training'`;
+      whereClause += ` AND i.status IN ('pending_training', 'pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review')`;
     }
 
     // Exclude withdrawn for non-admin/non-MD/non-IMC/non-HOD/non-exec unless they are the reporter
@@ -931,8 +931,8 @@ exports.getDashboardStats = async (req, res) => {
     const [totals, bySeverity, byType, byStatus, monthly] = await Promise.all([
       query(`SELECT
         COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status NOT IN ('resolved','withdrawn')) as active,
-        COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
+        COUNT(*) FILTER (WHERE status NOT IN ('resolved','withdrawn','closed')) as active,
+        COUNT(*) FILTER (WHERE status IN ('resolved','closed')) as resolved,
         COUNT(*) FILTER (WHERE status = 'withdrawn') as withdrawn,
         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') as this_month
         FROM incidents i WHERE 1=1 ${deptFilter}`, params),
@@ -1031,15 +1031,18 @@ exports.getDashboardStats = async (req, res) => {
     `, [userId]);
 
     let pipelineStats = {};
+    let managementReport = null;
     if (role === 'system_admin' || role === 'head_management' || role === 'coo' || role === 'asst_coo') {
       const pipelineRes = await query(`
         SELECT
           (SELECT COUNT(DISTINCT incident_id) FROM feedbacks WHERE role = 'hod') as hod_given,
-          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')) as hod_pending,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn', 'closed') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')) as hod_pending,
           (SELECT COUNT(DISTINCT incident_id) FROM feedbacks WHERE role = 'imc') as imc_given,
-          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc')) as imc_pending,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn', 'closed') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc')) as imc_pending,
           (SELECT COUNT(DISTINCT incident_id) FROM feedbacks WHERE role = 'head_management') as mgmt_given,
-          (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'head_management')) as mgmt_pending
+          (SELECT COUNT(*) FROM incidents i WHERE i.status IN ('with_head_management', 'pending_management_letter_approval')) as mgmt_pending,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status = 'pending_management_letter_approval') as pending_letters,
+          (SELECT COUNT(*) FROM incidents i WHERE i.status = 'with_head_management') as pending_decisions
       `);
       pipelineStats = {
         hodGiven: parseInt(pipelineRes.rows[0].hod_given || 0),
@@ -1047,7 +1050,15 @@ exports.getDashboardStats = async (req, res) => {
         imcGiven: parseInt(pipelineRes.rows[0].imc_given || 0),
         imcPending: parseInt(pipelineRes.rows[0].imc_pending || 0),
         mgmtGiven: parseInt(pipelineRes.rows[0].mgmt_given || 0),
-        mgmtPending: parseInt(pipelineRes.rows[0].mgmt_pending || 0)
+        mgmtPending: parseInt(pipelineRes.rows[0].mgmt_pending || 0),
+        pendingLettersApproval: parseInt(pipelineRes.rows[0].pending_letters || 0),
+        pendingMgmtDecisions: parseInt(pipelineRes.rows[0].pending_decisions || 0)
+      };
+
+      managementReport = {
+        awaitingDecision: parseInt(pipelineRes.rows[0].mgmt_pending || 0),
+        pendingLetters: parseInt(pipelineRes.rows[0].pending_letters || 0),
+        pendingDecisions: parseInt(pipelineRes.rows[0].pending_decisions || 0)
       };
     }
 
@@ -1067,7 +1078,8 @@ exports.getDashboardStats = async (req, res) => {
       byType: byType.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       byStatus: byStatus.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
       monthly: monthly.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
-      ...(hodReport && { hodReport })
+      ...(hodReport && { hodReport }),
+      ...(managementReport && { managementReport })
     });
 
   } catch (error) {

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { 
   FileText, Send, CheckCircle, Clock, Trash2, Edit3, Printer, 
   Eye, QrCode, AlertTriangle, Building, ShieldCheck, Mail, Plus, 
@@ -20,6 +21,7 @@ export default function LettersCard({
   onEditDraft,
   onRefetch
 }) {
+  const queryClient = useQueryClient();
   const [selectedViewLetter, setSelectedViewLetter] = useState(null);
   const [isSubmittingToMgmt, setIsSubmittingToMgmt] = useState(false);
   const [isMgmtDeciding, setIsMgmtDeciding] = useState(false);
@@ -48,11 +50,19 @@ export default function LettersCard({
 
   const uniqueEmployeesCount = Object.keys(employeeLetterCounts).length;
 
+  const invalidateLetterRelatedQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+    queryClient.invalidateQueries({ queryKey: ['incidents'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+    queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
+  };
+
   const handleDeleteDraft = async (letterId) => {
     if (!window.confirm('Are you sure you want to delete this letter draft?')) return;
     try {
       await lettersApi.deleteDraft(incident.id, letterId);
       toast.success('Draft deleted.');
+      invalidateLetterRelatedQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to delete draft.');
@@ -68,6 +78,7 @@ export default function LettersCard({
     try {
       await lettersApi.submitToManagement(incident.id);
       toast.success('Letter(s) submitted to Executive Management for approval.');
+      invalidateLetterRelatedQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to submit letters.');
@@ -88,6 +99,7 @@ export default function LettersCard({
     try {
       const res = await lettersApi.managementDecision(incident.id, { decision: 'approve' });
       toast.success(res.data?.message || 'Letters approved and dispatched successfully.');
+      invalidateLetterRelatedQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to approve letters.');
@@ -107,6 +119,7 @@ export default function LettersCard({
       toast.success('Letters returned to IMC for revision.');
       setMgmtRejectModal(false);
       setRejectReason('');
+      invalidateLetterRelatedQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to return letters.');

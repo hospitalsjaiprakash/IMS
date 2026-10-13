@@ -10,7 +10,7 @@ import { StatCard, Spinner, Alert, Tabs, Modal } from '../../components/ui';
 import {
   FileText, Activity, AlertTriangle, CheckCircle, Clock,
   ChevronDown, Search, Filter, MessageSquare, Download, Users, ShieldAlert, FileDown, Paperclip, Flame, XOctagon,
-  BarChart3, Timer, TrendingUp, CheckSquare, XCircle, Pencil, ArrowUpDown, Eye, ChevronRight, AlertCircle, LayoutDashboard, ShieldCheck
+  BarChart3, Timer, TrendingUp, CheckSquare, XCircle, Pencil, ArrowUpDown, Eye, ChevronRight, AlertCircle, LayoutDashboard, ShieldCheck, Mail
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -117,16 +117,20 @@ export default function ManagementDashboard() {
   const [editModal, setEditModal] = useState(null);               // { incident, feedbackType }
   const [editText, setEditText] = useState('');
 
-  // 1. Fetch dashboard stats
+  // 1. Fetch dashboard stats with fast staleTime and 15s live polling
   const { data: stats, isLoading: isStatsLoading } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: () => incidentsApi.getStats().then(r => r.data),
+    staleTime: 1000 * 10,
+    refetchInterval: 15000,
   });
 
-  // 2. Fetch all incidents (for full department/category analytics calculations)
+  // 2. Fetch all incidents (for full department/category analytics calculations) with 15s live polling
   const { data: allIncidents = [], isLoading: isIncidentsLoading } = useQuery({
     queryKey: ['all-incidents-analytics'],
     queryFn: () => incidentsApi.list({ limit: 1000 }).then(r => r.data?.incidents || []),
+    staleTime: 1000 * 10,
+    refetchInterval: 15000,
   });
 
   // Edit feedback mutation
@@ -152,28 +156,37 @@ export default function ManagementDashboard() {
     setEditText(currentText || '');
   };
 
+  // Distinct actionable items requiring Executive Management attention
+  const pendingLettersApproval = useMemo(() => {
+    return allIncidents.filter(i => i.status === 'pending_management_letter_approval');
+  }, [allIncidents]);
 
+  const pendingMgmtDecisions = useMemo(() => {
+    return allIncidents.filter(i => i.status === 'with_head_management');
+  }, [allIncidents]);
 
   const totals = useMemo(() => {
-    const active = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'withdrawn').length;
-    const resolved = allIncidents.filter(i => i.status === 'resolved').length;
+    const active = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
+    const resolved = allIncidents.filter(i => i.status === 'resolved' || i.status === 'closed').length;
     const withdrawn = allIncidents.filter(i => i.status === 'withdrawn').length;
     const now = new Date();
     const thisMonth = allIncidents.filter(i => new Date(i.created_at).getMonth() === now.getMonth()).length;
 
-    const overdueCount = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'withdrawn' && ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
-    const activeGraveCount = allIncidents.filter(i => i.severity === 'Grave' && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const overdueCount = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn' && ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
+    const activeGraveCount = allIncidents.filter(i => i.severity === 'Grave' && i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
 
     const hodGiven = allIncidents.filter(i => i.has_hod_feedback || i.hod_feedback).length;
-    const hodPending = allIncidents.filter(i => !(i.has_hod_feedback || i.hod_feedback) && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const hodPending = allIncidents.filter(i => !(i.has_hod_feedback || i.hod_feedback) && i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
 
     const imcGiven = allIncidents.filter(i => i.has_imc_feedback || i.imc_feedback).length;
-    const imcPending = allIncidents.filter(i => !(i.has_imc_feedback || i.imc_feedback) && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const imcPending = allIncidents.filter(i => !(i.has_imc_feedback || i.imc_feedback) && i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
 
     const mgmtGiven = allIncidents.filter(i => i.has_management_feedback || i.management_feedback).length;
-    const mgmtPending = allIncidents.filter(i => !(i.has_management_feedback || i.management_feedback) && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const mgmtPending = pendingLettersApproval.length + pendingMgmtDecisions.length;
 
-    const trainingPending = allIncidents.filter(i => i.status === 'pending_training').length;
+    const lettersAwaitingApproval = pendingLettersApproval.length;
+    const mgmtDecisionPending = pendingMgmtDecisions.length;
+    const trainingPending = allIncidents.filter(i => ['pending_training', 'pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review'].includes(i.status)).length;
     const redirectCount = allIncidents.filter(i => i.status === 'redirect_requested').length;
     const graveCount = allIncidents.filter(i => i.severity === 'Grave').length;
 
@@ -191,11 +204,13 @@ export default function ManagementDashboard() {
       imcPending,
       mgmtGiven,
       mgmtPending,
+      lettersAwaitingApproval,
+      mgmtDecisionPending,
       trainingPending,
       redirectCount,
       graveCount
     };
-  }, [allIncidents]);
+  }, [allIncidents, pendingLettersApproval, pendingMgmtDecisions]);
 
   const recentIncidents = useMemo(() => {
     return [...allIncidents]
@@ -397,13 +412,154 @@ export default function ManagementDashboard() {
             </div>
           )}
 
-          {/* Alert for pending decisions */}
-          {r.awaitingDecision > 0 && (
-            <Alert
-              type="warning"
-              title={`${r.awaitingDecision} Incident${r.awaitingDecision > 1 ? 's' : ''} Awaiting Your Decision`}
-              message="These incidents have been reviewed by IMC and forwarded to you for final corrective action."
-            />
+          {/* Executive Action Center: Letters Awaiting Approval & Decisions Pending */}
+          {(pendingLettersApproval.length > 0 || pendingMgmtDecisions.length > 0) && (
+            <div className="bg-gradient-to-r from-purple-50 via-indigo-50 to-amber-50 border-2 border-indigo-200/80 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-sm flex-shrink-0">
+                    <ShieldAlert size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2 flex-wrap">
+                      Action Required by Executive Management
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-600 text-white shadow-sm">
+                        {pendingLettersApproval.length + pendingMgmtDecisions.length} Action{pendingLettersApproval.length + pendingMgmtDecisions.length > 1 ? 's' : ''} Needed
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      The incidents below are awaiting your formal review, letter authorization, or sanction decisions.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {pendingLettersApproval.length > 0 && (
+                    <button
+                      onClick={() => navigate('/incidents', { state: { status: 'pending_management_letter_approval' } })}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 transition-colors cursor-pointer shadow-sm"
+                    >
+                      <Mail size={13} className="text-purple-700" /> {pendingLettersApproval.length} Letter Approval{pendingLettersApproval.length > 1 ? 's' : ''}
+                    </button>
+                  )}
+                  {pendingMgmtDecisions.length > 0 && (
+                    <button
+                      onClick={() => navigate('/incidents', { state: { status: 'with_head_management' } })}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition-colors cursor-pointer shadow-sm"
+                    >
+                      <Clock size={13} className="text-amber-700" /> {pendingMgmtDecisions.length} Decision{pendingMgmtDecisions.length > 1 ? 's' : ''}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Section: Letters Awaiting Approval */}
+              {pendingLettersApproval.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-purple-900">
+                    <span className="flex items-center gap-1.5 uppercase tracking-wider text-[11px]">
+                      <Mail size={14} className="text-purple-600" />
+                      Letters Forwarded by IMC — Awaiting Approval & Dispatch ({pendingLettersApproval.length})
+                    </span>
+                    <button
+                      onClick={() => navigate('/incidents', { state: { status: 'pending_management_letter_approval' } })}
+                      className="text-purple-700 hover:text-purple-900 hover:underline font-semibold text-[11px]"
+                    >
+                      View in Incidents List →
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {pendingLettersApproval.map(inc => (
+                      <div
+                        key={inc.id}
+                        onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
+                        className="bg-white border-2 border-purple-200 hover:border-purple-400 rounded-xl p-3.5 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between gap-3"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-purple-900 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                                {inc.reference_id}
+                              </span>
+                              <span className={`badge ${getSeverityClass(inc.severity)} text-[10px]`}>{inc.severity}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-medium">{timeAgo(inc.updated_at || inc.created_at)}</span>
+                          </div>
+                          <h4 className="text-xs font-bold text-slate-800 line-clamp-1 group-hover:text-purple-700 transition-colors">
+                            {inc.incident_type}
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                            Dept: {(inc.departments || []).join(', ') || 'General'} · Reporter: {inc.reporter_name || 'N/A'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                          <span className="text-[11px] font-semibold text-purple-700 flex items-center gap-1">
+                            <ShieldCheck size={13} className="text-purple-600" /> Letter drafts ready for dispatch
+                          </span>
+                          <span className="btn-primary btn-sm text-[11px] py-1 px-2.5 bg-purple-600 hover:bg-purple-700 flex items-center gap-1 shadow-sm">
+                            Review & Approve →
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Section: Decisions Awaiting Management Review */}
+              {pendingMgmtDecisions.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-amber-900">
+                    <span className="flex items-center gap-1.5 uppercase tracking-wider text-[11px]">
+                      <Clock size={14} className="text-amber-600" />
+                      IMC Reviewed — Awaiting Executive Decisions ({pendingMgmtDecisions.length})
+                    </span>
+                    <button
+                      onClick={() => navigate('/incidents', { state: { status: 'with_head_management' } })}
+                      className="text-amber-700 hover:text-amber-900 hover:underline font-semibold text-[11px]"
+                    >
+                      View in Incidents List →
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {pendingMgmtDecisions.map(inc => (
+                      <div
+                        key={inc.id}
+                        onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
+                        className="bg-white border-2 border-amber-200 hover:border-amber-400 rounded-xl p-3.5 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between gap-3"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                {inc.reference_id}
+                              </span>
+                              <span className={`badge ${getSeverityClass(inc.severity)} text-[10px]`}>{inc.severity}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-medium">{timeAgo(inc.updated_at || inc.created_at)}</span>
+                          </div>
+                          <h4 className="text-xs font-bold text-slate-800 line-clamp-1 group-hover:text-amber-700 transition-colors">
+                            {inc.incident_type}
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                            Dept: {(inc.departments || []).join(', ') || 'General'} · Reporter: {inc.reporter_name || 'N/A'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                          <span className="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
+                            <Clock size={13} className="text-amber-600" /> Findings submitted by IMC
+                          </span>
+                          <span className="btn-primary btn-sm text-[11px] py-1 px-2.5 bg-amber-600 hover:bg-amber-700 flex items-center gap-1 shadow-sm">
+                            Provide Decision →
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* KPI Stat Cards — High Level Overview */}
@@ -464,6 +620,16 @@ export default function ManagementDashboard() {
 
               {/* Secondary Metrics (Pills) */}
               <div className="flex flex-wrap gap-2.5 mt-3">
+                {totals.lettersAwaitingApproval > 0 && (
+                  <button onClick={() => navigate('/incidents', { state: { status: 'pending_management_letter_approval' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 border border-purple-300 rounded-lg text-xs font-bold text-purple-800 hover:bg-purple-200 transition-colors shadow-sm animate-pulse">
+                    <Mail size={14} className="text-purple-600" /> Letters Awaiting Approval: {totals.lettersAwaitingApproval}
+                  </button>
+                )}
+                {totals.mgmtDecisionPending > 0 && (
+                  <button onClick={() => navigate('/incidents', { state: { status: 'with_head_management' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-200 transition-colors shadow-sm">
+                    <Clock size={14} className="text-amber-600" /> Decisions Pending: {totals.mgmtDecisionPending}
+                  </button>
+                )}
                 <button onClick={() => navigate('/incidents', { state: { severity: 'Grave' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
                   <AlertTriangle size={14} className="text-purple-600" /> Grave: {totals.graveCount}
                 </button>
@@ -544,7 +710,7 @@ export default function ManagementDashboard() {
                   {/* Mgmt Step */}
                   <div className="flex-1 bg-slate-50/50 rounded-lg p-3 border border-slate-100">
                     <div className="flex items-center justify-between mb-3 px-1">
-                      <span className="font-bold text-sm text-slate-700">3. Mgmt Feedback</span>
+                      <span className="font-bold text-sm text-slate-700">3. Mgmt Review & Letter Approval</span>
                       <CheckCircle size={16} className={totals.mgmtPending === 0 ? "text-green-500" : "text-slate-300"} />
                     </div>
                     <div className="flex items-center gap-2">

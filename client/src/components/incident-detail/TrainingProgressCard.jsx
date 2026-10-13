@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { 
   GraduationCap, CheckCircle2, Clock, Calendar, Download, Eye, 
   ShieldCheck, UserCheck, AlertCircle, Award, Users, RefreshCw, FileText, XCircle 
@@ -17,6 +18,7 @@ export default function TrainingProgressCard({
   onOpenReportModal,
   onRefetch
 }) {
+  const queryClient = useQueryClient();
   const [verifyModal, setVerifyModal] = useState(false);
   const [verifyNotes, setVerifyNotes] = useState('');
   const [reworkModal, setReworkModal] = useState(false);
@@ -41,6 +43,13 @@ export default function TrainingProgressCard({
   );
   const canSubmitReport = (isAssignedTrainer || isImcLead) && isInProgress;
 
+  const invalidateTrainingQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+    queryClient.invalidateQueries({ queryKey: ['incidents'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+    queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
+  };
+
   const handleImcVerify = async () => {
     setIsVerifying(true);
     try {
@@ -52,6 +61,7 @@ export default function TrainingProgressCard({
       toast.success('Training completion verified by IMC. Forwarded to Management for closure.');
       setVerifyModal(false);
       setVerifyNotes('');
+      invalidateTrainingQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to verify training.');
@@ -75,6 +85,7 @@ export default function TrainingProgressCard({
       toast.success('Training returned to Trainer for follow-up session.');
       setReworkModal(false);
       setReworkReason('');
+      invalidateTrainingQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to return training for rework.');
@@ -91,6 +102,7 @@ export default function TrainingProgressCard({
         assignmentId: activeAssignment?.id
       });
       toast.success('Training confirmed and incident officially CLOSED.');
+      invalidateTrainingQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to close incident.');

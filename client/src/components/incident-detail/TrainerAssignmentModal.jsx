@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { GraduationCap, Calendar, BookOpen, User, Send, CheckSquare, Square, Users } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi } from '../../api';
@@ -12,6 +13,7 @@ export default function TrainerAssignmentModal({
   responsibleEmployees = [],
   onSuccess
 }) {
+  const queryClient = useQueryClient();
   const [selectedTrainer, setSelectedTrainer] = useState([]);
   const [selectedTraineeIds, setSelectedTraineeIds] = useState([]);
   const [topic, setTopic] = useState('');
@@ -87,6 +89,10 @@ export default function TrainerAssignmentModal({
       });
 
       toast.success('Trainer successfully assigned. Notification dispatched.');
+      queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {

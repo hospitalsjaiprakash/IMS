@@ -154,25 +154,25 @@ export default function ImcDashboard() {
 
   // General statistics for Overview charts
   const totals = useMemo(() => {
-    const active = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'withdrawn').length;
-    const resolved = allIncidents.filter(i => i.status === 'resolved').length;
+    const active = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
+    const resolved = allIncidents.filter(i => i.status === 'resolved' || i.status === 'closed').length;
     const withdrawn = allIncidents.filter(i => i.status === 'withdrawn').length;
     const now = new Date();
     const thisMonth = allIncidents.filter(i => new Date(i.created_at).getMonth() === now.getMonth()).length;
 
-    const overdueCount = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'withdrawn' && ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
-    const activeGraveCount = allIncidents.filter(i => i.severity === 'Grave' && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const overdueCount = allIncidents.filter(i => i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn' && ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
+    const activeGraveCount = allIncidents.filter(i => i.severity === 'Grave' && i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
 
     const hodGiven = allIncidents.filter(i => i.has_hod_feedback).length;
-    const hodPending = allIncidents.filter(i => !i.has_hod_feedback && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const hodPending = allIncidents.filter(i => !i.has_hod_feedback && i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
 
     const imcGiven = allIncidents.filter(i => i.has_imc_feedback).length;
-    const imcPending = allIncidents.filter(i => !i.has_imc_feedback && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const imcPending = allIncidents.filter(i => !i.has_imc_feedback && i.status !== 'resolved' && i.status !== 'closed' && i.status !== 'withdrawn').length;
 
     const mgmtGiven = allIncidents.filter(i => i.has_management_feedback).length;
-    const mgmtPending = allIncidents.filter(i => !i.has_management_feedback && i.status !== 'resolved' && i.status !== 'withdrawn').length;
+    const mgmtPending = allIncidents.filter(i => i.status === 'with_head_management' || i.status === 'pending_management_letter_approval').length;
 
-    const trainingPending = allIncidents.filter(i => i.status === 'pending_training').length;
+    const trainingPending = allIncidents.filter(i => ['pending_training', 'pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review'].includes(i.status)).length;
     const redirectCount = allIncidents.filter(i => i.status === 'redirect_requested').length;
     const graveCount = allIncidents.filter(i => i.severity === 'Grave').length;
 

@@ -302,6 +302,10 @@ exports.saveLetterDraft = async (req, res) => {
       recipientName
     }, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
     res.json({
       success: true,
       message: 'Letter saved successfully.',
@@ -326,6 +330,11 @@ exports.deleteLetterDraft = async (req, res) => {
     if (!delRes.rows.length) {
       return res.status(400).json({ error: 'Letter could not be deleted or is already submitted.' });
     }
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
     res.json({ success: true, message: 'Draft letter deleted.' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete draft letter.' });
@@ -387,6 +396,10 @@ exports.submitLettersToManagement = async (req, res) => {
     await auditLog(req.user.id, 'LETTERS_SUBMITTED_TO_MANAGEMENT', id, {
       letterCount: lettersRes.rows.length
     }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'pending_management_letter_approval' });
+    }
 
     res.json({
       success: true,
@@ -462,6 +475,10 @@ exports.submitManagementLetterDecision = async (req, res) => {
       }
 
       await auditLog(req.user.id, 'LETTERS_REJECTED_FOR_REVISION', id, { revisionNotes }, req.ip);
+
+      if (req.io) {
+        req.io.emit('incident_updated', { id, status: 'pending_letter_generation' });
+      }
 
       return res.json({ success: true, message: 'Returned to IMC for letter revision.' });
     }
@@ -560,6 +577,10 @@ exports.submitManagementLetterDecision = async (req, res) => {
       letterCount: lettersRes.rows.length,
       approver: req.user.full_name
     }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: nextStatus });
+    }
 
     res.json({
       success: true,
