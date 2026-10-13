@@ -37,6 +37,7 @@ const migrations = [
   '021_proposed_outcome_text.sql',
   '022_expand_letter_templates.sql',
   '023_widen_incident_status.sql',
+  '024_expand_trainer_status.sql',
 ];
 
 function splitSqlStatements(sql) {

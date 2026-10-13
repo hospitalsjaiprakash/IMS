@@ -121,6 +121,7 @@ export default function IncidentDetailPage() {
   // Formal Letter & Trainer Workflow States
   const [showDraftModal, setShowDraftModal] = useState(false);
   const [editingLetter, setEditingLetter] = useState(null);
+  const [draftingEmployee, setDraftingEmployee] = useState(null);
   const [showAssignTrainerModal, setShowAssignTrainerModal] = useState(false);
   const [showTrainerReportModal, setShowTrainerReportModal] = useState(false);
   const [imcResponsibleEmployees, setImcResponsibleEmployees] = useState([]);
@@ -610,15 +611,23 @@ export default function IncidentDetailPage() {
             <LettersCard
               incident={incident}
               letters={data?.letters || []}
+              responsibleEmployees={incident?.responsible_employees || []}
               user={user}
               canImcAct={canImcAct}
               isManagement={isManagement}
               onOpenDraftModal={() => {
                 setEditingLetter(null);
+                setDraftingEmployee(null);
+                setShowDraftModal(true);
+              }}
+              onDraftForEmployee={(emp) => {
+                setEditingLetter(null);
+                setDraftingEmployee(emp);
                 setShowDraftModal(true);
               }}
               onEditDraft={(letter) => {
                 setEditingLetter(letter);
+                setDraftingEmployee(null);
                 setShowDraftModal(true);
               }}
               onRefetch={refetch}
@@ -1842,9 +1851,11 @@ export default function IncidentDetailPage() {
         onClose={() => {
           setShowDraftModal(false);
           setEditingLetter(null);
+          setDraftingEmployee(null);
         }}
         incident={incident}
         responsibleEmployees={incident?.responsible_employees || []}
+        initialEmployee={draftingEmployee}
         existingLetter={editingLetter}
         existingLetters={data?.letters || incident?.letters || []}
         onSaveSuccess={refetch}
@@ -1855,6 +1866,7 @@ export default function IncidentDetailPage() {
         show={showAssignTrainerModal}
         onClose={() => setShowAssignTrainerModal(false)}
         incident={incident}
+        responsibleEmployees={incident?.responsible_employees || []}
         onSuccess={refetch}
       />
 

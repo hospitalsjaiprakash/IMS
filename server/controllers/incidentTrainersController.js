@@ -122,6 +122,20 @@ exports.assignTrainer = async (req, res) => {
       ]
     );
 
+    // Flag trainees in incident_responsible_employees
+    const traineeIdList = Array.isArray(req.body.traineeIds) && req.body.traineeIds.length > 0
+      ? req.body.traineeIds
+      : (traineeEmployeeId ? [traineeEmployeeId] : []);
+
+    for (const tId of traineeIdList) {
+      await client.query(
+        `UPDATE incident_responsible_employees
+         SET needs_training = TRUE
+         WHERE incident_id = $1 AND employee_id = $2`,
+        [id, tId]
+      );
+    }
+
     // Update incident status to training_in_progress
     await client.query(
       `UPDATE incidents
@@ -439,6 +453,22 @@ exports.managementCloseTraining = async (req, res) => {
       return res.status(404).json({ error: 'Incident not found.' });
     }
     const incident = incRes.rows[0];
+
+    // Update training assignment status to closed
+    await client.query(
+      `UPDATE incident_trainers
+       SET status = 'closed', updated_at = NOW()
+       WHERE incident_id = $1`,
+      [id]
+    );
+
+    // Mark responsible employees as completed
+    await client.query(
+      `UPDATE incident_responsible_employees
+       SET training_completed = TRUE, training_verified_by = $1, training_verified_at = NOW()
+       WHERE incident_id = $2`,
+      [req.user.id, id]
+    );
 
     // Close incident
     await client.query(

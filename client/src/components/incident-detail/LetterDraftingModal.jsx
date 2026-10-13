@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink } from 'lucide-react';
+import { 
+  FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, 
+  Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink, Mail, User, Briefcase 
+} from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { lettersApi } from '../../api';
 import { convertNumberToWords, parseProposedOutcomes } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 const LETTER_TYPES = [
-  { value: 'warning_letter', label: 'Warning Letter', desc: 'Formal disciplinary notice regarding lapse' },
+  { value: 'warning_letter', label: 'Warning Letter', desc: 'Formal disciplinary notice regarding procedural lapse' },
   { value: 'warning_penalty_letter', label: 'Warning & Financial Penalty Letter', desc: 'Disciplinary warning with specified monetary deduction' },
   { value: 'advisory_letter', label: 'Advisory Letter', desc: 'Guidance and protocol adherence counsel' },
   { value: 'suggestion_letter', label: 'Suggestion Letter', desc: 'Process improvement and best-practice advisory' },
@@ -19,6 +22,7 @@ export default function LetterDraftingModal({
   onClose,
   incident,
   responsibleEmployees = [],
+  initialEmployee = null,
   existingLetter = null,
   existingLetters = [],
   onSaveSuccess
@@ -31,6 +35,9 @@ export default function LetterDraftingModal({
   const [bodyContent, setBodyContent] = useState('');
   const [penaltyAmount, setPenaltyAmount] = useState('');
   const [penaltyAmountWords, setPenaltyAmountWords] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [recipientDepartment, setRecipientDepartment] = useState('');
+  const [recipientDesignation, setRecipientDesignation] = useState('');
   const [ccList, setCcList] = useState([]);
   const [customCc, setCustomCc] = useState('');
   const [qrCodeUrl, setQrCodeUrl] = useState('');
@@ -39,7 +46,7 @@ export default function LetterDraftingModal({
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingDefaults, setIsLoadingDefaults] = useState(false);
 
-  // Initialize from existingLetter or first employee
+  // Initialize from existingLetter, initialEmployee, or first employee
   useEffect(() => {
     if (!show) return;
 
@@ -55,11 +62,15 @@ export default function LetterDraftingModal({
       setPenaltyAmount(pAmt);
       setPenaltyAmountWords(existingLetter.penalty_amount_words || (pAmt ? convertNumberToWords(pAmt) : ''));
       
+      setRecipientEmail(existingLetter.recipient_email || existingLetter.employee_email || '');
+      setRecipientDepartment(existingLetter.recipient_department || existingLetter.employee_department || '');
+      setRecipientDesignation(existingLetter.recipient_designation || existingLetter.employee_designation || '');
+
       setCcList(Array.isArray(existingLetter.cc_list || existingLetter.cc_recipients) ? (existingLetter.cc_list || existingLetter.cc_recipients) : []);
       setQrCodeUrl(existingLetter.qr_code_data || existingLetter.qr_code_url || '');
     } else {
-      const defaultEmp = responsibleEmployees[0]?.employee_id || responsibleEmployees[0]?.id || '';
-      setSelectedEmpId(defaultEmp);
+      const targetEmp = initialEmployee?.employee_id || initialEmployee?.id || responsibleEmployees[0]?.employee_id || responsibleEmployees[0]?.id || '';
+      setSelectedEmpId(targetEmp);
 
       // Determine recommended letter type from incident proposed outcome
       const outcome = (incident?.management_decision === 'DISAGREE_MODIFY' && incident?.proposed_outcome)
@@ -75,7 +86,7 @@ export default function LetterDraftingModal({
       setLetterType(defaultType);
 
       // Prefill management penalty amount if specified
-      if (incident?.penalty_amount) {
+      if (incident?.penalty_amount && (defaultType === 'warning_penalty_letter')) {
         setPenaltyAmount(String(incident.penalty_amount));
         setPenaltyAmountWords(incident.penalty_amount_words || convertNumberToWords(incident.penalty_amount));
       } else {
@@ -83,11 +94,11 @@ export default function LetterDraftingModal({
         setPenaltyAmountWords('');
       }
 
-      if (defaultEmp) {
-        loadDefaults(defaultEmp, defaultType);
+      if (targetEmp) {
+        loadDefaults(targetEmp, defaultType);
       }
     }
-  }, [show, existingLetter, incident]);
+  }, [show, existingLetter, initialEmployee, incident]);
 
   const loadDefaults = async (empId, type, customPenalty = null) => {
     if (!incident?.id || !empId) return;
@@ -111,6 +122,8 @@ export default function LetterDraftingModal({
           setPenaltyAmount(String(def.penaltyAmount));
         } else if (incident?.penalty_amount && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
           setPenaltyAmount(String(incident.penalty_amount));
+        } else {
+          setPenaltyAmount('');
         }
 
         if (def.penaltyAmountWords) {
@@ -119,7 +132,13 @@ export default function LetterDraftingModal({
           setPenaltyAmountWords(incident.penalty_amount_words);
         } else if (penaltyAmount) {
           setPenaltyAmountWords(convertNumberToWords(penaltyAmount));
+        } else {
+          setPenaltyAmountWords('');
         }
+
+        setRecipientEmail(def.recipientEmail || '');
+        setRecipientDepartment(def.recipientDepartment || '');
+        setRecipientDesignation(def.recipientDesignation || '');
 
         setCcList(def.ccRecipients || def.ccList || []);
         if (def.qrCodeUrl || def.qrCodeData) {
@@ -188,7 +207,7 @@ export default function LetterDraftingModal({
 
   // Find all letters already drafted for this specific employee
   const employeeDraftedLetters = (existingLetters || []).filter(
-    l => (l.employee_id === selectedEmpId || l.recipient_name === selectedEmployeeObj.full_name) && l.id !== existingLetter?.id
+    l => (l.employee_id === selectedEmpId || l.recipient_name === (selectedEmployeeObj.full_name || selectedEmployeeObj.name)) && l.id !== existingLetter?.id
   );
 
   const approvedOutcomes = parseProposedOutcomes(incident?.proposed_outcome);
@@ -212,14 +231,19 @@ export default function LetterDraftingModal({
       await lettersApi.saveDraft(incident.id, {
         letterId: existingLetter?.id,
         employeeId: selectedEmpId,
+        recipientName: selectedEmployeeObj.full_name || selectedEmployeeObj.name,
+        recipientEmpNo: selectedEmployeeObj.employee_id || selectedEmployeeObj.emp_id,
+        recipientEmail: recipientEmail.trim() || null,
+        recipientDepartment: recipientDepartment.trim() || null,
+        recipientDesignation: recipientDesignation.trim() || null,
         templateType: letterType,
         letterType,
         refNumber,
         letterDate,
         subject,
         bodyContent,
-        penaltyAmount: penaltyAmount ? parseFloat(penaltyAmount) : null,
-        penaltyAmountWords,
+        penaltyAmount: (letterType.includes('penalty') && penaltyAmount) ? parseFloat(penaltyAmount) : null,
+        penaltyAmountWords: (letterType.includes('penalty')) ? penaltyAmountWords : null,
         ccList
       });
 
@@ -234,7 +258,8 @@ export default function LetterDraftingModal({
     }
   };
 
-  const showPenaltyBox = letterType.includes('penalty') || Boolean(incident?.penalty_amount) || Boolean(penaltyAmount);
+  // Only show penalty box if template is a penalty template or user has entered penalty
+  const showPenaltyBox = letterType.includes('penalty');
 
   return (
     <Modal
@@ -321,7 +346,7 @@ export default function LetterDraftingModal({
             <select
               value={selectedEmpId}
               onChange={(e) => handleEmployeeChange(e.target.value)}
-              className="select w-full text-xs"
+              className="select w-full text-xs font-semibold"
               disabled={Boolean(existingLetter)}
             >
               <option value="">Select Responsible Employee...</option>
@@ -344,7 +369,7 @@ export default function LetterDraftingModal({
                     <ul className="list-disc list-inside space-y-0.5 text-[10px]">
                       {employeeDraftedLetters.map(l => (
                         <li key={l.id}>
-                          <strong>{l.ref_number || 'Draft'}:</strong> {l.subject} ({l.letter_type || l.template_type})
+                          <strong>{l.ref_number || l.reference_number || 'Draft'}:</strong> {l.subject}
                         </li>
                       ))}
                     </ul>
@@ -379,6 +404,54 @@ export default function LetterDraftingModal({
             </p>
           </div>
         </div>
+
+        {/* Recipient Details & Email Verification Card */}
+        {selectedEmpId && (
+          <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                <User size={13} className="text-slate-500" /> Recipient Details & Delivery Address
+              </span>
+              {!recipientEmail && (
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                  ⚠️ Email missing — enter email to enable digital dispatch
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Designation</label>
+                <input
+                  type="text"
+                  value={recipientDesignation}
+                  onChange={e => setRecipientDesignation(e.target.value)}
+                  className="input text-xs py-1"
+                  placeholder="e.g. Staff Nurse / OT Tech"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Department</label>
+                <input
+                  type="text"
+                  value={recipientDepartment}
+                  onChange={e => setRecipientDepartment(e.target.value)}
+                  className="input text-xs py-1"
+                  placeholder="e.g. Critical Care / Nursing"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Email Address</label>
+                <input
+                  type="email"
+                  value={recipientEmail}
+                  onChange={e => setRecipientEmail(e.target.value)}
+                  className={`input text-xs py-1 ${!recipientEmail ? 'border-amber-400 bg-amber-50/30' : ''}`}
+                  placeholder="staff@jphrc.org"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {isLoadingDefaults && (
           <div className="p-4 text-center text-xs text-indigo-600 flex items-center justify-center gap-2 bg-indigo-50/50 rounded-xl">
@@ -611,11 +684,16 @@ export default function LetterDraftingModal({
                 Employee ID: <span className="font-mono font-semibold">{selectedEmployeeObj.employee_id || selectedEmployeeObj.emp_id || '[Code]'}</span>
               </p>
               <p className="text-slate-600">
-                Designation: <span className="font-semibold">{selectedEmployeeObj.designation || 'Staff'}</span>
+                Designation: <span className="font-semibold">{recipientDesignation || selectedEmployeeObj.designation || 'Staff'}</span>
               </p>
               <p className="text-slate-600">
-                Department: <span className="font-semibold">{selectedEmployeeObj.department || selectedEmployeeObj.department_name || '[Department]'}</span>
+                Department: <span className="font-semibold">{recipientDepartment || selectedEmployeeObj.department || selectedEmployeeObj.department_name || '[Department]'}</span>
               </p>
+              {recipientEmail && (
+                <p className="text-slate-500 text-[11px]">
+                  Email: {recipientEmail}
+                </p>
+              )}
               <p className="text-slate-600">Jai Prakash Hospital & Research Centre</p>
             </div>
 

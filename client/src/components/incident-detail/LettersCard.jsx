@@ -11,10 +11,12 @@ import toast from 'react-hot-toast';
 export default function LettersCard({
   incident,
   letters = [],
+  responsibleEmployees = [],
   user,
   canImcAct,
   isManagement,
   onOpenDraftModal,
+  onDraftForEmployee,
   onEditDraft,
   onRefetch
 }) {
@@ -288,6 +290,90 @@ export default function LettersCard({
             )}
           </div>
         )}
+
+        {/* Involved Staff Outcome Matrix */}
+        {(() => {
+          const staffList = responsibleEmployees.length > 0 ? responsibleEmployees : (incident?.responsible_employees || []);
+          if (!staffList.length) return null;
+
+          return (
+            <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between flex-wrap gap-1">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Users size={14} className="text-indigo-600" />
+                  Involved Staff Roster & Action Status ({staffList.length})
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  Track individual directives & drafted letters per employee
+                </span>
+              </div>
+
+              <div className="divide-y divide-slate-200 bg-white rounded-lg border border-slate-200 overflow-hidden">
+                {staffList.map(emp => {
+                  const empId = emp.employee_id || emp.emp_id || emp.id;
+                  const empLetters = letters.filter(
+                    l => l.employee_id === empId || l.recipient_name === (emp.full_name || emp.name)
+                  );
+
+                  return (
+                    <div key={empId} className="p-3 flex items-center justify-between gap-3 flex-wrap">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-xs text-slate-900">
+                            {emp.full_name || emp.name}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                            {emp.emp_id || emp.employee_id || 'ID'}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {[emp.designation, emp.department_name || emp.department].filter(Boolean).join(' • ')}
+                          </span>
+                        </div>
+
+                        {/* Drafted letters badges */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {empLetters.length > 0 ? (
+                            empLetters.map(l => (
+                              <button
+                                key={l.id}
+                                type="button"
+                                onClick={() => setSelectedViewLetter(l)}
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 px-2 py-0.5 rounded transition-colors"
+                                title="Click to preview official letterhead"
+                              >
+                                <FileText size={10} />
+                                {l.ref_number || l.reference_number || 'Draft'}: {l.template_type?.replace(/_/g, ' ') || 'Letter'}
+                              </button>
+                            ))
+                          ) : (
+                            <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded font-medium">
+                              ⚠️ No letter drafted yet
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action button */}
+                      {isPendingLetterGeneration && isImcLead && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onDraftForEmployee) onDraftForEmployee(emp);
+                            else onOpenDraftModal();
+                          }}
+                          className="btn-secondary btn-sm text-[11px] flex items-center gap-1 hover:border-indigo-400 hover:text-indigo-700 whitespace-nowrap ml-auto"
+                        >
+                          <Plus size={12} />
+                          {empLetters.length > 0 ? 'Draft Another Letter' : 'Draft Letter for Staff'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Letters List */}
         {letters.length === 0 ? (
