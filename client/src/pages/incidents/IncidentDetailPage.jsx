@@ -1846,6 +1846,7 @@ export default function IncidentDetailPage() {
         incident={incident}
         responsibleEmployees={incident?.responsible_employees || []}
         existingLetter={editingLetter}
+        existingLetters={data?.letters || incident?.letters || []}
         onSaveSuccess={refetch}
       />
 

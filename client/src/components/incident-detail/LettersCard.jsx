@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
-import { FileText, Send, CheckCircle, Clock, Trash2, Edit3, Printer, Eye, QrCode, AlertTriangle, Building, ShieldCheck, Mail } from 'lucide-react';
+import { 
+  FileText, Send, CheckCircle, Clock, Trash2, Edit3, Printer, 
+  Eye, QrCode, AlertTriangle, Building, ShieldCheck, Mail, Plus, 
+  Users, ExternalLink, RefreshCw 
+} from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { lettersApi } from '../../api';
 import toast from 'react-hot-toast';
@@ -23,9 +27,24 @@ export default function LettersCard({
   const isImcLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.role === 'imc' || user?.is_system_admin || user?.role === 'system_admin');
   const isMgmtUser = Boolean(isManagement || user?.role === 'head_management' || user?.role === 'system_admin');
 
-  const pendingDraftsCount = letters.filter(l => l.status === 'draft').length;
+  const pendingDraftsCount = letters.filter(l => l.status === 'draft' || l.status === 'drafted').length;
   const isPendingLetterGeneration = incident?.status === 'pending_letter_generation';
   const isPendingMgmtApproval = incident?.status === 'pending_management_letter_approval';
+
+  // Check if any training letter is among the drafts or if incident requires training
+  const hasTrainingRequirement = Boolean(
+    incident?.needs_training || 
+    letters.some(l => (l.template_type || l.letter_type || '').toLowerCase().includes('training'))
+  );
+
+  // Group letters count per employee to identify multi-letter scenarios
+  const employeeLetterCounts = letters.reduce((acc, l) => {
+    const key = l.employee_id || l.recipient_name || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const uniqueEmployeesCount = Object.keys(employeeLetterCounts).length;
 
   const handleDeleteDraft = async (letterId) => {
     if (!window.confirm('Are you sure you want to delete this letter draft?')) return;
@@ -56,13 +75,17 @@ export default function LettersCard({
   };
 
   const handleManagementApproval = async () => {
-    if (!window.confirm('Approve all drafted letters and dispatch them to the employees & CC recipients via email? This will officially CLOSE the incident.')) {
+    const confirmMessage = hasTrainingRequirement
+      ? `Approve all ${letters.length} drafted letters and dispatch them to the employee(s) and CC recipients via email?\n\nNote: Because training is mandated, this incident will advance to the Mandatory Training stage.`
+      : `Approve all ${letters.length} drafted letters and dispatch them to the employee(s) and CC recipients via email?\n\nThis will officially mark the incident as CLOSED.`;
+
+    if (!window.confirm(confirmMessage)) {
       return;
     }
     setIsMgmtDeciding(true);
     try {
-      await lettersApi.managementDecision(incident.id, { decision: 'approve' });
-      toast.success('Letters approved and dispatched successfully. Incident CLOSED.');
+      const res = await lettersApi.managementDecision(incident.id, { decision: 'approve' });
+      toast.success(res.data?.message || 'Letters approved and dispatched successfully.');
       if (onRefetch) onRefetch();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to approve letters.');
@@ -94,9 +117,56 @@ export default function LettersCard({
     window.print();
   };
 
+  const getTemplateTypeBadge = (type) => {
+    const t = (type || '').toLowerCase();
+    if (t.includes('penalty')) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+          Warning & Financial Penalty
+        </span>
+      );
+    }
+    if (t.includes('warning')) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+          Warning Letter
+        </span>
+      );
+    }
+    if (t.includes('training')) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+          Mandatory Training Directive
+        </span>
+      );
+    }
+    if (t.includes('advisory')) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded">
+          Advisory Letter
+        </span>
+      );
+    }
+    if (t.includes('suggestion')) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+          Suggestion Letter
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-700 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">
+        Official Letter
+      </span>
+    );
+  };
+
   if (!letters.length && !isPendingLetterGeneration && !isPendingMgmtApproval) {
     return null;
   }
+
+  // Any revision notes on the letters?
+  const revisionNotes = letters.find(l => l.revision_notes)?.revision_notes;
 
   return (
     <>
@@ -108,9 +178,16 @@ export default function LettersCard({
               <FileText size={18} />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-800">Formal Communication Letters</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold text-slate-800">Formal Communication Letters</h2>
+                {letters.length > 0 && (
+                  <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                    {letters.length} Letter{letters.length === 1 ? '' : 's'} ({uniqueEmployeesCount} Staff)
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-slate-500">
-                Official disciplinary, advisory, and recommendation notices
+                Official disciplinary, advisory, and recommendation notices with scannable IMS QR codes
               </p>
             </div>
           </div>
@@ -121,23 +198,37 @@ export default function LettersCard({
               <button
                 type="button"
                 onClick={onOpenDraftModal}
-                className="btn-primary btn-sm text-xs flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700"
+                className="btn-primary btn-sm text-xs flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 shadow-sm"
               >
-                <FileText size={13} /> Draft Letter
+                <Plus size={14} />
+                {letters.length > 0 ? 'Draft Another Letter' : 'Draft Letter'}
               </button>
             )}
           </div>
         </div>
 
-        {/* Workflow Status Banner */}
+        {/* Returned for Revision Alert */}
+        {isPendingLetterGeneration && revisionNotes && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-rose-800">
+              <AlertTriangle size={14} className="text-rose-600" />
+              Management Requested Revision on Letter(s):
+            </div>
+            <p className="text-rose-700 italic bg-white p-2 rounded border border-rose-100">
+              "{revisionNotes}"
+            </p>
+          </div>
+        )}
+
+        {/* Workflow Status Banner: IMC Drafting */}
         {isPendingLetterGeneration && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-start justify-between gap-3 flex-wrap">
-            <div className="space-y-1">
+            <div className="space-y-1 max-w-xl">
               <p className="font-bold flex items-center gap-1.5 text-amber-800">
                 <Clock size={14} className="text-amber-600" /> Letter Drafting in Progress (IMC Level)
               </p>
               <p className="text-amber-700 text-[11px] leading-relaxed">
-                Management has ordered formal disciplinary/advisory outcome. The IMC must draft letters for the involved employee(s) using standard templates and forward them to Management for dispatch.
+                Management has ordered formal disciplinary/advisory outcome. The IMC can draft multiple letters for each involved employee (e.g., both a penalty warning letter and a training directive letter) and forward them together to Management for final approval and dispatch.
               </p>
             </div>
 
@@ -155,6 +246,7 @@ export default function LettersCard({
           </div>
         )}
 
+        {/* Workflow Status Banner: Management Approval */}
         {isPendingMgmtApproval && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-xs text-indigo-900 space-y-3">
             <div className="flex items-start justify-between gap-2">
@@ -163,7 +255,12 @@ export default function LettersCard({
                   <ShieldCheck size={16} className="text-indigo-600" /> Awaiting Management Approval & Dispatch
                 </p>
                 <p className="text-indigo-700 text-[11px] mt-0.5 leading-relaxed">
-                  The IMC has finalized {letters.length} formal letter(s). Upon Management approval, official letters with verified IMS QR codes will be dispatched to employee(s) and department leadership via email, and this incident will be marked <strong>CLOSED</strong>.
+                  The IMC has finalized <strong>{letters.length} formal letter(s)</strong> across {uniqueEmployeesCount} employee(s). Upon Management approval, official letters with verified IMS QR codes will be dispatched to each employee and their respective department leadership via email.
+                  {hasTrainingRequirement && (
+                    <span className="block mt-1 text-blue-800 font-semibold">
+                      📌 Since training is mandated, this incident will proceed to the Mandatory Training stage after letter dispatch.
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
@@ -177,7 +274,7 @@ export default function LettersCard({
                   className="btn-primary btn-sm text-xs bg-emerald-600 hover:bg-emerald-700 border-emerald-600 flex items-center gap-1.5 shadow-sm"
                 >
                   {isMgmtDeciding ? <Spinner size={12} className="text-white" /> : <Mail size={13} />}
-                  Approve & Dispatch Letters via Email (Close Incident)
+                  Approve & Dispatch {letters.length > 1 ? `All ${letters.length} Letters` : 'Letter'} via Email ({hasTrainingRequirement ? 'Advance to Training' : 'Close Incident'})
                 </button>
                 <button
                   type="button"
@@ -200,9 +297,13 @@ export default function LettersCard({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {letters.map(letter => {
-              const isApproved = letter.status === 'approved';
-              const isDraft = letter.status === 'draft';
+              const isApproved = letter.status === 'approved' || letter.status === 'dispatched';
+              const isDraft = letter.status === 'draft' || letter.status === 'drafted';
               const isSubmitted = letter.status === 'submitted_to_management';
+              const isRejected = letter.status === 'rejected';
+
+              const empKey = letter.employee_id || letter.recipient_name;
+              const hasMultipleLettersForEmp = (employeeLetterCounts[empKey] || 0) > 1;
 
               return (
                 <div
@@ -211,14 +312,21 @@ export default function LettersCard({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <span className="font-mono text-[11px] font-bold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200">
-                        {letter.ref_number || 'PENDING REF'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono text-[11px] font-bold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200">
+                          {letter.ref_number || letter.reference_number || 'PENDING REF'}
+                        </span>
+                        {getTemplateTypeBadge(letter.template_type || letter.letter_type)}
+                      </div>
                       <h4 className="text-xs font-bold text-slate-800 mt-1 truncate">
-                        {letter.employee_name || 'Staff Member'}
+                        {letter.employee_name || letter.recipient_name || 'Staff Member'}
                       </h4>
                       <p className="text-[10px] text-slate-500 truncate">
-                        {[letter.employee_designation, letter.employee_department].filter(Boolean).join(' • ')}
+                        {[
+                          letter.employee_code || letter.recipient_emp_no,
+                          letter.employee_designation || letter.recipient_designation,
+                          letter.employee_department || letter.recipient_department
+                        ].filter(Boolean).join(' • ')}
                       </p>
                     </div>
 
@@ -239,8 +347,19 @@ export default function LettersCard({
                           <Edit3 size={10} /> Draft
                         </span>
                       )}
+                      {isRejected && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200">
+                          <AlertTriangle size={10} /> Needs Revision
+                        </span>
+                      )}
                     </div>
                   </div>
+
+                  {hasMultipleLettersForEmp && (
+                    <div className="text-[10px] font-medium text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded flex items-center gap-1">
+                      <Users size={11} /> Multi-letter outcome for this staff
+                    </div>
+                  )}
 
                   <div className="text-[11px] text-slate-600 line-clamp-2 bg-white p-2 rounded border border-slate-100">
                     <strong>Subject:</strong> {letter.subject}
@@ -248,7 +367,7 @@ export default function LettersCard({
 
                   {letter.penalty_amount && (
                     <div className="text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-1 rounded border border-rose-200">
-                      Monetary Penalty: ₹{letter.penalty_amount} {letter.penalty_amount_words ? `(${letter.penalty_amount_words})` : ''}
+                      Monetary Penalty: ₹{Number(letter.penalty_amount).toLocaleString('en-IN')} {letter.penalty_amount_words ? `(${letter.penalty_amount_words})` : ''}
                     </div>
                   )}
 
@@ -268,7 +387,7 @@ export default function LettersCard({
                           <button
                             type="button"
                             onClick={() => onEditDraft(letter)}
-                            className="p-1 text-slate-500 hover:text-indigo-600 rounded"
+                            className="p-1 text-slate-500 hover:text-indigo-600 rounded transition-colors"
                             title="Edit Letter Draft"
                           >
                             <Edit3 size={13} />
@@ -276,7 +395,7 @@ export default function LettersCard({
                           <button
                             type="button"
                             onClick={() => handleDeleteDraft(letter.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
                             title="Delete Draft"
                           >
                             <Trash2 size={13} />
@@ -297,12 +416,12 @@ export default function LettersCard({
         <Modal
           open={Boolean(selectedViewLetter)}
           onClose={() => setSelectedViewLetter(null)}
-          title={`Official Letter: ${selectedViewLetter.ref_number || 'Draft'}`}
+          title={`Official Letter: ${selectedViewLetter.ref_number || selectedViewLetter.reference_number || 'Draft'}`}
           size="2xl"
           footer={
             <div className="flex items-center justify-between w-full">
               <span className="text-xs text-slate-500">
-                Status: {selectedViewLetter.status?.toUpperCase()}
+                Status: {(selectedViewLetter.status || 'drafted').toUpperCase()}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -343,7 +462,7 @@ export default function LettersCard({
             {/* Reference Number & Date */}
             <div className="flex items-center justify-between text-xs font-sans font-semibold text-slate-700 border-b border-slate-100 pb-2">
               <div>
-                Ref. No: <span className="font-mono text-slate-900 font-bold">{selectedViewLetter.ref_number}</span>
+                Ref. No: <span className="font-mono text-slate-900 font-bold">{selectedViewLetter.ref_number || selectedViewLetter.reference_number}</span>
               </div>
               <div>
                 Date: <span className="text-slate-900">{selectedViewLetter.letter_date?.split('T')[0]}</span>
@@ -354,18 +473,18 @@ export default function LettersCard({
             <div className="text-xs font-sans space-y-0.5 text-slate-800">
               <p className="font-bold">To,</p>
               <p className="font-bold text-sm text-slate-900">
-                {selectedViewLetter.employee_name}
+                {selectedViewLetter.employee_name || selectedViewLetter.recipient_name}
               </p>
-              {selectedViewLetter.employee_code && (
+              {(selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no) && (
                 <p className="text-slate-600">
-                  Employee ID: <span className="font-mono font-semibold">{selectedViewLetter.employee_code}</span>
+                  Employee ID: <span className="font-mono font-semibold">{selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no}</span>
                 </p>
               )}
               <p className="text-slate-600">
-                Designation: <span className="font-semibold">{selectedViewLetter.employee_designation || 'Staff'}</span>
+                Designation: <span className="font-semibold">{selectedViewLetter.employee_designation || selectedViewLetter.recipient_designation || 'Staff'}</span>
               </p>
               <p className="text-slate-600">
-                Department: <span className="font-semibold">{selectedViewLetter.employee_department}</span>
+                Department: <span className="font-semibold">{selectedViewLetter.employee_department || selectedViewLetter.recipient_department}</span>
               </p>
               <p className="text-slate-600">Jai Prakash Hospital & Research Centre</p>
             </div>
@@ -382,7 +501,7 @@ export default function LettersCard({
 
             {/* Body */}
             <div className="text-xs leading-relaxed text-slate-800 whitespace-pre-line font-serif space-y-3">
-              {selectedViewLetter.body_content}
+              {selectedViewLetter.body_content || selectedViewLetter.body_text}
             </div>
 
             {/* Signatures */}
@@ -406,26 +525,41 @@ export default function LettersCard({
                   Copy forwarded for information and necessary action to:
                 </p>
                 <ol className="list-decimal list-inside space-y-0.5">
-                  {(selectedViewLetter.cc_list || []).map((cc, i) => (
-                    <li key={i}>{cc}</li>
+                  {(selectedViewLetter.cc_list || selectedViewLetter.cc_recipients || []).map((cc, i) => (
+                    <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
                   ))}
                 </ol>
               </div>
 
               {/* Dynamic QR Code */}
               <div className="shrink-0 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded p-2 text-[9px] text-slate-500 max-w-[220px]">
-                {selectedViewLetter.qr_code_data ? (
-                  <img
-                    src={selectedViewLetter.qr_code_data}
-                    alt="IMS Incident Verification QR"
-                    className="w-12 h-12 shrink-0 border border-slate-300 rounded"
-                  />
+                {(selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data) ? (
+                  <a
+                    href={selectedViewLetter.incident_url || `/incidents/${incident?.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Click or scan to authenticate official record on IMS portal"
+                    className="block group shrink-0"
+                  >
+                    <img
+                      src={selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data}
+                      alt="IMS Incident Verification QR"
+                      className="w-14 h-14 border border-slate-300 rounded group-hover:border-indigo-500 transition-colors bg-white p-0.5"
+                    />
+                  </a>
                 ) : (
                   <QrCode size={36} className="text-slate-800 shrink-0" />
                 )}
                 <div className="leading-tight">
                   <span className="font-bold text-slate-800 block">IMS Verification QR</span>
-                  Scan to authenticate official record on IMS portal
+                  <a
+                    href={selectedViewLetter.incident_url || `/incidents/${incident?.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-indigo-600 hover:underline block font-semibold mt-0.5 flex items-center gap-0.5"
+                  >
+                    Scan or click to verify <ExternalLink size={9} />
+                  </a>
                 </div>
               </div>
             </div>

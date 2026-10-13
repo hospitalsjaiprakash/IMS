@@ -220,3 +220,44 @@ export const parseProposedOutcomes = (val) => {
   }
   return [];
 };
+
+export function convertNumberToWords(amount) {
+  if (!amount || isNaN(amount)) return '';
+  const num = Math.floor(Number(amount));
+  if (num <= 0) return '';
+
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+    'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+    'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  const numToWordsUnder1000 = (n) => {
+    let str = '';
+    if (n >= 100) {
+      str += ones[Math.floor(n / 100)] + ' Hundred ';
+      n %= 100;
+    }
+    if (n >= 20) {
+      str += tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+    } else if (n > 0) {
+      str += ones[n];
+    }
+    return str.trim();
+  };
+
+  let words = '';
+  const crore = Math.floor(num / 10000000);
+  let rem = num % 10000000;
+  const lakh = Math.floor(rem / 100000);
+  rem %= 100000;
+  const thousand = Math.floor(rem / 1000);
+  rem %= 1000;
+
+  if (crore > 0) words += numToWordsUnder1000(crore) + ' Crore ';
+  if (lakh > 0) words += numToWordsUnder1000(lakh) + ' Lakh ';
+  if (thousand > 0) words += numToWordsUnder1000(thousand) + ' Thousand ';
+  if (rem > 0) words += numToWordsUnder1000(rem);
+
+  return `Rupees ${words.trim()} only`;
+}
+

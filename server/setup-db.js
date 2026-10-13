@@ -35,6 +35,7 @@ const migrations = [
   '017_seed_mock_data.sql',
   '020_management_closure_letters_trainers.sql',
   '021_proposed_outcome_text.sql',
+  '022_expand_letter_templates.sql',
 ];
 
 function splitSqlStatements(sql) {

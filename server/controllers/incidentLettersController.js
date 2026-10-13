@@ -6,6 +6,35 @@ const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeServi
 const { buildInitialLetterData, TEMPLATE_DEFINITIONS, formatDate } = require('../utils/letterTemplates');
 const { numberToWords } = require('../utils/numberToWords');
 
+/**
+ * Helper to normalize template keys between frontend and database check constraints
+ */
+function normalizeTemplateType(t) {
+  if (!t) return 'warning_letter';
+  const str = String(t).toLowerCase().trim();
+  const map = {
+    'warning': 'warning_letter',
+    'warning_letter': 'warning_letter',
+    'advisory': 'advisory_letter',
+    'advisory_letter': 'advisory_letter',
+    'suggestion': 'suggestion_letter',
+    'suggestion_letter': 'suggestion_letter',
+    'warning_penalty': 'warning_penalty_letter',
+    'warning_penalty_letter': 'warning_penalty_letter',
+    'penalty': 'warning_penalty_letter',
+    'penalty_letter': 'warning_penalty_letter',
+    'salary_deduction': 'warning_penalty_letter',
+    'salary_deduction_letter': 'warning_penalty_letter',
+    'training': 'training_letter',
+    'training_letter': 'training_letter',
+    'custom': 'custom_letter',
+    'custom_letter': 'custom_letter',
+    'counselling': 'training_letter',
+    'counselling_letter': 'training_letter',
+  };
+  return map[str] || (str.endsWith('_letter') ? str : `${str}_letter`);
+}
+
 // =============================================
 // GET LETTERS FOR AN INCIDENT
 // =============================================
@@ -14,6 +43,15 @@ exports.getIncidentLetters = async (req, res) => {
     const { id } = req.params;
     const result = await query(
       `SELECT l.*,
+              l.recipient_name as employee_name,
+              l.recipient_emp_no as employee_code,
+              l.recipient_department as employee_department,
+              l.recipient_designation as employee_designation,
+              l.reference_number as ref_number,
+              l.template_type as letter_type,
+              l.body_text as body_content,
+              l.cc_recipients as cc_list,
+              l.qr_code_url as qr_code_data,
               u_draft.full_name as drafted_by_name,
               u_app.full_name as approved_by_name
        FROM incident_letters l
@@ -29,6 +67,7 @@ exports.getIncidentLetters = async (req, res) => {
       if (!letter.qr_code_url) {
         letter.qr_code_url = await generateIncidentQrCode(id);
       }
+      letter.qr_code_data = letter.qr_code_url;
       return letter;
     }));
 
@@ -45,11 +84,14 @@ exports.getIncidentLetters = async (req, res) => {
 exports.getLetterTemplateDefaults = async (req, res) => {
   try {
     const { id } = req.params;
-    const { employeeId, templateType } = req.query;
+    const employeeId = req.query.employeeId;
+    const rawType = req.query.templateType || req.query.letterType;
 
-    if (!employeeId || !templateType) {
-      return res.status(400).json({ error: 'employeeId and templateType are required.' });
+    if (!employeeId || !rawType) {
+      return res.status(400).json({ error: 'employeeId and templateType (or letterType) are required.' });
     }
+
+    const templateType = normalizeTemplateType(rawType);
 
     // Get incident details
     const incRes = await query('SELECT * FROM incidents WHERE id = $1', [id]);
@@ -84,8 +126,10 @@ exports.getLetterTemplateDefaults = async (req, res) => {
     );
     const seq = String(parseInt(countRes.rows[0]?.count || '0', 10) + 1).padStart(3, '0');
 
-    // If financial penalty, use penalty_amount from incident (specified by Management)
-    const penaltyAmount = incident.penalty_amount || null;
+    // If financial penalty, use penalty_amount from query if provided, or incident (specified by Management)
+    const penaltyAmount = (req.query.penaltyAmount !== undefined && req.query.penaltyAmount !== '')
+      ? req.query.penaltyAmount
+      : (incident.penalty_amount || null);
 
     const initialData = buildInitialLetterData({
       templateType,
@@ -100,6 +144,7 @@ exports.getLetterTemplateDefaults = async (req, res) => {
     res.json({
       ...initialData,
       qrCodeUrl,
+      qrCodeData: qrCodeUrl,
       incidentUrl: getIncidentUrl(id)
     });
   } catch (error) {
@@ -132,11 +177,12 @@ exports.saveLetterDraft = async (req, res) => {
       bodyText,
       bodyContent,
       penaltyAmount,
+      penaltyAmountWords,
       ccRecipients,
       ccList
     } = req.body;
 
-    const finalTemplateType = templateType || letterType || 'warning_letter';
+    const finalTemplateType = normalizeTemplateType(templateType || letterType);
     const finalRefNumber = referenceNumber || refNumber || `JPHRC/IMC/${new Date().getFullYear()}/001`;
     const finalBodyText = bodyText || bodyContent || '';
     const finalCcRecipients = ccRecipients || ccList || [];
@@ -182,7 +228,10 @@ exports.saveLetterDraft = async (req, res) => {
     }
 
     const qrCodeUrl = await generateIncidentQrCode(id);
-    const penaltyWords = penaltyAmount ? numberToWords(penaltyAmount) : null;
+    const pAmt = (penaltyAmount !== undefined && penaltyAmount !== null && penaltyAmount !== '')
+      ? Number(penaltyAmount)
+      : null;
+    const finalPenaltyWords = penaltyAmountWords || (pAmt ? numberToWords(pAmt) : null);
 
     let savedLetter = null;
     if (letterId) {
@@ -202,8 +251,8 @@ exports.saveLetterDraft = async (req, res) => {
           subject || 'Official Communication Notice',
           salutation || 'Dear Staff,',
           finalBodyText,
-          penaltyAmount || null,
-          penaltyWords,
+          pAmt,
+          finalPenaltyWords,
           JSON.stringify(finalCcRecipients),
           qrCodeUrl,
           letterId,
@@ -237,8 +286,8 @@ exports.saveLetterDraft = async (req, res) => {
           subject || 'Official Communication Notice',
           salutation || 'Dear Staff,',
           finalBodyText,
-          penaltyAmount || null,
-          penaltyWords,
+          pAmt,
+          finalPenaltyWords,
           JSON.stringify(finalCcRecipients),
           qrCodeUrl,
           req.user.id
@@ -417,7 +466,7 @@ exports.submitManagementLetterDecision = async (req, res) => {
       return res.json({ success: true, message: 'Returned to IMC for letter revision.' });
     }
 
-    // ACTION === 'APPROVE' -> DISPATCH LETTERS & CLOSE INCIDENT
+    // ACTION === 'APPROVE' -> DISPATCH LETTERS & CLOSE INCIDENT OR ADVANCE TO TRAINING
     await client.query(
       `UPDATE incident_letters
        SET status = 'approved', approved_by = $1, approved_at = NOW(),
@@ -426,12 +475,35 @@ exports.submitManagementLetterDecision = async (req, res) => {
       [req.user.id, id]
     );
 
-    // Close incident
+    // If any approved letter was a training directive, ensure the recipient employee is flagged for training
+    for (const letter of lettersRes.rows) {
+      if ((letter.template_type || '').includes('training')) {
+        await client.query(
+          `UPDATE incident_responsible_employees 
+           SET needs_training = TRUE 
+           WHERE incident_id = $1 AND employee_id = $2`,
+          [id, letter.employee_id]
+        );
+      }
+    }
+
+    // Check if training remains to be scheduled for involved staff
+    const trainingCheck = await client.query(
+      `SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE AND (training_completed IS NULL OR training_completed = FALSE)`,
+      [id]
+    );
+    const incNeedsTrainingRes = await client.query(
+      `SELECT needs_training FROM incidents WHERE id = $1`,
+      [id]
+    );
+    const hasRemainingTraining = (parseInt(trainingCheck.rows[0]?.count || '0', 10) > 0) || Boolean(incNeedsTrainingRes.rows[0]?.needs_training);
+    const nextStatus = hasRemainingTraining ? 'pending_trainer_assignment' : 'closed';
+
     await client.query(
       `UPDATE incidents
-       SET status = 'closed', resolved_at = NOW(), updated_at = NOW()
-       WHERE id = $1`,
-      [id]
+       SET status = $1, resolved_at = ($1 = 'closed' ? NOW() : NULL), updated_at = NOW()
+       WHERE id = $2`,
+      [nextStatus, id]
     );
 
     await client.query('COMMIT');

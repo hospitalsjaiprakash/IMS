@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, Printer, Eye, X } from 'lucide-react';
+import { FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { lettersApi } from '../../api';
+import { convertNumberToWords, parseProposedOutcomes } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 const LETTER_TYPES = [
-  { value: 'advisory', label: 'Advisory Letter', desc: 'Guidance and protocol adherence counsel' },
-  { value: 'suggestion', label: 'Suggestion Letter', desc: 'Process improvement and best-practice advisory' },
-  { value: 'warning', label: 'Warning Letter', desc: 'Formal disciplinary notice regarding lapse' },
-  { value: 'warning_penalty', label: 'Warning & Financial Penalty Letter', desc: 'Disciplinary warning with specified monetary deduction' },
-  { value: 'training', label: 'Mandatory Training Letter', desc: 'Compulsory competency and re-education directive' },
-  { value: 'custom', label: 'Custom Official Communication', desc: 'Tailored executive resolution' },
+  { value: 'warning_letter', label: 'Warning Letter', desc: 'Formal disciplinary notice regarding lapse' },
+  { value: 'warning_penalty_letter', label: 'Warning & Financial Penalty Letter', desc: 'Disciplinary warning with specified monetary deduction' },
+  { value: 'advisory_letter', label: 'Advisory Letter', desc: 'Guidance and protocol adherence counsel' },
+  { value: 'suggestion_letter', label: 'Suggestion Letter', desc: 'Process improvement and best-practice advisory' },
+  { value: 'training_letter', label: 'Mandatory Training Directive Letter', desc: 'Compulsory competency and re-education directive' },
+  { value: 'custom_letter', label: 'Custom Official Communication', desc: 'Tailored executive resolution' },
 ];
 
 export default function LetterDraftingModal({
@@ -19,10 +20,11 @@ export default function LetterDraftingModal({
   incident,
   responsibleEmployees = [],
   existingLetter = null,
+  existingLetters = [],
   onSaveSuccess
 }) {
   const [selectedEmpId, setSelectedEmpId] = useState('');
-  const [letterType, setLetterType] = useState('warning');
+  const [letterType, setLetterType] = useState('warning_letter');
   const [refNumber, setRefNumber] = useState('');
   const [letterDate, setLetterDate] = useState(new Date().toISOString().split('T')[0]);
   const [subject, setSubject] = useState('');
@@ -31,6 +33,8 @@ export default function LetterDraftingModal({
   const [penaltyAmountWords, setPenaltyAmountWords] = useState('');
   const [ccList, setCcList] = useState([]);
   const [customCc, setCustomCc] = useState('');
+  const [qrCodeUrl, setQrCodeUrl] = useState('');
+  const [incidentUrl, setIncidentUrl] = useState('');
   const [activeTab, setActiveTab] = useState('editor'); // 'editor' | 'preview'
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingDefaults, setIsLoadingDefaults] = useState(false);
@@ -41,49 +45,89 @@ export default function LetterDraftingModal({
 
     if (existingLetter) {
       setSelectedEmpId(existingLetter.employee_id || '');
-      setLetterType(existingLetter.letter_type || 'warning');
-      setRefNumber(existingLetter.ref_number || '');
+      setLetterType(existingLetter.letter_type || existingLetter.template_type || 'warning_letter');
+      setRefNumber(existingLetter.ref_number || existingLetter.reference_number || '');
       setLetterDate(existingLetter.letter_date?.split('T')[0] || new Date().toISOString().split('T')[0]);
       setSubject(existingLetter.subject || '');
-      setBodyContent(existingLetter.body_content || '');
-      setPenaltyAmount(existingLetter.penalty_amount || '');
-      setPenaltyAmountWords(existingLetter.penalty_amount_words || '');
-      setCcList(Array.isArray(existingLetter.cc_list) ? existingLetter.cc_list : []);
+      setBodyContent(existingLetter.body_content || existingLetter.body_text || '');
+      
+      const pAmt = existingLetter.penalty_amount ? String(existingLetter.penalty_amount) : '';
+      setPenaltyAmount(pAmt);
+      setPenaltyAmountWords(existingLetter.penalty_amount_words || (pAmt ? convertNumberToWords(pAmt) : ''));
+      
+      setCcList(Array.isArray(existingLetter.cc_list || existingLetter.cc_recipients) ? (existingLetter.cc_list || existingLetter.cc_recipients) : []);
+      setQrCodeUrl(existingLetter.qr_code_data || existingLetter.qr_code_url || '');
     } else {
       const defaultEmp = responsibleEmployees[0]?.employee_id || responsibleEmployees[0]?.id || '';
       setSelectedEmpId(defaultEmp);
-      // Determine default letter type from incident proposed outcome
+
+      // Determine recommended letter type from incident proposed outcome
       const outcome = (incident?.management_decision === 'DISAGREE_MODIFY' && incident?.proposed_outcome)
         ? incident.proposed_outcome
         : (incident?.proposed_outcome || '');
       const outLower = outcome.toLowerCase();
-      let defaultType = 'warning';
-      if (outLower.includes('advisory')) defaultType = 'advisory';
-      else if (outLower.includes('suggestion')) defaultType = 'suggestion';
-      else if (outLower.includes('penalty')) defaultType = 'warning_penalty';
-      else if (outLower.includes('training') || outLower.includes('counselling')) defaultType = 'training';
+      let defaultType = 'warning_letter';
+      if (outLower.includes('advisory')) defaultType = 'advisory_letter';
+      else if (outLower.includes('suggestion')) defaultType = 'suggestion_letter';
+      else if (outLower.includes('penalty') || outLower.includes('deduction')) defaultType = 'warning_penalty_letter';
+      else if (outLower.includes('training') || outLower.includes('counselling')) defaultType = 'training_letter';
 
       setLetterType(defaultType);
+
+      // Prefill management penalty amount if specified
+      if (incident?.penalty_amount) {
+        setPenaltyAmount(String(incident.penalty_amount));
+        setPenaltyAmountWords(incident.penalty_amount_words || convertNumberToWords(incident.penalty_amount));
+      } else {
+        setPenaltyAmount('');
+        setPenaltyAmountWords('');
+      }
+
       if (defaultEmp) {
         loadDefaults(defaultEmp, defaultType);
       }
     }
   }, [show, existingLetter, incident]);
 
-  const loadDefaults = async (empId, type) => {
+  const loadDefaults = async (empId, type, customPenalty = null) => {
     if (!incident?.id || !empId) return;
     setIsLoadingDefaults(true);
     try {
-      const res = await lettersApi.getDefaults(incident.id, { employeeId: empId, letterType: type });
+      const pAmt = customPenalty !== null ? customPenalty : (penaltyAmount || incident?.penalty_amount || '');
+      const res = await lettersApi.getDefaults(incident.id, {
+        employeeId: empId,
+        templateType: type,
+        letterType: type,
+        penaltyAmount: pAmt
+      });
       const def = res.data;
       if (def) {
-        setRefNumber(def.refNumber || '');
+        setRefNumber(def.referenceNumber || def.refNumber || '');
         setLetterDate(def.letterDate || new Date().toISOString().split('T')[0]);
         setSubject(def.subject || '');
-        setBodyContent(def.bodyContent || '');
-        setPenaltyAmount(def.penaltyAmount || '');
-        setPenaltyAmountWords(def.penaltyAmountWords || '');
-        setCcList(def.ccList || []);
+        setBodyContent(def.bodyText || def.bodyContent || '');
+        
+        if (def.penaltyAmount !== undefined && def.penaltyAmount !== null && def.penaltyAmount !== '') {
+          setPenaltyAmount(String(def.penaltyAmount));
+        } else if (incident?.penalty_amount && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
+          setPenaltyAmount(String(incident.penalty_amount));
+        }
+
+        if (def.penaltyAmountWords) {
+          setPenaltyAmountWords(def.penaltyAmountWords);
+        } else if (incident?.penalty_amount_words && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
+          setPenaltyAmountWords(incident.penalty_amount_words);
+        } else if (penaltyAmount) {
+          setPenaltyAmountWords(convertNumberToWords(penaltyAmount));
+        }
+
+        setCcList(def.ccRecipients || def.ccList || []);
+        if (def.qrCodeUrl || def.qrCodeData) {
+          setQrCodeUrl(def.qrCodeUrl || def.qrCodeData);
+        }
+        if (def.incidentUrl) {
+          setIncidentUrl(def.incidentUrl);
+        }
       }
     } catch (err) {
       console.error('Failed to load letter defaults:', err);
@@ -104,6 +148,28 @@ export default function LetterDraftingModal({
     }
   };
 
+  const handlePenaltyAmountChange = (newAmount) => {
+    setPenaltyAmount(newAmount);
+    const words = convertNumberToWords(newAmount);
+    setPenaltyAmountWords(words);
+  };
+
+  const handleSyncPenaltyInBody = () => {
+    if (!bodyContent) return;
+    const num = penaltyAmount ? Number(penaltyAmount).toLocaleString('en-IN') : '0';
+    const words = penaltyAmountWords || convertNumberToWords(penaltyAmount) || '';
+    const penaltyPattern = /a penalty of ₹[0-9,]+(?:\/-)?\s*\([^)]*\)\s*will be deducted from your monthly salary/i;
+    const replacement = `a penalty of ₹${num}/- (${words}) will be deducted from your monthly salary`;
+
+    if (penaltyPattern.test(bodyContent)) {
+      setBodyContent(bodyContent.replace(penaltyPattern, replacement));
+      toast.success('Updated deduction amount inside letter text.');
+    } else {
+      setBodyContent(prev => `${prev}\n\nFurther, as recommended by the Incident Management Committee and approved by Management, ${replacement}.`);
+      toast.success('Added deduction clause into letter text.');
+    }
+  };
+
   const handleAddCustomCc = (e) => {
     e.preventDefault();
     if (customCc.trim() && !ccList.includes(customCc.trim())) {
@@ -119,6 +185,13 @@ export default function LetterDraftingModal({
   const selectedEmployeeObj = responsibleEmployees.find(
     e => (e.employee_id || e.id) === selectedEmpId
   ) || {};
+
+  // Find all letters already drafted for this specific employee
+  const employeeDraftedLetters = (existingLetters || []).filter(
+    l => (l.employee_id === selectedEmpId || l.recipient_name === selectedEmployeeObj.full_name) && l.id !== existingLetter?.id
+  );
+
+  const approvedOutcomes = parseProposedOutcomes(incident?.proposed_outcome);
 
   const handleSave = async () => {
     if (!selectedEmpId) {
@@ -139,6 +212,7 @@ export default function LetterDraftingModal({
       await lettersApi.saveDraft(incident.id, {
         letterId: existingLetter?.id,
         employeeId: selectedEmpId,
+        templateType: letterType,
         letterType,
         refNumber,
         letterDate,
@@ -159,6 +233,8 @@ export default function LetterDraftingModal({
       setIsSaving(false);
     }
   };
+
+  const showPenaltyBox = letterType.includes('penalty') || Boolean(incident?.penalty_amount) || Boolean(penaltyAmount);
 
   return (
     <Modal
@@ -196,6 +272,48 @@ export default function LetterDraftingModal({
       }
     >
       <div className="space-y-4">
+        {/* Recommended Outcomes Banner */}
+        {approvedOutcomes.length > 0 && (
+          <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-1">
+              <span className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles size={13} className="text-indigo-600" />
+                Management Mandated Outcome(s):
+              </span>
+              <span className="text-[10px] text-indigo-600 font-medium">
+                Click to switch template
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {approvedOutcomes.map((out, idx) => {
+                const outLower = out.toLowerCase();
+                let targetType = 'warning_letter';
+                if (outLower.includes('advisory')) targetType = 'advisory_letter';
+                else if (outLower.includes('suggestion')) targetType = 'suggestion_letter';
+                else if (outLower.includes('penalty') || outLower.includes('deduction')) targetType = 'warning_penalty_letter';
+                else if (outLower.includes('training') || outLower.includes('counselling')) targetType = 'training_letter';
+
+                const isSelected = letterType === targetType;
+
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleTypeChange(targetType)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-100'
+                    }`}
+                  >
+                    {out}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Top Controls Bar */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
           <div>
@@ -216,6 +334,31 @@ export default function LetterDraftingModal({
                 );
               })}
             </select>
+
+            {/* Indicator of existing letters for this employee */}
+            {selectedEmpId && (
+              <div className="mt-1.5 text-[11px]">
+                {employeeDraftedLetters.length > 0 ? (
+                  <div className="text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200 space-y-1">
+                    <span className="font-semibold block">Already drafted for this employee ({employeeDraftedLetters.length}):</span>
+                    <ul className="list-disc list-inside space-y-0.5 text-[10px]">
+                      {employeeDraftedLetters.map(l => (
+                        <li key={l.id}>
+                          <strong>{l.ref_number || 'Draft'}:</strong> {l.subject} ({l.letter_type || l.template_type})
+                        </li>
+                      ))}
+                    </ul>
+                    <span className="text-[10px] text-amber-700 italic block">
+                      💡 You are drafting an additional letter for this same employee.
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-slate-500 text-[10px]">
+                    No other letters drafted for this employee yet.
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <div>
@@ -223,7 +366,7 @@ export default function LetterDraftingModal({
             <select
               value={letterType}
               onChange={(e) => handleTypeChange(e.target.value)}
-              className="select w-full text-xs"
+              className="select w-full text-xs font-semibold text-slate-800"
             >
               {LETTER_TYPES.map(t => (
                 <option key={t.value} value={t.value}>
@@ -231,6 +374,9 @@ export default function LetterDraftingModal({
                 </option>
               ))}
             </select>
+            <p className="text-[11px] text-slate-500 mt-1">
+              {LETTER_TYPES.find(t => t.value === letterType)?.desc}
+            </p>
           </div>
         </div>
 
@@ -291,41 +437,64 @@ export default function LetterDraftingModal({
               </div>
             </div>
 
-            {/* Financial Penalty Box (if applicable) */}
-            {letterType === 'warning_penalty' && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-rose-900">
-                    Management Financial Penalty
+            {/* Financial Penalty Box (Pre-filled & Editable) */}
+            {showPenaltyBox && (
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="text-xs font-bold text-rose-900 flex items-center gap-1.5">
+                    <ShieldAlert size={14} className="text-rose-600" />
+                    Salary Deduction / Monetary Penalty Details
                   </span>
                   {incident?.penalty_amount && (
                     <span className="text-[11px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded font-medium">
-                      Approved by Management: ₹{incident.penalty_amount}
+                      Executive Approved: ₹{incident.penalty_amount}
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="field-label text-[11px] text-rose-800">Deduction Amount (₹)</label>
+                    <label className="field-label text-[11px] text-rose-800 font-semibold">
+                      Deduction Amount (₹) <span className="font-normal text-rose-600">(Editable)</span>
+                    </label>
                     <input
                       type="number"
+                      min="0"
+                      step="100"
                       value={penaltyAmount}
-                      onChange={e => setPenaltyAmount(e.target.value)}
-                      className="input text-xs"
-                      placeholder="e.g. 1000"
+                      onChange={e => handlePenaltyAmountChange(e.target.value)}
+                      className="input text-xs font-bold text-rose-900"
+                      placeholder="e.g. 1500"
                     />
                   </div>
                   <div>
-                    <label className="field-label text-[11px] text-rose-800">Amount in Words</label>
+                    <label className="field-label text-[11px] text-rose-800 font-semibold">
+                      Amount in Words <span className="font-normal text-rose-600">(Auto-generated / Editable)</span>
+                    </label>
                     <input
                       type="text"
                       value={penaltyAmountWords}
                       onChange={e => setPenaltyAmountWords(e.target.value)}
-                      className="input text-xs"
-                      placeholder="e.g. Rupees One Thousand only"
+                      className="input text-xs italic"
+                      placeholder="e.g. Rupees One Thousand Five Hundred only"
                     />
                   </div>
                 </div>
+
+                {penaltyAmount && (
+                  <div className="flex items-center justify-between text-[11px] text-rose-800 pt-1 border-t border-rose-200">
+                    <span className="font-medium">
+                      {penaltyAmountWords || convertNumberToWords(penaltyAmount)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleSyncPenaltyInBody}
+                      className="text-rose-700 hover:text-rose-900 font-semibold underline text-[10px] ml-auto flex items-center gap-1"
+                    >
+                      <RefreshCw size={11} /> Sync Clause in Body Text
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -336,7 +505,7 @@ export default function LetterDraftingModal({
                 value={subject}
                 onChange={e => setSubject(e.target.value)}
                 className="input text-xs font-semibold"
-                placeholder="e.g. Advisory Letter regarding clinical handover documentation lapse"
+                placeholder="e.g. Warning Letter regarding equipment mishandling"
               />
             </div>
 
@@ -344,7 +513,7 @@ export default function LetterDraftingModal({
               <label className="field-label field-required text-xs flex items-center justify-between">
                 <span>Letter Body Content</span>
                 <span className="text-[11px] font-normal text-slate-400">
-                  Markdown & paragraphs supported
+                  Full official communication text
                 </span>
               </label>
               <textarea
@@ -358,14 +527,14 @@ export default function LetterDraftingModal({
 
             {/* CC List Management */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <label className="field-label text-xs">Copy To (CC Recipients)</label>
+              <label className="field-label text-xs">Copy Forwarded To (CC Recipients)</label>
               <div className="flex flex-wrap gap-1.5">
                 {ccList.map((cc, idx) => (
                   <span
                     key={idx}
                     className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-[11px] text-slate-700 shadow-2xs"
                   >
-                    {cc}
+                    {typeof cc === 'object' ? (cc.label || cc.name || JSON.stringify(cc)) : cc}
                     <button
                       type="button"
                       onClick={() => handleRemoveCc(cc)}
@@ -382,7 +551,7 @@ export default function LetterDraftingModal({
                   type="text"
                   value={customCc}
                   onChange={e => setCustomCc(e.target.value)}
-                  placeholder="Add another CC (e.g. Quality Head, Pharmacy Lead)..."
+                  placeholder="Add another CC (e.g. Quality Head, Medical Superintendent, HOD Accounts)..."
                   className="input text-xs flex-1"
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
@@ -425,7 +594,7 @@ export default function LetterDraftingModal({
             {/* Reference Number & Date */}
             <div className="flex items-center justify-between text-xs font-sans font-semibold text-slate-700 border-b border-slate-100 pb-2">
               <div>
-                Ref. No: <span className="font-mono text-slate-900">{refNumber || 'JPHRC/IMC/PENDING'}</span>
+                Ref. No: <span className="font-mono text-slate-900 font-bold">{refNumber || 'JPHRC/IMC/PENDING'}</span>
               </div>
               <div>
                 Date: <span className="text-slate-900">{letterDate}</span>
@@ -487,17 +656,43 @@ export default function LetterDraftingModal({
                 </p>
                 <ol className="list-decimal list-inside space-y-0.5">
                   {ccList.map((cc, i) => (
-                    <li key={i}>{cc}</li>
+                    <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
                   ))}
                 </ol>
               </div>
 
-              {/* QR Code Container Preview */}
-              <div className="shrink-0 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded p-2 text-[9px] text-slate-500 max-w-[200px]">
-                <QrCode size={36} className="text-slate-800 shrink-0" />
+              {/* Dynamic Scannable QR Code */}
+              <div className="shrink-0 flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-lg p-2 text-[9px] text-slate-600 max-w-[220px]">
+                {qrCodeUrl ? (
+                  <a
+                    href={incidentUrl || `/incidents/${incident?.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Click or scan to verify incident on IMS portal"
+                    className="shrink-0 group block"
+                  >
+                    <img
+                      src={qrCodeUrl}
+                      alt="IMS Incident Verification QR"
+                      className="w-14 h-14 border border-slate-300 rounded shadow-xs group-hover:border-indigo-500 transition-colors"
+                    />
+                  </a>
+                ) : (
+                  <QrCode size={36} className="text-slate-800 shrink-0" />
+                )}
                 <div className="leading-tight">
-                  <span className="font-bold text-slate-700 block">IMS Verification QR</span>
-                  Scan to authenticate official record on IMS portal
+                  <span className="font-bold text-slate-800 block">IMS Verification QR</span>
+                  Scan or click to authenticate official record on IMS portal
+                  {incidentUrl && (
+                    <a
+                      href={incidentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-600 hover:underline flex items-center gap-0.5 mt-0.5 font-semibold text-[9px]"
+                    >
+                      Verify Link <ExternalLink size={9} />
+                    </a>
+                  )}
                 </div>
               </div>
             </div>
