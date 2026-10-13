@@ -738,13 +738,64 @@ exports.getIncident = async (req, res) => {
     incident.investigation_attachments = attachments.rows.filter(a => a.stage === 'investigator_report');
 
     const respEmps = await query(
-      `SELECT r.*, u.full_name, u.employee_id as emp_id, d.name as department_name 
+      `SELECT r.*, u.full_name, u.employee_id as emp_id, u.designation, d.name as department_name 
        FROM incident_responsible_employees r
        JOIN users u ON u.id = r.employee_id
        LEFT JOIN departments d ON d.id = r.department_id
        WHERE r.incident_id = $1`, [incident.id]
     );
     incident.responsible_employees = respEmps.rows;
+
+    // Get formal letters
+    const lettersRes = await query(
+      `SELECT l.*, 
+              l.recipient_name as employee_name,
+              l.recipient_emp_no as employee_code,
+              l.recipient_department as employee_department,
+              l.recipient_designation as employee_designation,
+              l.reference_number as ref_number,
+              l.template_type as letter_type,
+              l.body_text as body_content,
+              l.cc_recipients as cc_list,
+              l.qr_code_url as qr_code_data,
+              u_draft.full_name as created_by_name,
+              u_app.full_name as approved_by_name
+       FROM incident_letters l
+       LEFT JOIN users u_draft ON u_draft.id = l.drafted_by
+       LEFT JOIN users u_app ON u_app.id = l.approved_by
+       WHERE l.incident_id = $1
+       ORDER BY l.created_at ASC`,
+      [incident.id]
+    );
+
+    // Get training assignments and reports
+    const trainersRes = await query(
+      `SELECT t.*,
+              u_trainer.full_name as trainer_name,
+              u_trainer.employee_id as trainer_code,
+              u_trainer.department as trainer_department,
+              u_trainer.designation as trainer_designation,
+              u_assign.full_name as assigned_by_name,
+              u_verify.full_name as verified_by_name,
+              t.training_instructions as instructions,
+              t.target_date as target_completion_date,
+              t.conducted_at as completion_date,
+              (CASE WHEN t.duration_minutes IS NOT NULL THEN (t.duration_minutes::numeric / 60.0)::text ELSE NULL END) as duration_hours,
+              t.trainer_report_text as summary,
+              t.imc_verified_at as verified_at,
+              t.imc_review_notes as verification_notes,
+              att.stored_filename as report_file_name,
+              att.original_filename as report_original_filename,
+              att.file_size as report_file_size
+       FROM incident_trainers t
+       LEFT JOIN users u_trainer ON u_trainer.id = t.trainer_id
+       LEFT JOIN users u_assign ON u_assign.id = t.assigned_by
+       LEFT JOIN users u_verify ON u_verify.id = t.imc_verified_by
+       LEFT JOIN attachments att ON att.id = t.trainer_attachment_id
+       WHERE t.incident_id = $1
+       ORDER BY t.created_at ASC`,
+      [incident.id]
+    );
 
     // Get final report
     const finalReport = await query(
@@ -795,11 +846,14 @@ exports.getIncident = async (req, res) => {
       feedbacks: feedbacks.rows,
       attachments: attachments.rows,
       finalReport: finalReport.rows[0] || null,
+      letters: lettersRes.rows,
+      trainers: trainersRes.rows,
       timelineEvents: auditLogsRes.rows
     });
 
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch incident.' });
+    console.error('getIncident error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch incident.' });
   }
 };
 

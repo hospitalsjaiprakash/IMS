@@ -19,6 +19,8 @@ const stageFolderMap = {
   investigator_report: 'investigator',
   broadcast: 'broadcast',
   imc_report: 'imc_report',
+  formal_letter: 'letters',
+  trainer_report: 'trainer',
 };
 
 // Helper to build the S3 key with folder structure: referenceId/folder/filename

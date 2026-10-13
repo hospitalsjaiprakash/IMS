@@ -204,7 +204,13 @@ export default function IncidentsListPage() {
     { value: 'with_hod', label: 'Awaiting HOD Feedback' },
     { value: 'with_imc', label: 'HOD Reviewed - Awaiting IMC' },
     { value: 'with_head_management', label: 'IMC Reviewed - Awaiting Mgmt' },
+    { value: 'pending_letter_generation', label: 'Drafting Letter(s)' },
+    { value: 'pending_management_letter_approval', label: 'Awaiting Letter Approval' },
+    { value: 'pending_trainer_assignment', label: 'Awaiting Trainer Assignment' },
+    { value: 'training_in_progress', label: 'Training in Progress' },
+    { value: 'pending_imc_training_review', label: 'Awaiting Training Verification' },
     { value: 'resolved', label: 'Resolved' },
+    { value: 'closed', label: 'Closed' },
     { value: 'withdrawn', label: 'Withdrawn' },
   ];
 
@@ -326,7 +332,8 @@ export default function IncidentsListPage() {
             columns={[
               { id: 'submitted', title: 'Submitted', statusIds: ['submitted', 'active'] },
               { id: 'reviewing', title: 'Under Review', statusIds: ['with_hod', 'with_imc', 'with_head_management'] },
-              { id: 'resolved', title: 'Resolved', statusIds: ['resolved'] },
+              { id: 'action', title: 'Action / Letters / Training', statusIds: ['pending_letter_generation', 'pending_management_letter_approval', 'pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review', 'pending_training'] },
+              { id: 'resolved', title: 'Resolved & Closed', statusIds: ['resolved', 'closed'] },
               { id: 'withdrawn', title: 'Withdrawn', statusIds: ['withdrawn'] }
             ]}
             incidents={incidents}

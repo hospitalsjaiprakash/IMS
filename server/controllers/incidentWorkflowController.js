@@ -302,6 +302,31 @@ exports.submitImcFeedback = async (req, res) => {
       }
     }
 
+    // Save responsible / involved employees if provided by IMC
+    let imcResponsibleEmployees = req.body.responsibleEmployees || req.body.involvedEmployees;
+    if (imcResponsibleEmployees !== undefined) {
+      if (typeof imcResponsibleEmployees === 'string') {
+        try { imcResponsibleEmployees = JSON.parse(imcResponsibleEmployees); } catch(e) {}
+      }
+      if (Array.isArray(imcResponsibleEmployees)) {
+        await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
+        for (const emp of imcResponsibleEmployees) {
+          let deptId = emp.department_id;
+          if (!deptId && emp.department) {
+             const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
+             if (dRes.rows.length) deptId = dRes.rows[0].id;
+          }
+          const empUserId = emp.id || emp.employee_id;
+          await client.query(
+            `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [id, empUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
+          );
+        }
+        await client.query(`UPDATE incidents SET has_responsible_person = ${imcResponsibleEmployees.length > 0} WHERE id = $1`, [id]);
+      }
+    }
+
     if (severity || proposedOutcome) {
       await client.query(
         `UPDATE incidents SET severity = COALESCE($1, severity), proposed_outcome = COALESCE($2, proposed_outcome), updated_at = NOW() WHERE id = $3`,
@@ -351,7 +376,16 @@ exports.submitManagementAction = async (req, res) => {
     await client.query('BEGIN');
 
     const { id } = req.params;
-    let { decision, notes, faultType, correctiveActions, requireTraining, responsibleEmployees, proposedOutcome } = req.body;
+    let {
+      decision,
+      notes,
+      faultType,
+      correctiveActions,
+      requireTraining,
+      responsibleEmployees,
+      proposedOutcome,
+      penaltyAmount
+    } = req.body;
     
     if (!['AGREE', 'DISAGREE_MODIFY', 'DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision)) {
       return res.status(400).json({ error: 'Invalid decision type' });
@@ -396,6 +430,18 @@ exports.submitManagementAction = async (req, res) => {
       await client.query(`UPDATE incidents SET proposed_outcome = $1 WHERE id = $2`, [proposedOutcome, id]);
     }
 
+    // Save Management-specified penalty deduction amount if applicable
+    if (penaltyAmount !== undefined && penaltyAmount !== null && penaltyAmount !== '') {
+      const pAmt = Number(penaltyAmount) || null;
+      const { numberToWords } = require('../utils/numberToWords');
+      const pWords = pAmt ? numberToWords(pAmt) : null;
+      await client.query(
+        `UPDATE incidents SET penalty_amount = $1, penalty_amount_words = $2 WHERE id = $3`,
+        [pAmt, pWords, id]
+      );
+    }
+
+    // If returned / re-investigation requested
     if (decision === 'DISAGREE_REINVESTIGATE' || decision === 'DISAGREE_REVISE_FEEDBACK') {
       let nextStatus = 'with_imc';
       if (decision === 'DISAGREE_REINVESTIGATE') {
@@ -418,6 +464,7 @@ exports.submitManagementAction = async (req, res) => {
       return res.json({ success: true, message: 'Reverted to IMC.' });
     }
 
+    // Update responsible / involved employees if modified by Management
     if (responsibleEmployees !== undefined) {
       if (typeof responsibleEmployees === 'string') {
         try { responsibleEmployees = JSON.parse(responsibleEmployees); } catch(e) {}
@@ -429,7 +476,6 @@ exports.submitManagementAction = async (req, res) => {
       requireTraining = requireTraining === 'true' || requireTraining === true || responsibleEmployees.some(e => e.needs_training);
 
       if (responsibleEmployees.length > 0) {
-        // Clear existing responsible employees first to handle modification
         await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
         
         for (const emp of responsibleEmployees) {
@@ -438,10 +484,11 @@ exports.submitManagementAction = async (req, res) => {
              const dRes = await client.query('SELECT id FROM departments WHERE LOWER(name) = LOWER($1)', [emp.department]);
              if (dRes.rows.length) deptId = dRes.rows[0].id;
           }
+          const empUserId = emp.id || emp.employee_id;
           await client.query(
             `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
              VALUES ($1, $2, $3, $4, $5)`,
-            [id, emp.id, deptId || null, emp.needs_training ? true : false, req.user.id]
+            [id, empUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
           );
         }
         await client.query(`UPDATE incidents SET has_responsible_person = TRUE WHERE id = $1`, [id]);
@@ -450,29 +497,109 @@ exports.submitManagementAction = async (req, res) => {
       }
     }
 
-    // Save final report data but mark it pending IMC official report
-    await client.query(
-      `INSERT INTO final_reports (incident_id, generated_by, fault_type, corrective_actions, is_latest)
-       VALUES ($1, $2, $3, $4, FALSE)
-       ON CONFLICT DO NOTHING`,
-      [id, req.user.id, faultType, correctiveActions]
-    );
+    // Determine workflow path based on outcome
+    const effectiveOutcome = proposedOutcome || incident.proposed_outcome || '';
+    const outcomeLower = effectiveOutcome.toLowerCase();
 
-    await client.query(
-      `UPDATE incidents SET status = 'pending_imc_report', management_decision = $1, management_notes = $2, updated_at = NOW() WHERE id = $3`,
-      [decision, notes, id]
-    );
+    // Check if incident involves formal letters / disciplinary actions
+    const hasEmployeeRoster = (responsibleEmployees && responsibleEmployees.length > 0) || (incident.has_responsible_person);
+    const isLetterOutcome = [
+      'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
+      'suspension', 'transfer', 'demotion', 'termination', 'disciplinary'
+    ].some(k => outcomeLower.includes(k)) || (hasEmployeeRoster && !outcomeLower.includes('training') && !outcomeLower.includes('no action'));
 
-    await client.query('COMMIT');
-    
-    const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
-    for (const member of imcMembers.rows) {
-      await createNotification(member.id, id, 'Management Decision Received', 'Please generate the official IMC report.', 'management_action');
+    // Check if incident involves training / equipment mishandling
+    const isTrainingOutcome = requireTraining || [
+      'training', 'counselling', 'education', 'mishandling'
+    ].some(k => outcomeLower.includes(k));
+
+    let nextStatus = 'closed';
+    let returnMessage = 'Management agreed with IMC. Incident has been officially CLOSED.';
+
+    if (isLetterOutcome) {
+      // PATH B: Forward to IMC for formal letter generation
+      nextStatus = 'pending_letter_generation';
+      returnMessage = 'Decision submitted. Case forwarded to IMC for formal letter generation.';
+      
+      await client.query(
+        `UPDATE incidents
+         SET status = $1, management_decision = $2, management_notes = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [nextStatus, decision, notes, id]
+      );
+
+      const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
+      for (const member of imcMembers.rows) {
+        await createNotification(
+          member.id,
+          id,
+          'Draft Formal Letter(s) Required',
+          `Management approved the proposed outcome for incident ${incident.reference_id}. Please draft the letter(s) for the involved employee(s).`,
+          'management_action'
+        );
+      }
+
+    } else if (isTrainingOutcome) {
+      // PATH C: Forward to IMC for trainer assignment
+      nextStatus = 'pending_trainer_assignment';
+      returnMessage = 'Decision submitted. Case forwarded to IMC for trainer assignment.';
+
+      await client.query(
+        `UPDATE incidents
+         SET status = $1, management_decision = $2, management_notes = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [nextStatus, decision, notes, id]
+      );
+
+      const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
+      for (const member of imcMembers.rows) {
+        await createNotification(
+          member.id,
+          id,
+          'Assign Trainer Required',
+          `Management approved the training mandate for incident ${incident.reference_id}. Please assign a dedicated trainer.`,
+          'management_action'
+        );
+      }
+
+    } else {
+      // PATH A: Outcome is "No Action" or general protocol -> DIRECT MANAGEMENT CLOSURE
+      nextStatus = 'closed';
+      returnMessage = 'Management decision recorded. Incident officially CLOSED.';
+
+      await client.query(
+        `UPDATE incidents
+         SET status = 'closed', management_decision = $1, management_notes = $2,
+             resolved_at = NOW(), updated_at = NOW()
+         WHERE id = $3`,
+        [decision, notes, id]
+      );
+
+      // Notify reporter & committee
+      await createNotification(
+        incident.reporter_id,
+        id,
+        'Incident Concluded & Closed',
+        `Incident ${incident.reference_id} has been reviewed by Management and is officially closed.`,
+        'incident_closed'
+      );
+
+      const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
+      for (const member of imcMembers.rows) {
+        await createNotification(
+          member.id,
+          id,
+          'Incident Closed by Management',
+          `Incident ${incident.reference_id} has been concluded and officially closed by Management.`,
+          'incident_closed'
+        );
+      }
     }
 
-    await auditLog(req.user.id, 'MANAGEMENT_DECISION', id, { decision }, req.ip);
+    await client.query('COMMIT');
+    await auditLog(req.user.id, 'MANAGEMENT_DECISION', id, { decision, nextStatus }, req.ip);
 
-    res.json({ success: true, message: 'Decision submitted. Pending IMC Report.' });
+    res.json({ success: true, message: returnMessage, nextStatus });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to submit management action' });

@@ -185,6 +185,25 @@ export const masterEmployeesApi = {
   getSyncStatus: () => api.get('/master-employees/sync-status'),
 };
 
+// ── Letters ───────────────────────────────────────
+export const lettersApi = {
+  getLetters: (incidentId) => api.get(`/incidents/${incidentId}/letters`),
+  getDefaults: (incidentId, params) => api.get(`/incidents/${incidentId}/letters/defaults`, { params }),
+  saveDraft: (incidentId, data) => api.post(`/incidents/${incidentId}/letters/draft`, data),
+  deleteDraft: (incidentId, letterId) => api.delete(`/incidents/${incidentId}/letters/${letterId}`),
+  submitToManagement: (incidentId) => api.post(`/incidents/${incidentId}/letters/submit-to-management`),
+  managementDecision: (incidentId, data) => api.post(`/incidents/${incidentId}/letters/management-decision`, data),
+};
+
+// ── Trainers ──────────────────────────────────────
+export const trainersApi = {
+  getTrainers: (incidentId) => api.get(`/incidents/${incidentId}/trainers`),
+  assignTrainer: (incidentId, data) => api.post(`/incidents/${incidentId}/trainers/assign`, data),
+  submitReport: (incidentId, formData) => api.post(`/incidents/${incidentId}/trainers/submit-report`, formData),
+  imcVerify: (incidentId, data) => api.post(`/incidents/${incidentId}/trainers/imc-verify`, data),
+  managementClose: (incidentId, data) => api.post(`/incidents/${incidentId}/trainers/management-close`, data),
+};
+
 // ── Employee Search & Directory ───────────────────
 export const employeeApi = {
   search: (query) => api.get('/employee/search', { params: { query, q: query } }),

@@ -20,7 +20,8 @@ import {
   Building,
   UserCheck,
   Activity,
-  Layers
+  Layers,
+  Mail
 } from 'lucide-react';
 import { formatDateTime } from '../../utils/helpers';
 import { UPLOADS_URL } from '../../api';
@@ -78,6 +79,8 @@ export default function InteractiveTimeline({
   attachments = [],
   finalReport,
   timelineEvents = [],
+  letters = [],
+  trainers = [],
   onViewAttachment
 }) {
   const [expandedKeys, setExpandedKeys] = useState({});
@@ -645,6 +648,80 @@ export default function InteractiveTimeline({
             </ul>
           </div>
         )
+      });
+    }
+
+    // 12b. Formal Letters Generated & Dispatched
+    if (letters && letters.length > 0) {
+      const approvedLetters = letters.filter(l => l.status === 'approved');
+      if (approvedLetters.length > 0) {
+        events.push({
+          id: 'letters-dispatched',
+          timestamp: new Date(approvedLetters[0].approved_at || incident.updated_at),
+          type: 'letters_dispatched',
+          title: 'Formal Letter(s) Approved & Dispatched',
+          subtitle: `${approvedLetters.length} official communication letter(s) dispatched to staff via email with IMS QR code`,
+          actor: {
+            name: approvedLetters[0].approved_by_name || 'Hospital Executive Management',
+            role: 'Executive Management',
+            tag: 'Official Letters'
+          },
+          badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+          icon: Mail,
+          iconColor: 'text-emerald-700 bg-emerald-100 border-emerald-300',
+          content: (
+            <div className="text-xs space-y-1.5 text-slate-700">
+              <ul className="space-y-1">
+                {approvedLetters.map(l => (
+                  <li key={l.id} className="p-2 bg-white rounded-lg border border-slate-200 flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-slate-800">{l.employee_name}</span> ({l.ref_number})
+                      <p className="text-[10px] text-slate-500">{l.subject}</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      Dispatched
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        });
+      }
+    }
+
+    // 12c. Trainer Assignments & Session Verification
+    if (trainers && trainers.length > 0) {
+      trainers.forEach((t, idx) => {
+        if (t.status === 'completed' || t.status === 'verified' || t.status === 'closed') {
+          events.push({
+            id: `trainer-report-${t.id || idx}`,
+            timestamp: new Date(t.completed_at || t.assigned_at),
+            type: 'training_completed',
+            title: 'Dedicated Training Conducted & Documented',
+            subtitle: `Trainer: ${t.trainer_name} (${t.duration_hours || '1.0'} hrs) — ${t.training_topic}`,
+            actor: {
+              name: t.trainer_name,
+              role: 'Assigned Trainer',
+              tag: 'Session Complete'
+            },
+            badgeColor: 'bg-teal-100 text-teal-800 border-teal-200',
+            icon: GraduationCap,
+            iconColor: 'text-teal-700 bg-teal-100 border-teal-300',
+            content: (
+              <div className="text-xs space-y-1.5 text-slate-700 bg-white p-2.5 rounded-lg border border-slate-200">
+                <p><strong>Topic:</strong> {t.training_topic}</p>
+                <p><strong>Methodology:</strong> {t.methodology}</p>
+                {t.summary && <p className="italic text-slate-600">&quot;{t.summary}&quot;</p>}
+                {t.verified_at && (
+                  <p className="text-[10px] font-semibold text-emerald-700 mt-1">
+                    ✓ Verified by IMC Convenor on {t.verified_at.split('T')[0]}
+                  </p>
+                )}
+              </div>
+            )
+          });
+        }
       });
     }
 

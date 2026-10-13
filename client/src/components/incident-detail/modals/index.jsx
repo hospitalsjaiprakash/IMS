@@ -1,5 +1,5 @@
-import React from 'react';
-import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users, CheckCircle } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../../../components/ui';
 import { UPLOADS_URL, API_BASE_URL, attachmentsApi } from '../../../api';
 import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS } from '../../../utils/helpers';
@@ -58,62 +58,131 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
   );
 }
 
-export function ManagementDecisionModal({ show, onClose, mdActions, setMdActions, mdAttachments, setMdAttachments, mdProposedOutcome, setMdProposedOutcome, incidentProposedOutcome, mutate, isPending }) {
-  const [decision, setDecision] = React.useState('AGREE');
+function convertNumberToWords(amount) {
+  if (!amount || isNaN(amount) || Number(amount) <= 0) return '';
+  const num = Math.floor(Number(amount));
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+    'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const numToWordsUnder1000 = (n) => {
+    let str = '';
+    if (n >= 100) {
+      str += ones[Math.floor(n / 100)] + ' Hundred ';
+      n %= 100;
+    }
+    if (n >= 20) {
+      str += tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+    } else if (n > 0) {
+      str += ones[n];
+    }
+    return str.trim();
+  };
 
-  React.useEffect(() => {
+  let words = '';
+  const crore = Math.floor(num / 10000000);
+  let rem = num % 10000000;
+  const lakh = Math.floor(rem / 100000);
+  rem %= 100000;
+  const thousand = Math.floor(rem / 1000);
+  rem %= 1000;
+
+  if (crore > 0) words += numToWordsUnder1000(crore) + ' Crore ';
+  if (lakh > 0) words += numToWordsUnder1000(lakh) + ' Lakh ';
+  if (thousand > 0) words += numToWordsUnder1000(thousand) + ' Thousand ';
+  if (rem > 0) words += numToWordsUnder1000(rem);
+
+  return `Rupees ${words.trim()} only`;
+}
+
+export function ManagementDecisionModal({
+  show,
+  onClose,
+  mdActions,
+  setMdActions,
+  mdAttachments,
+  setMdAttachments,
+  mdProposedOutcome,
+  setMdProposedOutcome,
+  incidentProposedOutcome,
+  responsibleEmployees = [],
+  mdResponsibleEmployees = [],
+  setMdResponsibleEmployees,
+  penaltyAmount = '',
+  setPenaltyAmount,
+  mutate,
+  isPending
+}) {
+  const [decision, setDecision] = useState('AGREE');
+
+  useEffect(() => {
     if (!show) {
       setDecision('AGREE');
     } else {
       if (!mdProposedOutcome && incidentProposedOutcome) {
         setMdProposedOutcome(incidentProposedOutcome);
       }
+      if (responsibleEmployees.length > 0 && (!mdResponsibleEmployees || mdResponsibleEmployees.length === 0)) {
+        if (setMdResponsibleEmployees) setMdResponsibleEmployees(responsibleEmployees);
+      }
     }
   }, [show]);
 
+  const effectiveOutcome = (decision === 'DISAGREE_MODIFY' ? mdProposedOutcome : incidentProposedOutcome) || '';
+  const outcomeLower = effectiveOutcome.toLowerCase();
+
+  const isPenaltyOutcome = outcomeLower.includes('penalty') || outcomeLower.includes('deduction');
+  const isLetterOutcome = [
+    'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
+    'suspension', 'transfer', 'demotion', 'termination', 'disciplinary'
+  ].some(k => outcomeLower.includes(k));
+  const isTrainingOutcome = ['training', 'counselling', 'education', 'mishandling'].some(k => outcomeLower.includes(k));
+  const isDirectClosure = !isLetterOutcome && !isTrainingOutcome;
+
+  const penaltyWordsPreview = convertNumberToWords(penaltyAmount);
+
   return (
-    <Modal open={show} onClose={onClose} title="Management Action" size="lg"
+    <Modal open={show} onClose={onClose} title="Executive Management Decision & Governance" size="lg"
       footer={<>
-        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={onClose} className="btn-secondary text-xs">Cancel</button>
         <button
           onClick={() => mutate(decision)}
           disabled={
             isPending ||
             (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision) ? !mdActions?.trim() : (decision === 'DISAGREE_MODIFY' && !mdProposedOutcome))
           }
-          className="btn-primary"
+          className="btn-primary text-xs"
         >
-          {isPending && <Spinner size={15} className="text-white" />} Submit Decision
+          {isPending && <Spinner size={14} className="text-white" />} Submit Decision
         </button>
       </>}
     >
       <div className="space-y-4">
         <div>
-          <label className="field-label field-required">Decision</label>
-          <select value={decision} onChange={e => setDecision(e.target.value)} className="input">
-            <option value="AGREE">Approve / Agree with IMC</option>
-            <option value="DISAGREE_MODIFY">Modify Proposed Outcomes</option>
-            <option value="DISAGREE_REINVESTIGATE">Reject & Re-investigate</option>
-            <option value="DISAGREE_REVISE_FEEDBACK">Reject & Request Revised Feedback</option>
+          <label className="field-label field-required text-xs">Management Decision</label>
+          <select value={decision} onChange={e => setDecision(e.target.value)} className="select w-full text-xs">
+            <option value="AGREE">Approve / Agree with IMC Recommendation</option>
+            <option value="DISAGREE_MODIFY">Modify Proposed Outcomes / Responsible Employees</option>
+            <option value="DISAGREE_REINVESTIGATE">Reject & Mandate Re-investigation</option>
+            <option value="DISAGREE_REVISE_FEEDBACK">Reject & Request Revised Quality Feedback</option>
           </select>
         </div>
 
         {(decision === 'DISAGREE_REINVESTIGATE' || decision === 'DISAGREE_REVISE_FEEDBACK') ? (
           <div>
-            <label className="field-label field-required">{decision === 'DISAGREE_REINVESTIGATE' ? 'Re-investigation' : 'Revision'} Notes / Reason</label>
-            <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea" rows={5} placeholder="Describe why this incident needs further review..." />
+            <label className="field-label field-required text-xs">{decision === 'DISAGREE_REINVESTIGATE' ? 'Re-investigation' : 'Revision'} Notes / Directive</label>
+            <textarea value={mdActions} onChange={e => setMdActions(e.target.value)} className="textarea text-xs" rows={4} placeholder="Describe specific aspects requiring reinvestigation or clarification..." />
           </div>
         ) : (
           <>
             {decision === 'DISAGREE_MODIFY' && (
               <div>
-                <label className="field-label field-required">Modified Proposed Outcome</label>
+                <label className="field-label field-required text-xs">Modified Proposed Outcome</label>
                 <select
                   value={mdProposedOutcome}
                   onChange={(e) => setMdProposedOutcome(e.target.value)}
-                  className="select w-full"
+                  className="select w-full text-xs font-semibold"
                 >
-                  <option value="">Select Relevant Option</option>
+                  <option value="">Select Relevant Option...</option>
                   <option value="No Action">No Action</option>
                   <option value="Counselling / Education / Training">Counselling / Education / Training</option>
                   <option value="Issue a Warning Letter">Issue a Warning Letter</option>
@@ -133,14 +202,71 @@ export function ManagementDecisionModal({ show, onClose, mdActions, setMdActions
                 </select>
               </div>
             )}
+
+            {/* Financial Penalty Input - Strictly specified by Management */}
+            {isPenaltyOutcome && (
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="field-label field-required text-xs text-rose-900 font-bold mb-0">
+                    Penalty Deduction Amount (₹)
+                  </label>
+                  <span className="text-[10px] text-rose-700 font-semibold bg-rose-100 px-2 py-0.5 rounded">
+                    Management Discretion
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  step="100"
+                  value={penaltyAmount}
+                  onChange={e => setPenaltyAmount && setPenaltyAmount(e.target.value)}
+                  placeholder="Enter amount in Rupees (e.g. 1000)..."
+                  className="input text-xs font-bold"
+                />
+                {penaltyWordsPreview && (
+                  <p className="text-xs font-semibold text-rose-800 italic">
+                    Amount in words: {penaltyWordsPreview}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Next Path Indicator Badge */}
+            <div className="p-3 rounded-xl border text-xs">
+              {isDirectClosure && (
+                <div className="bg-emerald-50 border-emerald-200 text-emerald-900 p-2.5 rounded-lg flex items-center gap-2">
+                  <CheckCircle className="text-emerald-600 shrink-0" size={16} />
+                  <span>
+                    <strong>Path A (Direct Closure):</strong> Outcome is <em>{effectiveOutcome || 'No Action'}</em>. Submitting this decision will officially <strong>CLOSE</strong> the incident immediately.
+                  </span>
+                </div>
+              )}
+              {isLetterOutcome && (
+                <div className="bg-indigo-50 border-indigo-200 text-indigo-900 p-2.5 rounded-lg flex items-center gap-2">
+                  <FileText className="text-indigo-600 shrink-0" size={16} />
+                  <span>
+                    <strong>Path B (Letter Dispatch):</strong> Outcome involves formal employee letters. This case will be forwarded to IMC to draft official letterhead notices, after which Management will review & dispatch via email.
+                  </span>
+                </div>
+              )}
+              {isTrainingOutcome && (
+                <div className="bg-amber-50 border-amber-200 text-amber-900 p-2.5 rounded-lg flex items-center gap-2">
+                  <AlertCircle className="text-amber-600 shrink-0" size={16} />
+                  <span>
+                    <strong>Path C (Training Protocol):</strong> Outcome involves mandatory training. This case will be forwarded to IMC to assign a trainer and collect completion evidence.
+                  </span>
+                </div>
+              )}
+            </div>
+
             <div>
-              <label className="field-label">Corrective Actions / Notes (Optional)</label>
+              <label className="field-label text-xs">Corrective Actions / Management Directive Notes (Optional)</label>
               <textarea
                 value={mdActions}
                 onChange={e => setMdActions(e.target.value)}
-                className="textarea"
-                rows={4}
-                placeholder="Describe any corrective actions taken, recommended, or internal notes (optional)…"
+                className="textarea text-xs"
+                rows={3}
+                placeholder="State executive directive, administrative instructions, or institutional corrective measures…"
               />
             </div>
             
@@ -402,11 +528,11 @@ export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, 
 }
 
 export function FilePreviewModal({ previewFile, onClose }) {
-  const [fileUrl, setFileUrl] = React.useState(null);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState(false);
+  const [fileUrl, setFileUrl] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!previewFile) {
       setFileUrl(null);
       setLoading(false);
@@ -535,9 +661,9 @@ export function FilePreviewModal({ previewFile, onClose }) {
 }
 
 export function InvolveDepartmentModal({ show, onClose, currentDepartments = [], departmentsList = [], mutate, isPending }) {
-  const [selectedDeptIds, setSelectedDeptIds] = React.useState([]);
+  const [selectedDeptIds, setSelectedDeptIds] = useState([]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!show) setSelectedDeptIds([]);
   }, [show]);
 

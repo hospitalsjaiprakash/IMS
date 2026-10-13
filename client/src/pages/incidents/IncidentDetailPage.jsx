@@ -14,6 +14,12 @@ import InteractiveTimeline from '../../components/incident-detail/InteractiveTim
 import IncidentActions from '../../components/incident-detail/IncidentActions';
 import FileUploadArea from '../../components/incident-detail/FileUploadArea';
 import InvestigatorPicker, { isImcUser } from '../../components/incident-detail/InvestigatorPicker';
+import ResponsibleEmployeePicker from '../../components/incident-detail/ResponsibleEmployeePicker';
+import LetterDraftingModal from '../../components/incident-detail/LetterDraftingModal';
+import LettersCard from '../../components/incident-detail/LettersCard';
+import TrainerAssignmentModal from '../../components/incident-detail/TrainerAssignmentModal';
+import TrainerReportModal from '../../components/incident-detail/TrainerReportModal';
+import TrainingProgressCard from '../../components/incident-detail/TrainingProgressCard';
 
 import {
   WithdrawModal,
@@ -34,14 +40,18 @@ const TIMELINE_STAGES = [
   { key: 'with_hod', label: 'Awaiting HOD Feedback' },
   { key: 'with_imc', label: 'HOD Reviewed - Awaiting IMC' },
   { key: 'with_head_management', label: 'IMC Reviewed - Awaiting Mgmt' },
-  { key: 'pending_imc_report', label: 'Mgmt Decided - Awaiting IMC Report' },
-  { key: 'pending_training', label: 'Awaiting CAPA / Training' },
+  { key: 'pending_letter_generation', label: 'Mgmt Approved - Letter Drafting' },
+  { key: 'pending_management_letter_approval', label: 'Letter Approval & Dispatch' },
+  { key: 'pending_trainer_assignment', label: 'Trainer Assignment' },
+  { key: 'training_in_progress', label: 'Training in Progress' },
   { key: 'closed', label: 'Closed' },
 ];
 
 const statusOrder = {
   submitted: 0, with_hod: 1, with_hod_and_imc: 1, with_imc: 2, with_investigator: 2, with_imc_review: 2,
-  redirect_requested: 2, with_head_management: 3, pending_imc_report: 4, pending_training: 5, resolved: 6, closed: 6,
+  redirect_requested: 2, with_head_management: 3, pending_imc_report: 4, pending_letter_generation: 4,
+  pending_management_letter_approval: 4, pending_trainer_assignment: 4, training_in_progress: 5,
+  pending_imc_training_review: 5, pending_training: 5, resolved: 6, closed: 6,
 };
 
 function StatusMessage({ status }) {
@@ -53,6 +63,11 @@ function StatusMessage({ status }) {
     with_investigator: { type: 'info', msg: 'An investigation team has been assigned and is currently conducting a root-cause investigation.' },
     with_imc_review: { type: 'info', msg: 'The joint investigation report has been submitted and is currently being evaluated by the IMC Convenor.' },
     with_head_management: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from Hospital Management.' },
+    pending_letter_generation: { type: 'info', msg: 'Management has approved the outcome. IMC is currently drafting formal communication letter(s).' },
+    pending_management_letter_approval: { type: 'info', msg: 'Formal letters have been drafted by IMC and are awaiting Management approval & dispatch.' },
+    pending_trainer_assignment: { type: 'info', msg: 'Management has mandated training. IMC is currently assigning a qualified trainer.' },
+    training_in_progress: { type: 'info', msg: 'Mandatory training session is currently in progress.' },
+    pending_imc_training_review: { type: 'info', msg: 'Training report and attendance sheet submitted. Awaiting IMC verification.' },
     pending_imc_report: { type: 'info', msg: 'Management has submitted their decision. Awaiting IMC Convenor to generate the official report.' },
     pending_training: { type: 'warning', msg: 'Mandatory CAPA / Training is required before this incident can be fully closed.' },
     resolved: { type: 'success', msg: 'Your incident has been resolved. View the final report below.' },
@@ -93,6 +108,7 @@ export default function IncidentDetailPage() {
   const [mdActions, setMdActions] = useState('');
   const [mdRequireTraining, setMdRequireTraining] = useState(false);
   const [mdResponsibleEmployees, setMdResponsibleEmployees] = useState([]);
+  const [mdPenaltyAmount, setMdPenaltyAmount] = useState('');
   const [mdProposedOutcome, setMdProposedOutcome] = useState('');
   const [reopenReason, setReopenReason] = useState('');
   const [redirectReason, setRedirectReason] = useState('');
@@ -100,6 +116,13 @@ export default function IncidentDetailPage() {
   const [retainRequestingDept, setRetainRequestingDept] = useState(false);
   const [rejectRedirectReason, setRejectRedirectReason] = useState('');
   const [showInvolveDeptModal, setShowInvolveDeptModal] = useState(false);
+
+  // Formal Letter & Trainer Workflow States
+  const [showDraftModal, setShowDraftModal] = useState(false);
+  const [editingLetter, setEditingLetter] = useState(null);
+  const [showAssignTrainerModal, setShowAssignTrainerModal] = useState(false);
+  const [showTrainerReportModal, setShowTrainerReportModal] = useState(false);
+  const [imcResponsibleEmployees, setImcResponsibleEmployees] = useState([]);
 
   const [hodAttachments, setHodAttachments] = useState([]);
   const [imcAttachments, setImcAttachments] = useState([]);
@@ -165,10 +188,22 @@ export default function IncidentDetailPage() {
       fd.append('forwardToMd', !!forwardToMd);
       fd.append('severity', imcSeverity);
       if (imcProposedOutcome) fd.append('proposedOutcome', imcProposedOutcome);
+      if (imcResponsibleEmployees.length > 0) {
+        fd.append('responsibleEmployees', JSON.stringify(imcResponsibleEmployees));
+      }
       imcAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.imcFeedback(id, fd);
     },
-    onSuccess: () => { toast.success('Feedback submitted.'); setShowFeedbackModal(false); setImcAttachments([]); setFeedbackText(''); setImcSeverity(''); setImcProposedOutcome(''); refetch(); }
+    onSuccess: () => {
+      toast.success('Feedback submitted.');
+      setShowFeedbackModal(false);
+      setImcAttachments([]);
+      setFeedbackText('');
+      setImcSeverity('');
+      setImcProposedOutcome('');
+      setImcResponsibleEmployees([]);
+      refetch();
+    }
   });
 
   const mdMutation = useMutation({
@@ -180,6 +215,10 @@ export default function IncidentDetailPage() {
         fd.append('correctiveActions', mdActions);
       }
       if (mdProposedOutcome) fd.append('proposedOutcome', mdProposedOutcome);
+      if (mdPenaltyAmount) fd.append('penaltyAmount', mdPenaltyAmount);
+      if (mdResponsibleEmployees.length > 0) {
+        fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
+      }
       mdAttachments.forEach(f => fd.append('attachments', f));
       return incidentsApi.managementAction(id, fd);
     },
@@ -189,6 +228,8 @@ export default function IncidentDetailPage() {
       setMdAttachments([]);
       setMdActions('');
       setMdProposedOutcome('');
+      setMdPenaltyAmount('');
+      setMdResponsibleEmployees([]);
       refetch();
     },
     onError: (err) => {
@@ -365,7 +406,14 @@ export default function IncidentDetailPage() {
   }, [data?.incident?.status, data?.incident?.latest_investigation_report?.feedback_text]);
 
   if (isLoading) return <SkeletonDetail />;
-  if (error || !data) return <Alert type="error" title="Not found" message="Incident not found or access denied." />;
+  if (error || !data) {
+    const errorMsg = error?.response?.data?.error || error?.message || 'Incident not found or access denied.';
+    return (
+      <div className="max-w-4xl mx-auto py-8">
+        <Alert type="error" title="Unable to Load Incident" message={errorMsg} />
+      </div>
+    );
+  }
 
   const { incident, feedbacks, attachments, finalReport } = data;
 
@@ -553,6 +601,36 @@ export default function IncidentDetailPage() {
               feedbacks={feedbacks} 
               attachments={attachments}
               onViewAttachment={(att) => setPreviewFile(att)}
+            />
+
+            {/* Formal Letters Workflow Card */}
+            <LettersCard
+              incident={incident}
+              letters={data?.letters || []}
+              user={user}
+              canImcAct={canImcAct}
+              isManagement={isManagement}
+              onOpenDraftModal={() => {
+                setEditingLetter(null);
+                setShowDraftModal(true);
+              }}
+              onEditDraft={(letter) => {
+                setEditingLetter(letter);
+                setShowDraftModal(true);
+              }}
+              onRefetch={refetch}
+            />
+
+            {/* Mandatory Training & CAPA Protocol Card */}
+            <TrainingProgressCard
+              incident={incident}
+              trainers={data?.trainers || []}
+              user={user}
+              canImcAct={canImcAct}
+              isManagement={isManagement}
+              onOpenAssignModal={() => setShowAssignTrainerModal(true)}
+              onOpenReportModal={() => setShowTrainerReportModal(true)}
+              onRefetch={refetch}
             />
 
             {feedbacks?.length > 0 && (
@@ -957,10 +1035,45 @@ export default function IncidentDetailPage() {
                                 <option value="Others">Others</option>
                               </select>
                             </div>
+
+                            {(() => {
+                              const outcomeLower = (imcProposedOutcome || '').toLowerCase();
+                              const isEmpOutcome = [
+                                'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
+                                'suspension', 'transfer', 'demotion', 'termination', 'disciplinary',
+                                'training', 'counselling', 'education'
+                              ].some(k => outcomeLower.includes(k));
+
+                              if (!isEmpOutcome) return null;
+
+                              return (
+                                <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-fade-in mt-3">
+                                  <ResponsibleEmployeePicker
+                                    label="Search & Select Responsible Employee(s) Involved"
+                                    required
+                                    selected={imcResponsibleEmployees}
+                                    onChange={setImcResponsibleEmployees}
+                                    placeholder="Type hospital staff name or employee ID..."
+                                  />
+                                </div>
+                              );
+                            })()}
+
                             <div className="flex justify-end gap-2 mt-4">
                               <button
                                 onClick={() => imcFeedbackMutation.mutate(true)}
-                                disabled={!incident.all_hod_feedback_submitted || !feedbackText.trim() || !imcSeverity || !imcProposedOutcome || imcFeedbackMutation.isPending}
+                                disabled={
+                                  !incident.all_hod_feedback_submitted ||
+                                  !feedbackText.trim() ||
+                                  !imcSeverity ||
+                                  !imcProposedOutcome ||
+                                  (
+                                    ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
+                                    imcResponsibleEmployees.length === 0 &&
+                                    (!incident.responsible_employees || incident.responsible_employees.length === 0)
+                                  ) ||
+                                  imcFeedbackMutation.isPending
+                                }
                                 className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 title={!incident.all_hod_feedback_submitted ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}` : ''}
                               >
@@ -1453,6 +1566,29 @@ export default function IncidentDetailPage() {
                         </div>
                       </div>
 
+                      {(() => {
+                        const outcomeLower = (imcProposedOutcome || '').toLowerCase();
+                        const isEmpOutcome = [
+                          'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
+                          'suspension', 'transfer', 'demotion', 'termination', 'disciplinary',
+                          'training', 'counselling', 'education'
+                        ].some(k => outcomeLower.includes(k));
+
+                        if (!isEmpOutcome) return null;
+
+                        return (
+                          <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-fade-in">
+                            <ResponsibleEmployeePicker
+                              label="Search & Select Responsible Employee(s) Involved"
+                              required
+                              selected={imcResponsibleEmployees}
+                              onChange={setImcResponsibleEmployees}
+                              placeholder="Type hospital staff name or employee ID..."
+                            />
+                          </div>
+                        );
+                      })()}
+
                       <div className="flex justify-end pt-2">
                         <button
                           onClick={() => imcFeedbackMutation.mutate(true)}
@@ -1460,6 +1596,11 @@ export default function IncidentDetailPage() {
                             !feedbackText.trim() ||
                             !imcSeverity ||
                             !imcProposedOutcome ||
+                            (
+                              ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
+                              imcResponsibleEmployees.length === 0 &&
+                              (!incident.responsible_employees || incident.responsible_employees.length === 0)
+                            ) ||
                             imcFeedbackMutation.isPending
                           }
                           className="btn-primary btn-sm bg-emerald-600 hover:bg-emerald-700 border-emerald-600 disabled:opacity-50"
@@ -1593,6 +1734,8 @@ export default function IncidentDetailPage() {
               attachments={attachments}
               finalReport={finalReport}
               timelineEvents={data.timelineEvents}
+              letters={data?.letters || []}
+              trainers={data?.trainers || []}
               onViewAttachment={(att) => setPreviewFile(att)}
             />
           </div>
@@ -1657,6 +1800,11 @@ export default function IncidentDetailPage() {
         mdProposedOutcome={mdProposedOutcome}
         setMdProposedOutcome={setMdProposedOutcome}
         incidentProposedOutcome={incident?.proposed_outcome}
+        responsibleEmployees={incident?.responsible_employees || []}
+        mdResponsibleEmployees={mdResponsibleEmployees}
+        setMdResponsibleEmployees={setMdResponsibleEmployees}
+        penaltyAmount={mdPenaltyAmount}
+        setPenaltyAmount={setMdPenaltyAmount}
         mutate={(decision) => mdMutation.mutate(decision)}
         isPending={mdMutation.isPending}
       />
@@ -1719,6 +1867,36 @@ export default function IncidentDetailPage() {
       <FilePreviewModal
         previewFile={previewFile}
         onClose={() => setPreviewFile(null)}
+      />
+
+      {/* Formal Letter Drafting Modal */}
+      <LetterDraftingModal
+        show={showDraftModal}
+        onClose={() => {
+          setShowDraftModal(false);
+          setEditingLetter(null);
+        }}
+        incident={incident}
+        responsibleEmployees={incident?.responsible_employees || []}
+        existingLetter={editingLetter}
+        onSaveSuccess={refetch}
+      />
+
+      {/* Trainer Assignment Modal */}
+      <TrainerAssignmentModal
+        show={showAssignTrainerModal}
+        onClose={() => setShowAssignTrainerModal(false)}
+        incident={incident}
+        onSuccess={refetch}
+      />
+
+      {/* Trainer Report Submission Modal */}
+      <TrainerReportModal
+        show={showTrainerReportModal}
+        onClose={() => setShowTrainerReportModal(false)}
+        incident={incident}
+        trainerAssignment={(data?.trainers || [])[data?.trainers?.length - 1]}
+        onSuccess={refetch}
       />
     </>
   );
