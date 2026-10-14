@@ -601,15 +601,18 @@ exports.submitManagementAction = async (req, res) => {
     let returnMessage = 'Management agreed with IMC. Incident has been officially CLOSED.';
 
     if (isLetterOutcome) {
-      // PATH B: Forward to IMC for formal letter generation
+      // PATH B (or DUAL TRACK B+C): Forward to IMC for formal letter generation
       nextStatus = 'pending_letter_generation';
-      returnMessage = 'Decision submitted. Case forwarded to IMC for formal letter generation.';
+      returnMessage = isTrainingOutcome
+        ? 'Decision submitted. Case forwarded to IMC for formal letter drafting and trainer assignment.'
+        : 'Decision submitted. Case forwarded to IMC for formal letter generation.';
       
       await client.query(
         `UPDATE incidents
-         SET status = $1, management_decision = $2, management_notes = $3, updated_at = NOW()
-         WHERE id = $4`,
-        [nextStatus, decision, notes, id]
+         SET status = $1, management_decision = $2, management_notes = $3,
+             needs_training = $4, updated_at = NOW()
+         WHERE id = $5`,
+        [nextStatus, decision, notes, isTrainingOutcome ? true : false, id]
       );
 
       const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
@@ -617,20 +620,23 @@ exports.submitManagementAction = async (req, res) => {
         await createNotification(
           member.id,
           id,
-          'Draft Formal Letter(s) Required',
-          `Management approved the proposed outcome for incident ${incident.reference_id}. Please draft the letter(s) for the involved employee(s).`,
+          isTrainingOutcome ? 'Draft Letter(s) & Assign Trainer Required' : 'Draft Formal Letter(s) Required',
+          isTrainingOutcome
+            ? `Management approved the proposed outcome for incident ${incident.reference_id}. Please draft the employee letter(s) and assign a dedicated trainer.`
+            : `Management approved the proposed outcome for incident ${incident.reference_id}. Please draft the letter(s) for the involved employee(s).`,
           'management_action'
         );
       }
 
     } else if (isTrainingOutcome) {
-      // PATH C: Forward to IMC for trainer assignment
+      // PATH C: Forward to IMC for trainer assignment (No letter drafting to mgmt)
       nextStatus = 'pending_trainer_assignment';
       returnMessage = 'Decision submitted. Case forwarded to IMC for trainer assignment.';
 
       await client.query(
         `UPDATE incidents
-         SET status = $1, management_decision = $2, management_notes = $3, updated_at = NOW()
+         SET status = $1, management_decision = $2, management_notes = $3,
+             needs_training = TRUE, updated_at = NOW()
          WHERE id = $4`,
         [nextStatus, decision, notes, id]
       );

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { 
   GraduationCap, CheckCircle2, Clock, Calendar, Download, Eye, 
-  ShieldCheck, UserCheck, AlertCircle, Award, Users, RefreshCw, FileText, XCircle 
+  ShieldCheck, UserCheck, AlertCircle, Award, Users, RefreshCw, FileText, XCircle, Printer, QrCode 
 } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi, attachmentsApi, UPLOADS_URL } from '../../api';
@@ -25,6 +25,8 @@ export default function TrainingProgressCard({
   const [reworkReason, setReworkReason] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [viewAppointmentLetterModal, setViewAppointmentLetterModal] = useState(false);
+  const [selectedLetterAssignment, setSelectedLetterAssignment] = useState(null);
 
   const isImcLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.role === 'imc' || user?.is_system_admin || user?.role === 'system_admin');
   const isMgmtUser = Boolean(isManagement || user?.role === 'head_management' || user?.role === 'system_admin');
@@ -33,6 +35,12 @@ export default function TrainingProgressCard({
   const isPendingAssignment = incident?.status === 'pending_trainer_assignment';
   const isInProgress = incident?.status === 'training_in_progress';
   const isPendingImcReview = incident?.status === 'pending_imc_training_review';
+  const isNeedsTraining = Boolean(incident?.needs_training);
+
+  const canAssignTrainer = isImcLead && (
+    isPendingAssignment ||
+    (isNeedsTraining && (!trainers.length || activeAssignment?.status === 'rework_requested'))
+  );
 
   // Can user submit training report? (Assigned trainer, or IMC lead / Admin on behalf)
   const isAssignedTrainer = Boolean(
@@ -125,7 +133,15 @@ export default function TrainingProgressCard({
     }
   };
 
-  if (!trainers.length && !isPendingAssignment && !isInProgress && !isPendingImcReview) {
+  const shouldRenderCard = Boolean(
+    trainers.length > 0 ||
+    isNeedsTraining ||
+    isPendingAssignment ||
+    isInProgress ||
+    isPendingImcReview
+  );
+
+  if (!shouldRenderCard) {
     return null;
   }
 
@@ -157,13 +173,13 @@ export default function TrainingProgressCard({
 
           {/* Action buttons on top right */}
           <div className="flex items-center gap-2">
-            {isPendingAssignment && isImcLead && (
+            {canAssignTrainer && (
               <button
                 type="button"
                 onClick={onOpenAssignModal}
                 className="btn-primary btn-sm text-xs flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 shadow-sm"
               >
-                <GraduationCap size={13} /> Assign Trainer
+                <GraduationCap size={13} /> {trainers.length > 0 ? 'Reassign / Add Trainer' : 'Assign Trainer'}
               </button>
             )}
             {canSubmitReport && (
@@ -178,15 +194,15 @@ export default function TrainingProgressCard({
           </div>
         </div>
 
-        {/* State Banner 1: Pending Assignment */}
-        {isPendingAssignment && (
+        {/* State Banner 1: Pending Assignment or Needs Training */}
+        {(isPendingAssignment || (isNeedsTraining && !trainers.length)) && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-start justify-between gap-3 flex-wrap">
             <div className="space-y-1 max-w-xl">
               <p className="font-bold flex items-center gap-1.5 text-amber-800">
                 <Clock size={14} className="text-amber-600" /> Awaiting Trainer Appointment (IMC Level)
               </p>
               <p className="text-amber-700 text-[11px] leading-relaxed">
-                Management has ordered mandatory training / retraining for the involved employee(s). The IMC must appoint a qualified hospital trainer or educator to deliver the session.
+                Management has ordered mandatory corrective training for the involved employee(s). The IMC appoints a qualified hospital trainer directly. An official Trainer Appointment Letter with verified QR code will be auto-generated and dispatched.
               </p>
             </div>
             {isImcLead && (
@@ -366,6 +382,30 @@ export default function TrainingProgressCard({
               </div>
             </div>
 
+            {/* Official Appointment Letter Row */}
+            {(t.letter_reference_number || t.appointment_letter_id) && (
+              <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-lg p-2.5 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] font-bold text-indigo-900 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                    {t.letter_reference_number || 'JPHRC/TRN'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    <CheckCircle2 size={10} /> Dispatched to Trainer
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedLetterAssignment(t);
+                    setViewAppointmentLetterModal(true);
+                  }}
+                  className="btn-secondary btn-sm text-[11px] flex items-center gap-1 hover:border-indigo-400 hover:text-indigo-700 shadow-xs ml-auto"
+                >
+                  <Eye size={12} /> View / Print Appointment Letter
+                </button>
+              </div>
+            )}
+
             {/* Completion Report Details (if submitted) */}
             {t.status !== 'assigned' && (
               <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs space-y-2">
@@ -483,6 +523,122 @@ export default function TrainingProgressCard({
           </div>
         </Modal>
       )}
+
+      {/* --- TRAINER APPOINTMENT LETTER MODAL --- */}
+      {viewAppointmentLetterModal && (selectedLetterAssignment || activeAssignment) && (() => {
+        const letterTarget = selectedLetterAssignment || activeAssignment;
+        return (
+          <Modal
+            open={viewAppointmentLetterModal}
+            onClose={() => setViewAppointmentLetterModal(false)}
+            title="Official Trainer Appointment Letter"
+            size="xl"
+            footer={
+              <div className="flex items-center justify-between w-full">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  <Printer size={13} /> Print Official Letter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewAppointmentLetterModal(false)}
+                  className="btn-secondary text-xs"
+                >
+                  Close
+                </button>
+              </div>
+            }
+          >
+            <div className="bg-white p-6 rounded-lg border border-slate-200 space-y-5 text-slate-800 font-sans shadow-xs">
+              {/* Header letterhead */}
+              <div className="border-b-2 border-indigo-900 pb-4 text-center">
+                <h2 className="text-lg font-black text-indigo-950 uppercase tracking-wide">
+                  JAIPRAKASH HOSPITALS & RESEARCH CENTRE
+                </h2>
+                <p className="text-xs font-semibold text-indigo-700 tracking-wider uppercase mt-0.5">
+                  Incident Management Committee (IMC) — Quality Assurance & Patient Safety
+                </p>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Near Dandiapali, Rourkela, Odisha 769004 | Email: imc@jaiprakashhospitals.com
+                </p>
+              </div>
+
+              {/* Reference and Date */}
+              <div className="flex items-center justify-between text-xs font-bold border-b border-slate-200 pb-2">
+                <div>Ref: <span className="font-mono text-indigo-900">{letterTarget.letter_reference_number || 'JPHRC/TRN'}</span></div>
+                <div>Date: <span>{letterTarget.letter_date ? new Date(letterTarget.letter_date).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN')}</span></div>
+              </div>
+
+              {/* Recipient */}
+              <div className="text-xs space-y-0.5">
+                <div className="font-semibold text-slate-500">To,</div>
+                <div className="font-bold text-sm text-slate-900">{letterTarget.trainer_name}</div>
+                <div className="text-slate-600">{letterTarget.trainer_designation || 'Specialist / Lead Trainer'}</div>
+                <div className="text-slate-600">{letterTarget.trainer_department || 'Clinical / Hospital Operations'}</div>
+              </div>
+
+              {/* Subject */}
+              <div className="text-xs font-bold text-slate-900 bg-slate-50 p-2.5 rounded border border-slate-200">
+                Subject: {letterTarget.letter_subject || `Trainer Appointment - Incident ${incident?.reference_id}`}
+              </div>
+
+              {/* Salutation & Body */}
+              <div className="text-xs space-y-3 leading-relaxed">
+                <p className="font-semibold">{letterTarget.letter_salutation || 'Dear Doctor / Staff Member,'}</p>
+                <div className="whitespace-pre-wrap font-normal text-slate-700">
+                  {letterTarget.letter_body_text || letterTarget.training_instructions}
+                </div>
+              </div>
+
+              {/* Verification and Sign-off */}
+              <div className="pt-4 border-t border-slate-200 flex items-end justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-3">
+                  {letterTarget.letter_qr_code_url && (
+                    <div className="text-center">
+                      <img
+                        src={letterTarget.letter_qr_code_url}
+                        alt="IMS QR Code"
+                        className="w-20 h-20 border border-slate-200 p-1 rounded bg-white shadow-xs"
+                      />
+                      <div className="text-[9px] text-slate-500 mt-1 font-mono">Scan to Verify</div>
+                    </div>
+                  )}
+                  <div className="text-[11px] text-slate-500 max-w-xs space-y-0.5">
+                    <div className="font-semibold text-slate-700">Digital Authentication</div>
+                    <div>This official appointment directive is authenticated under JPHRC Clinical Governance & CAPA Protocol.</div>
+                  </div>
+                </div>
+
+                <div className="text-right text-xs space-y-1">
+                  <div className="font-bold text-slate-900">For Incident Management Committee</div>
+                  <div className="text-[11px] text-slate-600">Convenor / Lead — Incident Management</div>
+                  <div className="text-[10px] text-slate-400">Jaiprakash Hospitals & Research Centre</div>
+                </div>
+              </div>
+
+              {/* CC List */}
+              {letterTarget.letter_cc_recipients && (
+                <div className="pt-3 border-t border-slate-100 text-[10px] text-slate-500 space-y-0.5">
+                  <div className="font-semibold text-slate-700">Carbon Copy (CC):</div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {(Array.isArray(letterTarget.letter_cc_recipients)
+                      ? letterTarget.letter_cc_recipients
+                      : typeof letterTarget.letter_cc_recipients === 'string'
+                        ? JSON.parse(letterTarget.letter_cc_recipients || '[]')
+                        : []
+                    ).map((cc, idx) => (
+                      <span key={idx}>• {cc.label || cc.name || cc}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
     </>
   );
 }

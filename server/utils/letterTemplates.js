@@ -68,6 +68,16 @@ function getDefaultCcList(templateType, employee, incident) {
         { label: 'Management Office', role: 'Executive Office' }
       ];
 
+    case 'trainer_appointment_letter':
+    case 'trainer_appointment':
+      return [
+        { label: empName, role: 'Designated Trainer' },
+        { label: 'HOD- T&D', role: 'Training & Development' },
+        { label: 'Medical Superintendent / Nursing Superintendent', role: 'Clinical Governance' },
+        { label: 'Incident Management Committee (IMC)', role: 'Oversight Committee' },
+        { label: 'Management Office', role: 'Executive Office' }
+      ];
+
     default:
       return [
         { label: empName, role: 'Recipient Employee' },
@@ -79,7 +89,7 @@ function getDefaultCcList(templateType, employee, incident) {
 }
 
 /**
- * Letter body generators matching the 5 exact hospital samples
+ * Letter body generators matching the exact hospital samples
  */
 const TEMPLATE_DEFINITIONS = {
   advisory_letter: {
@@ -96,6 +106,41 @@ const TEMPLATE_DEFINITIONS = {
 The Incident Management Committee has taken serious cognizance of this incident. As the concerned ${desig}, you are advised to exercise greater care, vigilance, and diligence while carrying out your designated responsibilities and document verifications.
 
 You are specifically advised to ensure that all required hospital authorizations, verification procedures, and patient safety protocols are properly followed before proceeding, in order to prevent recurrence of similar incidents in the future.`;
+    }
+  },
+
+  trainer_appointment_letter: {
+    name: 'Trainer Appointment Letter',
+    subject: 'Appointment as Designated Trainer - Incident Corrective Action',
+    generateBody: ({ trainer = {}, incident = {}, trainingTopic, trainingInstructions, targetDate, trainees = [] }) => {
+      const incDate = formatDate(incident.incident_date);
+      const incRef = incident.reference_id || 'Incident';
+      const traineeList = trainees.length > 0
+        ? trainees.map(t => `• ${t.name || t.full_name || t.recipient_name || 'Staff Member'} (${t.department || t.department_name || 'Hospital Staff'}${t.designation ? ' - ' + t.designation : ''})`).join('\n')
+        : `• Designated Hospital Staff Member(s)`;
+
+      return `This is with reference to Incident Report No. ${incRef} dated ${incDate}.
+
+The Incident Management Committee (IMC) and Hospital Executive Management have reviewed this incident and mandated corrective competency training under our hospital quality assurance and patient safety protocol.
+
+You are hereby formally appointed as the Designated Trainer to conduct the mandated corrective training session(s).
+
+TRAINING MANDATE DETAILS:
+• Training Subject / Topic: ${trainingTopic || 'Standard Operating Procedures & Safety Guidelines'}
+• Target Completion Date: ${targetDate ? formatDate(targetDate) : 'Within 7 business days'}
+${trainingInstructions ? `• Specific Instructions / Focus Areas:\n${trainingInstructions}\n` : ''}
+TRAINEE ROSTER:
+${traineeList}
+
+RESPONSIBILITIES OF THE DESIGNATED TRAINER:
+1. Conduct structured, hands-on training covering standard operating protocols, safety guidelines, and error-prevention techniques.
+2. Conduct practical verification and assessment of trainee competency upon conclusion of the session.
+3. Maintain an official attendance record signed by all attending staff.
+4. Log into the JPHRC IMS portal to submit your formal Training Completion Report along with the signed attendance sheet and any documentary proof.
+
+Upon submission of your report, the Incident Management Committee will verify the training records and forward the file to Executive Management for official incident closure.
+
+Your expertise and leadership in upholding clinical excellence, organizational discipline, and patient safety are highly valued.`;
     }
   },
 
@@ -232,9 +277,52 @@ function buildInitialLetterData({ templateType, employee, incident, yearSeq = '0
   };
 }
 
+/**
+ * Pre-populate all fields for an official Trainer Appointment Letter
+ */
+function buildTrainerAppointmentLetterData({ trainer, incident, trainingTopic, trainingInstructions, targetDate, trainees = [], yearSeq = '001' }) {
+  const currentYear = new Date().getFullYear();
+  const refNum = `JPHRC/TRN/${currentYear}/${yearSeq}`;
+  const def = TEMPLATE_DEFINITIONS.trainer_appointment_letter;
+
+  const body = def.generateBody({
+    trainer,
+    incident,
+    trainingTopic,
+    trainingInstructions,
+    targetDate,
+    trainees
+  });
+
+  const trainerName = trainer.name || trainer.full_name || 'Designated Trainer';
+  const salutation = trainerName.toLowerCase().startsWith('dr.')
+    ? 'Dear Doctor,'
+    : `Dear ${trainerName.split(' ')[0] || trainerName},`;
+
+  const ccList = getDefaultCcList('trainer_appointment_letter', trainer, incident);
+
+  return {
+    templateType: 'trainer_appointment_letter',
+    referenceNumber: refNum,
+    letterDate: new Date().toISOString().split('T')[0],
+    subject: `Trainer Appointment Letter - Incident ${incident.reference_id}`,
+    salutation,
+    bodyText: body,
+    penaltyAmount: null,
+    penaltyAmountWords: null,
+    ccRecipients: ccList,
+    recipientName: trainerName,
+    recipientEmpNo: trainer.employee_id || '',
+    recipientDepartment: trainer.department || '',
+    recipientDesignation: trainer.designation || 'Designated Trainer',
+    recipientEmail: trainer.email || ''
+  };
+}
+
 module.exports = {
   TEMPLATE_DEFINITIONS,
   getDefaultCcList,
   buildInitialLetterData,
+  buildTrainerAppointmentLetterData,
   formatDate
 };

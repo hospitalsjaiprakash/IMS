@@ -31,18 +31,21 @@ export default function LettersCard({
   const isImcLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.role === 'imc' || user?.is_system_admin || user?.role === 'system_admin');
   const isMgmtUser = Boolean(isManagement || user?.role === 'head_management' || user?.role === 'system_admin');
 
-  const pendingDraftsCount = letters.filter(l => l.status === 'draft' || l.status === 'drafted').length;
+  // Filter to employee disciplinary/advisory letters (trainer appointment letters are handled in TrainingProgressCard)
+  const employeeLetters = (letters || []).filter(
+    l => !['trainer_appointment', 'trainer_appointment_letter'].includes(l.template_type) &&
+         !['trainer_appointment', 'trainer_appointment_letter'].includes(l.letter_type)
+  );
+
+  const pendingDraftsCount = employeeLetters.filter(l => l.status === 'draft' || l.status === 'drafted').length;
   const isPendingLetterGeneration = incident?.status === 'pending_letter_generation';
   const isPendingMgmtApproval = incident?.status === 'pending_management_letter_approval';
 
-  // Check if any training letter is among the drafts or if incident requires training
-  const hasTrainingRequirement = Boolean(
-    incident?.needs_training || 
-    letters.some(l => (l.template_type || l.letter_type || '').toLowerCase().includes('training'))
-  );
+  // Check if incident requires training
+  const hasTrainingRequirement = Boolean(incident?.needs_training);
 
   // Group letters count per employee to identify multi-letter scenarios
-  const employeeLetterCounts = letters.reduce((acc, l) => {
+  const employeeLetterCounts = employeeLetters.reduce((acc, l) => {
     const key = l.employee_id || l.recipient_name || 'unknown';
     acc[key] = (acc[key] || 0) + 1;
     return acc;
@@ -70,7 +73,7 @@ export default function LettersCard({
   };
 
   const handleSubmitToManagement = async () => {
-    if (letters.length === 0) {
+    if (employeeLetters.length === 0) {
       toast.error('Please draft at least one letter before submitting to Management.');
       return;
     }
@@ -89,8 +92,8 @@ export default function LettersCard({
 
   const handleManagementApproval = async () => {
     const confirmMessage = hasTrainingRequirement
-      ? `Approve all ${letters.length} drafted letters and dispatch them to the employee(s) and CC recipients via email?\n\nNote: Because training is mandated, this incident will advance to the Mandatory Training stage.`
-      : `Approve all ${letters.length} drafted letters and dispatch them to the employee(s) and CC recipients via email?\n\nThis will officially mark the incident as CLOSED.`;
+      ? `Approve all ${employeeLetters.length} drafted disciplinary letter(s) and dispatch them to the employee(s) and CC recipients via email?\n\nNote: Because mandatory training is also ordered, disciplinary letters will be dispatched now, and the incident will remain active for training completion.`
+      : `Approve all ${employeeLetters.length} drafted letter(s) and dispatch them to the employee(s) and CC recipients via email?\n\nThis will officially mark the incident as CLOSED.`;
 
     if (!window.confirm(confirmMessage)) {
       return;
@@ -176,12 +179,12 @@ export default function LettersCard({
     );
   };
 
-  if (!letters.length && !isPendingLetterGeneration && !isPendingMgmtApproval) {
+  if (!employeeLetters.length && !isPendingLetterGeneration && !isPendingMgmtApproval) {
     return null;
   }
 
   // Any revision notes on the letters?
-  const revisionNotes = letters.find(l => l.revision_notes)?.revision_notes;
+  const revisionNotes = employeeLetters.find(l => l.revision_notes)?.revision_notes;
 
   return (
     <>
@@ -194,15 +197,15 @@ export default function LettersCard({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-slate-800">Formal Communication Letters</h2>
-                {letters.length > 0 && (
+                <h2 className="text-sm font-bold text-slate-800">Formal Disciplinary & Advisory Letters</h2>
+                {employeeLetters.length > 0 && (
                   <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
-                    {letters.length} Letter{letters.length === 1 ? '' : 's'} ({uniqueEmployeesCount} Staff)
+                    {employeeLetters.length} Letter{employeeLetters.length === 1 ? '' : 's'} ({uniqueEmployeesCount} Staff)
                   </span>
                 )}
               </div>
               <p className="text-[11px] text-slate-500">
-                Official disciplinary, advisory, and recommendation notices with scannable IMS QR codes
+                Official disciplinary, penalty, advisory, and recommendation notices with scannable IMS QR codes
               </p>
             </div>
           </div>
@@ -216,7 +219,7 @@ export default function LettersCard({
                 className="btn-primary btn-sm text-xs flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 shadow-sm"
               >
                 <Plus size={14} />
-                {letters.length > 0 ? 'Draft Another Letter' : 'Draft Letter'}
+                {employeeLetters.length > 0 ? 'Draft Another Letter' : 'Draft Letter'}
               </button>
             )}
           </div>
@@ -240,14 +243,19 @@ export default function LettersCard({
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-start justify-between gap-3 flex-wrap">
             <div className="space-y-1 max-w-xl">
               <p className="font-bold flex items-center gap-1.5 text-amber-800">
-                <Clock size={14} className="text-amber-600" /> Letter Drafting in Progress (IMC Level)
+                <Clock size={14} className="text-amber-600" /> Disciplinary Letter Drafting in Progress (IMC Level)
               </p>
               <p className="text-amber-700 text-[11px] leading-relaxed">
-                Management has ordered formal disciplinary/advisory outcome. The IMC can draft multiple letters for each involved employee (e.g., both a penalty warning letter and a training directive letter) and forward them together to Management for final approval and dispatch.
+                Management has ordered formal disciplinary/advisory outcome. The IMC can draft multiple letters for each involved employee (e.g., penalty warning, advisory, or suggestion letter) and forward them together to Management for approval.
+                {hasTrainingRequirement && (
+                  <span className="block mt-1 font-semibold text-indigo-800">
+                    💡 Note: Mandatory training is handled concurrently via Trainer Appointment in the Training card below.
+                  </span>
+                )}
               </p>
             </div>
 
-            {isImcLead && letters.length > 0 && (
+            {isImcLead && employeeLetters.length > 0 && (
               <button
                 type="button"
                 onClick={handleSubmitToManagement}
@@ -255,7 +263,7 @@ export default function LettersCard({
                 className="btn-primary btn-sm text-xs bg-indigo-600 hover:bg-indigo-700 flex items-center gap-1.5 whitespace-nowrap shadow-sm ml-auto"
               >
                 {isSubmittingToMgmt ? <Spinner size={12} className="text-white" /> : <Send size={12} />}
-                Submit {letters.length} Letter{letters.length === 1 ? '' : 's'} to Management
+                Submit {employeeLetters.length} Letter{employeeLetters.length === 1 ? '' : 's'} to Management
               </button>
             )}
           </div>
@@ -270,10 +278,10 @@ export default function LettersCard({
                   <ShieldCheck size={16} className="text-indigo-600" /> Awaiting Management Approval & Dispatch
                 </p>
                 <p className="text-indigo-700 text-[11px] mt-0.5 leading-relaxed">
-                  The IMC has finalized <strong>{letters.length} formal letter(s)</strong> across {uniqueEmployeesCount} employee(s). Upon Management approval, official letters with verified IMS QR codes will be dispatched to each employee and their respective department leadership via email.
+                  The IMC has finalized <strong>{employeeLetters.length} formal letter(s)</strong> across {uniqueEmployeesCount} employee(s). Upon Management approval, official letters with verified IMS QR codes will be dispatched to each employee and their respective department leadership via email.
                   {hasTrainingRequirement && (
                     <span className="block mt-1 text-blue-800 font-semibold">
-                      📌 Since training is mandated, this incident will proceed to the Mandatory Training stage after letter dispatch.
+                      📌 Since training is also mandated, this incident will proceed to the Mandatory Training stage after letter dispatch.
                     </span>
                   )}
                 </p>
@@ -289,7 +297,7 @@ export default function LettersCard({
                   className="btn-primary btn-sm text-xs bg-emerald-600 hover:bg-emerald-700 border-emerald-600 flex items-center gap-1.5 shadow-sm"
                 >
                   {isMgmtDeciding ? <Spinner size={12} className="text-white" /> : <Mail size={13} />}
-                  Approve & Dispatch {letters.length > 1 ? `All ${letters.length} Letters` : 'Letter'} via Email ({hasTrainingRequirement ? 'Advance to Training' : 'Close Incident'})
+                  Approve & Dispatch {employeeLetters.length > 1 ? `All ${employeeLetters.length} Letters` : 'Letter'} via Email ({hasTrainingRequirement ? 'Keep Training Active' : 'Close Incident'})
                 </button>
                 <button
                   type="button"
@@ -324,7 +332,7 @@ export default function LettersCard({
               <div className="divide-y divide-slate-200 bg-white rounded-lg border border-slate-200 overflow-hidden">
                 {staffList.map(emp => {
                   const empId = emp.employee_id || emp.emp_id || emp.id;
-                  const empLetters = letters.filter(
+                  const empLetters = employeeLetters.filter(
                     l => l.employee_id === empId || l.recipient_name === (emp.full_name || emp.name)
                   );
 
@@ -389,13 +397,13 @@ export default function LettersCard({
         })()}
 
         {/* Letters List */}
-        {letters.length === 0 ? (
+        {employeeLetters.length === 0 ? (
           <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
             No formal letters drafted yet for this incident.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {letters.map(letter => {
+            {employeeLetters.map(letter => {
               const isApproved = letter.status === 'approved' || letter.status === 'dispatched';
               const isDraft = letter.status === 'draft' || letter.status === 'drafted';
               const isSubmitted = letter.status === 'submitted_to_management';

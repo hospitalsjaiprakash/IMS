@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { 
   FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, 
-  Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink, Mail, User, Briefcase 
+  Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink, Mail, User, Briefcase, GraduationCap 
 } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { lettersApi } from '../../api';
@@ -14,7 +14,6 @@ const LETTER_TYPES = [
   { value: 'warning_penalty_letter', label: 'Warning & Financial Penalty Letter', desc: 'Disciplinary warning with specified monetary deduction' },
   { value: 'advisory_letter', label: 'Advisory Letter', desc: 'Guidance and protocol adherence counsel' },
   { value: 'suggestion_letter', label: 'Suggestion Letter', desc: 'Process improvement and best-practice advisory' },
-  { value: 'training_letter', label: 'Mandatory Training Directive Letter', desc: 'Compulsory competency and re-education directive' },
   { value: 'custom_letter', label: 'Custom Official Communication', desc: 'Tailored executive resolution' },
 ];
 
@@ -83,7 +82,6 @@ export default function LetterDraftingModal({
       if (outLower.includes('advisory')) defaultType = 'advisory_letter';
       else if (outLower.includes('suggestion')) defaultType = 'suggestion_letter';
       else if (outLower.includes('penalty') || outLower.includes('deduction')) defaultType = 'warning_penalty_letter';
-      else if (outLower.includes('training') || outLower.includes('counselling')) defaultType = 'training_letter';
 
       setLetterType(defaultType);
 
@@ -318,11 +316,25 @@ export default function LetterDraftingModal({
             <div className="flex flex-wrap gap-1.5">
               {approvedOutcomes.map((out, idx) => {
                 const outLower = out.toLowerCase();
+                const isTraining = outLower.includes('training') || outLower.includes('counselling');
+
+                if (isTraining) {
+                  return (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-xs"
+                      title="Corrective Training is executed directly via Trainer Appointment under the Training & CAPA Protocol card."
+                    >
+                      <GraduationCap size={13} className="text-emerald-600" />
+                      {out} <span className="text-[10px] text-emerald-600 font-normal">(Direct Trainer Mandate)</span>
+                    </span>
+                  );
+                }
+
                 let targetType = 'warning_letter';
                 if (outLower.includes('advisory')) targetType = 'advisory_letter';
                 else if (outLower.includes('suggestion')) targetType = 'suggestion_letter';
                 else if (outLower.includes('penalty') || outLower.includes('deduction')) targetType = 'warning_penalty_letter';
-                else if (outLower.includes('training') || outLower.includes('counselling')) targetType = 'training_letter';
 
                 const isSelected = letterType === targetType;
 

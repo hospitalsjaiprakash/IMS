@@ -57,7 +57,8 @@ exports.getIncidentLetters = async (req, res) => {
        FROM incident_letters l
        LEFT JOIN users u_draft ON u_draft.id = l.drafted_by
        LEFT JOIN users u_app ON u_app.id = l.approved_by
-       WHERE l.incident_id = $1
+       WHERE l.incident_id = $1 
+         AND l.template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')
        ORDER BY l.created_at ASC`,
       [id]
     );
@@ -352,7 +353,8 @@ exports.submitLettersToManagement = async (req, res) => {
 
     // Check that at least one letter has been drafted
     const lettersRes = await client.query(
-      `SELECT * FROM incident_letters WHERE incident_id = $1`,
+      `SELECT * FROM incident_letters 
+       WHERE incident_id = $1 AND template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')`,
       [id]
     );
     if (!lettersRes.rows.length) {
@@ -360,11 +362,11 @@ exports.submitLettersToManagement = async (req, res) => {
       return res.status(400).json({ error: 'Please draft at least one letter before submitting to Management.' });
     }
 
-    // Mark all letters as submitted_to_management
+    // Mark all employee letters as submitted_to_management
     await client.query(
       `UPDATE incident_letters
        SET status = 'submitted_to_management', updated_at = NOW()
-       WHERE incident_id = $1`,
+       WHERE incident_id = $1 AND template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')`,
       [id]
     );
 
@@ -432,12 +434,14 @@ exports.submitManagementLetterDecision = async (req, res) => {
     const incident = incRes.rows[0];
 
     const lettersRes = await client.query(
-      `SELECT * FROM incident_letters WHERE incident_id = $1`,
+      `SELECT * FROM incident_letters 
+       WHERE incident_id = $1 
+         AND template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')`,
       [id]
     );
     if (!lettersRes.rows.length) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'No letters found to process.' });
+      return res.status(400).json({ error: 'No employee disciplinary letters found to process.' });
     }
 
     if (action === 'REJECT_REVISION') {
@@ -449,7 +453,8 @@ exports.submitManagementLetterDecision = async (req, res) => {
       await client.query(
         `UPDATE incident_letters
          SET status = 'rejected', revision_notes = $1, updated_at = NOW()
-         WHERE incident_id = $2`,
+         WHERE incident_id = $2
+           AND template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')`,
         [revisionNotes.trim(), id]
       );
 
@@ -488,23 +493,12 @@ exports.submitManagementLetterDecision = async (req, res) => {
       `UPDATE incident_letters
        SET status = 'approved', approved_by = $1, approved_at = NOW(),
            dispatched_at = NOW(), updated_at = NOW()
-       WHERE incident_id = $2`,
+       WHERE incident_id = $2
+         AND template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')`,
       [req.user.id, id]
     );
 
-    // If any approved letter was a training directive, ensure the recipient employee is flagged for training
-    for (const letter of lettersRes.rows) {
-      if ((letter.template_type || '').includes('training')) {
-        await client.query(
-          `UPDATE incident_responsible_employees 
-           SET needs_training = TRUE 
-           WHERE incident_id = $1 AND employee_id = $2`,
-          [id, letter.employee_id]
-        );
-      }
-    }
-
-    // Check if training remains to be scheduled for involved staff
+    // Check if training remains to be scheduled or completed for involved staff
     const trainingCheck = await client.query(
       `SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE AND (training_completed IS NULL OR training_completed = FALSE)`,
       [id]
@@ -514,13 +508,34 @@ exports.submitManagementLetterDecision = async (req, res) => {
       [id]
     );
     const hasRemainingTraining = (parseInt(trainingCheck.rows[0]?.count || '0', 10) > 0) || Boolean(incNeedsTrainingRes.rows[0]?.needs_training);
-    const nextStatus = hasRemainingTraining ? 'pending_trainer_assignment' : 'closed';
 
+    let nextStatus = 'closed';
+    if (hasRemainingTraining) {
+      // Check if trainer is already assigned
+      const trainerAssignRes = await client.query(
+        `SELECT status FROM incident_trainers WHERE incident_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [id]
+      );
+      if (trainerAssignRes.rows.length > 0) {
+        const tStatus = trainerAssignRes.rows[0].status;
+        if (tStatus === 'completed') {
+          nextStatus = 'pending_imc_training_review';
+        } else if (tStatus === 'verified' || tStatus === 'verified_by_imc') {
+          nextStatus = 'with_head_management';
+        } else {
+          nextStatus = 'training_in_progress';
+        }
+      } else {
+        nextStatus = 'pending_trainer_assignment';
+      }
+    }
+
+    const resolvedAt = (nextStatus === 'closed') ? new Date() : null;
     await client.query(
       `UPDATE incidents
-       SET status = $1, resolved_at = ($1 = 'closed' ? NOW() : NULL), updated_at = NOW()
-       WHERE id = $2`,
-      [nextStatus, id]
+       SET status = $1, resolved_at = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [nextStatus, resolvedAt, id]
     );
 
     await client.query('COMMIT');
@@ -553,29 +568,42 @@ exports.submitManagementLetterDecision = async (req, res) => {
       }
     }
 
-    // Notify Reporter & Committee of closure
-    await createNotification(
-      incident.reporter_id,
-      id,
-      'Incident Concluded & Closed',
-      `Management has approved formal directives and officially closed incident ${incident.reference_id}.`,
-      'incident_closed'
-    );
-
+    // Notifications
     const imcMembers = await query("SELECT id FROM users WHERE role = 'imc' OR is_imc_lead = TRUE");
-    for (const m of imcMembers.rows) {
+    if (hasRemainingTraining) {
+      for (const m of imcMembers.rows) {
+        await createNotification(
+          m.id,
+          id,
+          'Letters Dispatched — Proceed with Training',
+          `Management approved and dispatched ${lettersRes.rows.length} disciplinary letter(s) for incident ${incident.reference_id}. File remains active for Mandatory Training.`,
+          'management_action'
+        );
+      }
+    } else {
       await createNotification(
-        m.id,
+        incident.reporter_id,
         id,
-        'Incident Closed by Management',
-        `Management has approved and dispatched letters for incident ${incident.reference_id}. File is officially closed.`,
+        'Incident Concluded & Closed',
+        `Management has approved formal directives and officially closed incident ${incident.reference_id}.`,
         'incident_closed'
       );
+
+      for (const m of imcMembers.rows) {
+        await createNotification(
+          m.id,
+          id,
+          'Incident Closed by Management',
+          `Management has approved and dispatched letters for incident ${incident.reference_id}. File is officially closed.`,
+          'incident_closed'
+        );
+      }
     }
 
-    await auditLog(req.user.id, 'LETTERS_DISPATCHED_AND_CLOSED', id, {
+    await auditLog(req.user.id, hasRemainingTraining ? 'LETTERS_DISPATCHED_TRAINING_ACTIVE' : 'LETTERS_DISPATCHED_AND_CLOSED', id, {
       letterCount: lettersRes.rows.length,
-      approver: req.user.full_name
+      approver: req.user.full_name,
+      nextStatus
     }, req.ip);
 
     if (req.io) {
@@ -584,7 +612,9 @@ exports.submitManagementLetterDecision = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Approved ${lettersRes.rows.length} letter(s). Dispatched to employee(s) and CC recipients. Incident is officially CLOSED.`
+      message: hasRemainingTraining
+        ? `Approved ${lettersRes.rows.length} letter(s). Dispatched to employee(s) and CC recipients. Incident remains ACTIVE for Mandatory Training.`
+        : `Approved ${lettersRes.rows.length} letter(s). Dispatched to employee(s) and CC recipients. Incident is officially CLOSED.`
     });
   } catch (error) {
     await client.query('ROLLBACK');
