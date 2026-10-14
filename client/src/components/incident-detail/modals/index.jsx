@@ -123,21 +123,28 @@ export function ManagementDecisionModal({
       if (!mdProposedOutcome && incidentProposedOutcome) {
         setMdProposedOutcome(incidentProposedOutcome);
       }
-      if (responsibleEmployees.length > 0 && (!mdResponsibleEmployees || mdResponsibleEmployees.length === 0)) {
-        if (setMdResponsibleEmployees) setMdResponsibleEmployees(responsibleEmployees);
+      if (setMdResponsibleEmployees) {
+        if (responsibleEmployees && responsibleEmployees.length > 0) {
+          setMdResponsibleEmployees(JSON.parse(JSON.stringify(responsibleEmployees)));
+        } else if (!mdResponsibleEmployees) {
+          setMdResponsibleEmployees([]);
+        }
       }
     }
   }, [show]);
 
   const effectiveOutcome = (decision === 'DISAGREE_MODIFY' ? mdProposedOutcome : incidentProposedOutcome) || '';
-  const outcomeLower = effectiveOutcome.toLowerCase();
+  const allCurrentOutcomes = [
+    effectiveOutcome,
+    ...(mdResponsibleEmployees || []).flatMap(e => e.outcomes || [])
+  ].join(' ').toLowerCase();
 
-  const isPenaltyOutcome = outcomeLower.includes('penalty') || outcomeLower.includes('deduction');
+  const isPenaltyOutcome = allCurrentOutcomes.includes('penalty') || allCurrentOutcomes.includes('deduction');
   const isLetterOutcome = [
     'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
     'suspension', 'transfer', 'demotion', 'termination', 'disciplinary'
-  ].some(k => outcomeLower.includes(k));
-  const isTrainingOutcome = ['training', 'counselling', 'education', 'mishandling'].some(k => outcomeLower.includes(k));
+  ].some(k => allCurrentOutcomes.includes(k));
+  const isTrainingOutcome = ['training', 'counselling', 'education', 'mishandling'].some(k => allCurrentOutcomes.includes(k));
   const isDirectClosure = !isLetterOutcome && !isTrainingOutcome;
 
   const penaltyWordsPreview = convertNumberToWords(penaltyAmount);
@@ -172,59 +179,56 @@ export function ManagementDecisionModal({
         </div>
 
         {decision === 'AGREE' && (
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-              IMC Recommended Overall Outcome(s)
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {parseProposedOutcomes(incidentProposedOutcome).length > 0 ? (
-                parseProposedOutcomes(incidentProposedOutcome).map((out, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
-                  >
-                    {out}
-                  </span>
-                ))
-              ) : (
-                <span className="text-xs text-slate-500 italic">No specific outcome recorded</span>
-              )}
+          <div className="space-y-3">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                IMC Recommended Overall Outcome(s)
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {parseProposedOutcomes(incidentProposedOutcome).length > 0 ? (
+                  parseProposedOutcomes(incidentProposedOutcome).map((out, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                    >
+                      {out}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs text-slate-500 italic">No specific outcome recorded</span>
+                )}
+              </div>
             </div>
 
-            {responsibleEmployees && responsibleEmployees.length > 0 && (
-              <div className="pt-2 border-t border-slate-200/70 space-y-1.5">
-                <span className="text-[11px] font-semibold text-slate-600 block">
-                  Per-Employee Recommended Outcomes:
-                </span>
-                <div className="space-y-1.5">
-                  {responsibleEmployees.map(emp => {
-                    const empOuts = (Array.isArray(emp.outcomes) && emp.outcomes.length > 0)
-                      ? emp.outcomes
-                      : parseProposedOutcomes(incidentProposedOutcome);
-                    return (
-                      <div key={emp.employee_id || emp.id} className="bg-white p-2 rounded-lg border border-slate-200 flex items-center justify-between gap-2 flex-wrap text-xs">
-                        <div>
-                          <span className="font-bold text-slate-800">{emp.full_name || emp.name}</span>
-                          <span className="text-slate-500 text-[11px] ml-1">({emp.emp_id || emp.employee_id || 'ID'}) — {emp.designation || 'Staff'}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {empOuts.map((o, idx) => (
-                            <span key={idx} className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              {o}
-                            </span>
-                          ))}
-                          {emp.penalty_amount && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              ₹{Number(emp.penalty_amount).toLocaleString('en-IN')}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+            {/* Management employee roster management: add or remove employees or adjust individual outcomes */}
+            <div className="p-3 bg-slate-50/70 border border-slate-200 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 block">
+                    Involved / Responsible Employee(s)
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    Management has executive authority to add, remove, or customize outcomes for employees involved.
+                  </p>
                 </div>
+                {mdResponsibleEmployees && mdResponsibleEmployees.length > 0 && (
+                  <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
+                    {mdResponsibleEmployees.length} staff
+                  </span>
+                )}
               </div>
-            )}
+
+              <ResponsibleEmployeePicker
+                selected={mdResponsibleEmployees || []}
+                onChange={(newEmps) => {
+                  if (setMdResponsibleEmployees) setMdResponsibleEmployees(newEmps);
+                }}
+                allowPerEmployeeOutcomes={true}
+                defaultOutcomes={parseProposedOutcomes(incidentProposedOutcome)}
+                label=""
+                placeholder="Search hospital staff directory to add or modify involved employee..."
+              />
+            </div>
           </div>
         )}
 

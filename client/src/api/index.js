@@ -197,6 +197,7 @@ export const lettersApi = {
 
 // ── Trainers ──────────────────────────────────────
 export const trainersApi = {
+  getMyAssignments: () => api.get('/incidents/trainers/my-assignments'),
   getTrainers: (incidentId) => api.get(`/incidents/${incidentId}/trainers`),
   assignTrainer: (incidentId, data) => api.post(`/incidents/${incidentId}/trainers/assign`, data),
   submitReport: (incidentId, formData) => api.post(`/incidents/${incidentId}/trainers/submit-report`, formData),

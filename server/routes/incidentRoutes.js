@@ -59,6 +59,7 @@ router.post('/:id/letters/submit-to-management', authenticate, authorize('imc', 
 router.post('/:id/letters/management-decision', authenticate, authorize('head_management', 'system_admin'), incidentLettersController.submitManagementLetterDecision);
 
 // Trainer & Training Workflow
+router.get('/trainers/my-assignments', authenticate, incidentTrainersController.getMyTrainingAssignments);
 router.get('/:id/trainers', authenticate, incidentTrainersController.getIncidentTrainers);
 router.post('/:id/trainers/assign', authenticate, authorize('imc', 'system_admin'), incidentTrainersController.assignTrainer);
 router.post('/:id/trainers/submit-report', authenticate, setUploadStage('trainer_report'), uploadIncidentAttachments, incidentTrainersController.submitTrainerReport);

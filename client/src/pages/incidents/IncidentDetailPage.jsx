@@ -183,9 +183,21 @@ export default function IncidentDetailPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['incident', id],
     queryFn: () => incidentsApi.get(id).then(r => r.data),
+    refetchInterval: (query) => {
+      const incStatus = query?.state?.data?.incident?.status || query?.state?.data?.status;
+      return ['closed', 'resolved', 'withdrawn'].includes(incStatus) ? false : 8000;
+    },
+    refetchOnWindowFocus: true,
   });
 
-  const refetch = () => qc.invalidateQueries({ queryKey: ['incident', id] });
+  const refetch = () => {
+    qc.invalidateQueries({ queryKey: ['incident', id] });
+    qc.invalidateQueries({ queryKey: ['incident', Number(id)] });
+    qc.invalidateQueries({ queryKey: ['incidents'] });
+    qc.invalidateQueries({ queryKey: ['dashboard-stats'] });
+    qc.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
+    qc.invalidateQueries({ queryKey: ['notifications'] });
+  };
 
   const withdrawMutation = useMutation({
     mutationFn: () => incidentsApi.withdraw(id, { reason: withdrawReason }),
@@ -237,9 +249,9 @@ export default function IncidentDetailPage() {
       }
       if (decisionType === 'DISAGREE_MODIFY') {
         if (mdProposedOutcome) fd.append('proposedOutcome', mdProposedOutcome);
-        if (mdResponsibleEmployees && mdResponsibleEmployees.length >= 0) {
-          fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
-        }
+      }
+      if (mdResponsibleEmployees && mdResponsibleEmployees.length >= 0) {
+        fd.append('responsibleEmployees', JSON.stringify(mdResponsibleEmployees));
       }
       if (mdPenaltyAmount) fd.append('penaltyAmount', mdPenaltyAmount);
       mdAttachments.forEach(f => fd.append('attachments', f));

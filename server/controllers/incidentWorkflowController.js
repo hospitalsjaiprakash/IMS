@@ -220,6 +220,11 @@ exports.submitHodFeedback = async (req, res) => {
 
     await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc, deptId, allResponded }, req.ip);
 
+    if (req.io) {
+      const currentStatus = redirectToImc ? 'redirect_requested' : (allResponded ? (incident.status === 'with_hod_and_imc' ? 'with_hod_and_imc' : 'with_imc') : incident.status);
+      req.io.emit('incident_updated', { id, status: currentStatus });
+    }
+
     res.json({ success: true, allResponded });
 
   } catch (error) {
@@ -468,6 +473,10 @@ exports.submitImcFeedback = async (req, res) => {
     await client.query('COMMIT');
     await auditLog(req.user.id, 'IMC_FEEDBACK_SUBMITTED', id, { forwardToMd }, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: forwardToMd ? 'with_head_management' : incident.status });
+    }
+
     res.json({ success: true });
 
   } catch (error) {
@@ -574,11 +583,15 @@ exports.submitManagementAction = async (req, res) => {
         await createNotification(member.id, id, 'Incident Reverted by Management', `Management returned incident for ${decision === 'DISAGREE_REINVESTIGATE' ? 're-investigation' : 'revised feedback'}.`, 'management_action');
       }
 
+      if (req.io) {
+        req.io.emit('incident_updated', { id, status: nextStatus });
+      }
+
       return res.json({ success: true, message: 'Reverted to IMC.' });
     }
 
-    // Update responsible / involved employees if explicitly modified by Management
-    if (decision === 'DISAGREE_MODIFY' && responsibleEmployees !== undefined) {
+    // Update responsible / involved employees if provided by Management
+    if (responsibleEmployees !== undefined && responsibleEmployees !== null) {
       if (typeof responsibleEmployees === 'string') {
         try { responsibleEmployees = JSON.parse(responsibleEmployees); } catch(e) {}
       }
@@ -794,6 +807,10 @@ exports.submitManagementAction = async (req, res) => {
     await client.query('COMMIT');
     await auditLog(req.user.id, 'MANAGEMENT_DECISION', id, { decision, nextStatus }, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: nextStatus });
+    }
+
     res.json({ success: true, message: returnMessage, nextStatus });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -877,6 +894,10 @@ exports.generateImcReport = async (req, res) => {
 
     await auditLog(req.user.id, 'IMC_REPORT_GENERATED', id, {}, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: newStatus });
+    }
+
     res.json({ success: true, message: 'IMC Report generated successfully.' });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -908,6 +929,11 @@ exports.closeIncident = async (req, res) => {
     await createNotification(incident.reporter_id, id, 'Incident Closed', `Incident ${incident.reference_id} has been officially closed.`, 'incident_closed');
     
     await auditLog(req.user.id, 'INCIDENT_CLOSED', id, {}, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'closed' });
+    }
+
     res.json({ success: true, message: 'Incident officially closed.' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to close incident' });
@@ -1118,6 +1144,10 @@ exports.submitInvestigatorReport = async (req, res) => {
       );
     }
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'with_imc_review' });
+    }
+
     res.json({
       success: true,
       allCompleted: true,
@@ -1216,6 +1246,10 @@ exports.rejectInvestigatorReport = async (req, res) => {
       }
     }
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'with_investigator' });
+    }
+
     res.json({ success: true, message: 'Incident successfully scheduled for reinvestigation.' });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -1239,6 +1273,11 @@ exports.reopenIncident = async (req, res) => {
       [id]
     );
     await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id, status: 'with_imc' });
+    }
+
     res.json({ success: true });
   } catch (e) {
     console.error('[POST /incidents/:id/reopen] error:', e);

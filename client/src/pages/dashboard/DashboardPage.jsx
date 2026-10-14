@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { incidentsApi } from '../../api';
+import { incidentsApi, trainersApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import { StatCard, EmptyState, Modal, Tabs, SkeletonCard, InsightSummary, StatusBadge, SLABadge } from '../../components/ui';
 import { GlassTooltip } from '../../components/ui/GlassTooltip';
@@ -9,7 +9,7 @@ import { motion } from 'framer-motion';
 import {
   FileText, AlertTriangle, CheckCircle, Clock, TrendingUp,
   FilePlus, ClipboardList, BarChart3, Eye, Inbox, UserCheck, Timer, XOctagon, LayoutDashboard,
-  Activity, Paperclip, Flame, ShieldAlert, ChevronRight
+  Activity, Paperclip, Flame, ShieldAlert, ChevronRight, GraduationCap
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -44,6 +44,12 @@ export default function DashboardPage() {
     queryFn: () => incidentsApi.list({ limit: 1000 }).then(r => r.data.incidents),
     enabled: user?.role === 'hod'
   });
+
+  const { data: myTrainings = [] } = useQuery({
+    queryKey: ['my-trainings'],
+    queryFn: () => trainersApi.getMyAssignments().then(r => r.data || []),
+  });
+  const pendingTrainings = myTrainings.filter(t => t.status === 'assigned');
 
   const hodQueue = allReceived.filter(i => ['submitted', 'with_hod', 'with_hod_and_imc'].includes(i.status));
   const overdueCount = hodQueue.filter(i => ((new Date() - new Date(i.created_at)) / 3600000 > 48)).length;
@@ -228,6 +234,36 @@ export default function DashboardPage() {
               className="btn-primary bg-amber-600 hover:bg-amber-700 text-white text-xs px-3.5 py-2 font-semibold whitespace-nowrap self-end sm:self-center shadow-xs"
             >
               Give Feedback Now →
+            </button>
+          </div>
+        )}
+
+        {/* Assigned Trainer Duty Banner */}
+        {pendingTrainings.length > 0 && (
+          <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border-2 border-amber-400/80 rounded-2xl p-4 flex items-center justify-between gap-4 flex-wrap shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                <GraduationCap size={22} />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-amber-950 flex items-center gap-2">
+                  <span>Trainer Duty: Clinical Action Required</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white shadow-xs">
+                    {pendingTrainings.length} {pendingTrainings.length === 1 ? 'Session' : 'Sessions'} Pending
+                  </span>
+                </h4>
+                <p className="text-xs text-amber-900/85 mt-0.5">
+                  You are designated as trainer for: <strong>{pendingTrainings[0].training_topic}</strong> ({pendingTrainings[0].reference_id})
+                  {pendingTrainings[0].trainee_name ? ` with ${pendingTrainings[0].trainee_name}` : ''}.
+                  Please conduct the session and submit attendance proof.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate(`/incidents/${pendingTrainings[0].incident_id}`)}
+              className="btn-primary text-xs bg-amber-600 hover:bg-amber-700 border-amber-600 shrink-0 shadow-sm flex items-center gap-1.5 ml-auto"
+            >
+              <Eye size={13} /> Open Incident & Submit Report
             </button>
           </div>
         )}

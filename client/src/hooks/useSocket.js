@@ -37,10 +37,17 @@ export function useSocket() {
     socket.on('incident_updated', (data) => {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       if (data?.id) {
-        queryClient.invalidateQueries({ queryKey: ['incident', data.id] });
+        queryClient.invalidateQueries({ queryKey: ['incident', String(data.id)] });
+        queryClient.invalidateQueries({ queryKey: ['incident', Number(data.id)] });
+        queryClient.invalidateQueries({
+          predicate: (query) =>
+            query.queryKey[0] === 'incident' &&
+            String(query.queryKey[1]) === String(data.id)
+        });
       }
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
       queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
     });
 
     socket.on('new_notification', (data) => {

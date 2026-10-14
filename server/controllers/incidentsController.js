@@ -299,6 +299,14 @@ exports.getIncidents = async (req, res) => {
           WHERE inv.incident_id = i.id AND inv.investigator_id = $${paramIdx}
         )
         OR EXISTS (
+          SELECT 1 FROM incident_trainers tr
+          WHERE tr.incident_id = i.id AND tr.trainer_id = $${paramIdx}
+        )
+        OR EXISTS (
+          SELECT 1 FROM incident_responsible_employees ire
+          WHERE ire.incident_id = i.id AND ire.employee_id = $${paramIdx}
+        )
+        OR EXISTS (
           SELECT 1 FROM incident_departments id2
           JOIN departments d ON d.id = id2.department_id
           WHERE id2.incident_id = i.id AND (

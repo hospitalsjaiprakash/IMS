@@ -6,6 +6,34 @@ const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeServi
 const { buildTrainerAppointmentLetterData, formatDate } = require('../utils/letterTemplates');
 
 // =============================================
+// GET PERSONAL TRAINER ASSIGNMENTS
+// =============================================
+exports.getMyTrainingAssignments = async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT t.*,
+              i.reference_id,
+              i.status as incident_status,
+              i.description as incident_description,
+              i.incident_date,
+              i.severity as incident_severity,
+              u_assign.full_name as assigned_by_name
+       FROM incident_trainers t
+       JOIN incidents i ON i.id = t.incident_id
+       LEFT JOIN users u_assign ON u_assign.id = t.assigned_by
+       WHERE t.trainer_id = $1
+       ORDER BY t.created_at DESC`,
+      [req.user.id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[GET /trainers/my-assignments] error:', error);
+    res.status(500).json({ error: 'Failed to fetch personal trainer assignments.' });
+  }
+};
+
+// =============================================
 // GET TRAINERS / TRAINING ASSIGNMENTS
 // =============================================
 exports.getIncidentTrainers = async (req, res) => {
@@ -348,7 +376,11 @@ exports.submitTrainerReport = async (req, res) => {
       durationHours,
       methodology,
       trainerReportText,
-      summary
+      summary,
+      venue,
+      preAssessment,
+      postAssessment,
+      capaRecommendations
     } = req.body;
 
     const reportContent = (trainerReportText || summary || '').trim();
@@ -415,19 +447,32 @@ exports.submitTrainerReport = async (req, res) => {
       calculatedMinutes = Math.round(parseFloat(durationHours) * 60);
     }
 
+    const fullReportSummary = [
+      venue ? `[Venue / Location: ${venue}]` : null,
+      preAssessment ? `[Pre-Training Evaluation: ${preAssessment}]` : null,
+      postAssessment ? `[Post-Training Competency: ${postAssessment}]` : null,
+      reportContent ? `\nSummary of Session & Findings:\n${reportContent}` : null,
+      capaRecommendations ? `\nCorrective & Preventive Action (CAPA) Recommendation:\n${capaRecommendations}` : null
+    ].filter(Boolean).join('\n');
+
     // Update assignment to completed
     await client.query(
       `UPDATE incident_trainers
        SET status = 'completed', conducted_at = $1, duration_minutes = $2,
            methodology = $3, trainer_report_text = $4,
-           trainer_attachment_id = COALESCE($5, trainer_attachment_id),
+           venue = $5, pre_assessment = $6, post_assessment = $7, capa_recommendations = $8,
+           trainer_attachment_id = COALESCE($9, trainer_attachment_id),
            updated_at = NOW()
-       WHERE id = $6`,
+       WHERE id = $10`,
       [
         conductedAt || completionDate || new Date(),
         calculatedMinutes,
         methodology || 'Practical demonstration and protocol review',
-        reportContent,
+        fullReportSummary,
+        venue || null,
+        preAssessment || null,
+        postAssessment || null,
+        capaRecommendations || null,
         attachmentId,
         assignmentId
       ]

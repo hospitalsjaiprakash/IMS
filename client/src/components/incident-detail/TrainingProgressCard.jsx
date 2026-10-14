@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { 
   GraduationCap, CheckCircle2, Clock, Calendar, Download, Eye, 
-  ShieldCheck, UserCheck, AlertCircle, Award, Users, RefreshCw, FileText, XCircle, Printer, QrCode 
+  ShieldCheck, UserCheck, AlertCircle, Award, Users, RefreshCw, FileText, XCircle, Printer, QrCode,
+  MapPin, Target, Lightbulb
 } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi, attachmentsApi, UPLOADS_URL } from '../../api';
@@ -408,22 +409,56 @@ export default function TrainingProgressCard({
 
             {/* Completion Report Details (if submitted) */}
             {t.status !== 'assigned' && (
-              <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs space-y-2">
-                <div className="flex items-center justify-between text-[11px] text-slate-500 border-b border-slate-100 pb-1.5 flex-wrap gap-2">
+              <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs space-y-2.5">
+                <div className="flex items-center justify-between text-[11px] text-slate-500 border-b border-slate-100 pb-2 flex-wrap gap-2">
                   <span>
                     Conducted on: <strong className="text-slate-700">{t.completion_date?.split('T')[0] || t.conducted_at?.split('T')[0]}</strong>
                   </span>
                   <span>
                     Duration: <strong className="text-slate-700">{t.duration_hours || '1.0'} hrs</strong>
                   </span>
+                  {t.venue && (
+                    <span className="flex items-center gap-1">
+                      <MapPin size={11} className="text-slate-400" />
+                      Venue: <strong className="text-slate-700">{t.venue}</strong>
+                    </span>
+                  )}
                   <span>
                     Methodology: <strong className="text-slate-700">{t.methodology || 'Practical demonstration'}</strong>
                   </span>
                 </div>
 
+                {/* Structured Competency Assessment Badges */}
+                {(t.pre_assessment || t.post_assessment) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                    {t.pre_assessment && (
+                      <div className="p-2 bg-amber-50/70 border border-amber-200/80 rounded-lg text-amber-900">
+                        <span className="font-bold block text-[10px] text-amber-700 uppercase">Pre-Training Competency:</span>
+                        <span>{t.pre_assessment}</span>
+                      </div>
+                    )}
+                    {t.post_assessment && (
+                      <div className="p-2 bg-emerald-50/70 border border-emerald-200/80 rounded-lg text-emerald-900">
+                        <span className="font-bold block text-[10px] text-emerald-700 uppercase">Post-Training Certification:</span>
+                        <span className="font-medium">{t.post_assessment}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-line">
                   <strong>Summary & Findings:</strong> {t.summary || t.trainer_report_text || 'Training conducted as instructed.'}
                 </p>
+
+                {t.capa_recommendations && (
+                  <div className="p-2 bg-amber-50/60 border border-amber-200/70 rounded-lg text-[11px] text-amber-950 flex items-start gap-1.5">
+                    <Lightbulb size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-amber-900">Trainer CAPA Recommendation: </span>
+                      {t.capa_recommendations}
+                    </div>
+                  </div>
+                )}
 
                 {(t.report_attachment_id || t.trainer_attachment_id) && (
                   <div className="pt-2 flex items-center justify-between border-t border-slate-100 text-[11px]">

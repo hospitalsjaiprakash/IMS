@@ -309,9 +309,9 @@ const sendEmail = async (to, templateData, options = {}) => {
         try {
           const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
           await query(
-            `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, details)
-             VALUES ($1, $2, 'EMAIL', $3, 'SKIPPED', 'Email notifications disabled in System Settings')`,
-            [userRes.rows[0]?.id || null, to, templateData.subject]
+            `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, error_message)
+             VALUES ($1, $2, 'EMAIL', $3, 'FAILED', $4)`,
+            [userRes.rows[0]?.id || null, to, templateData.subject, 'Email notifications disabled in System Settings']
           );
         } catch (_) {}
         return true;
