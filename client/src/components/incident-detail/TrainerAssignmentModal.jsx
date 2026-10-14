@@ -26,7 +26,16 @@ export default function TrainerAssignmentModal({
     if (!show) return;
 
     if (responsibleEmployees.length > 0) {
-      setSelectedTraineeIds(responsibleEmployees.map(e => e.employee_id || e.emp_id || e.id));
+      // Prioritize trainees whose outcomes explicitly include training/counselling or have needs_training flag
+      const trainingMandatedEmps = responsibleEmployees.filter(e => 
+        e.needs_training || 
+        (Array.isArray(e.outcomes) && e.outcomes.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling')))
+      );
+      if (trainingMandatedEmps.length > 0) {
+        setSelectedTraineeIds(trainingMandatedEmps.map(e => e.employee_id || e.emp_id || e.id));
+      } else {
+        setSelectedTraineeIds(responsibleEmployees.map(e => e.employee_id || e.emp_id || e.id));
+      }
     }
 
     if (!topic && incident) {
@@ -149,6 +158,8 @@ export default function TrainerAssignmentModal({
                 const idVal = emp.employee_id || emp.emp_id || emp.id;
                 const isChecked = selectedTraineeIds.includes(idVal);
 
+                const isTrainingMandated = emp.needs_training || (Array.isArray(emp.outcomes) && emp.outcomes.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling')));
+
                 return (
                   <button
                     key={idVal}
@@ -178,9 +189,15 @@ export default function TrainerAssignmentModal({
                         </p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
-                      Mandatory Trainee
-                    </span>
+                    {isTrainingMandated ? (
+                      <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded">
+                        Training Mandated
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+                        Involved Staff
+                      </span>
+                    )}
                   </button>
                 );
               })}

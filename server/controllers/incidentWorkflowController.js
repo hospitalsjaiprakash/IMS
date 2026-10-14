@@ -367,12 +367,17 @@ exports.submitImcFeedback = async (req, res) => {
 
     // Save responsible / involved employees if provided by IMC
     let imcResponsibleEmployees = req.body.responsibleEmployees || req.body.involvedEmployees;
+    let anyEmployeeNeedsTraining = false;
+    const collectedEmployeeOutcomes = new Set();
+
     if (imcResponsibleEmployees !== undefined) {
       if (typeof imcResponsibleEmployees === 'string') {
         try { imcResponsibleEmployees = JSON.parse(imcResponsibleEmployees); } catch(e) {}
       }
       if (Array.isArray(imcResponsibleEmployees)) {
         await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
+        const { numberToWords } = require('../utils/numberToWords');
+
         for (const emp of imcResponsibleEmployees) {
           let deptId = emp.department_id;
           if (!deptId && emp.department) {
@@ -381,10 +386,41 @@ exports.submitImcFeedback = async (req, res) => {
           }
           const validUserId = await resolveEmployeeUserId(emp, client);
           if (validUserId) {
+            const empOutcomes = Array.isArray(emp.outcomes)
+              ? emp.outcomes.filter(Boolean)
+              : (typeof emp.outcomes === 'string' && emp.outcomes.trim() ? emp.outcomes.split(',').map(s => s.trim()).filter(Boolean) : []);
+
+            empOutcomes.forEach(o => collectedEmployeeOutcomes.add(o));
+
+            const empNeedsTraining = Boolean(
+              emp.needs_training ||
+              empOutcomes.some(o => {
+                const ol = o.toLowerCase();
+                return ol.includes('training') || ol.includes('counselling') || ol.includes('education');
+              })
+            );
+            if (empNeedsTraining) anyEmployeeNeedsTraining = true;
+
+            const pAmt = emp.penalty_amount ? Number(emp.penalty_amount) : null;
+            const pWords = pAmt ? numberToWords(pAmt) : null;
+
             await client.query(
-              `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
-               VALUES ($1, $2, $3, $4, $5)`,
-              [id, validUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
+              `INSERT INTO incident_responsible_employees (
+                 incident_id, employee_id, department_id, needs_training, assigned_by,
+                 outcomes, penalty_amount, penalty_amount_words, notes
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [
+                id,
+                validUserId,
+                deptId || null,
+                empNeedsTraining,
+                req.user.id,
+                empOutcomes,
+                pAmt,
+                pWords,
+                emp.notes || null
+              ]
             );
           }
         }
@@ -392,11 +428,20 @@ exports.submitImcFeedback = async (req, res) => {
       }
     }
 
-    const cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
-    if (severity || cleanProposedOutcome) {
+    let cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
+    if (!cleanProposedOutcome && collectedEmployeeOutcomes.size > 0) {
+      cleanProposedOutcome = Array.from(collectedEmployeeOutcomes).join(', ');
+    }
+
+    if (severity || cleanProposedOutcome || anyEmployeeNeedsTraining) {
       await client.query(
-        `UPDATE incidents SET severity = COALESCE($1, severity), proposed_outcome = COALESCE($2, proposed_outcome), updated_at = NOW() WHERE id = $3`,
-        [severity || null, cleanProposedOutcome || null, id]
+        `UPDATE incidents 
+         SET severity = COALESCE($1, severity), 
+             proposed_outcome = COALESCE($2, proposed_outcome),
+             needs_training = CASE WHEN $3 = TRUE THEN TRUE ELSE needs_training END,
+             updated_at = NOW() 
+         WHERE id = $4`,
+        [severity || null, cleanProposedOutcome || null, anyEmployeeNeedsTraining, id]
       );
     }
 
@@ -541,11 +586,10 @@ exports.submitManagementAction = async (req, res) => {
         responsibleEmployees = [];
       }
       
-      requireTraining = requireTraining === 'true' || requireTraining === true || responsibleEmployees.some(e => e.needs_training);
-
       await client.query(`DELETE FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
 
       if (responsibleEmployees.length > 0) {
+        const { numberToWords } = require('../utils/numberToWords');
         for (const emp of responsibleEmployees) {
           let deptId = emp.department_id;
           if (!deptId && emp.department) {
@@ -554,10 +598,39 @@ exports.submitManagementAction = async (req, res) => {
           }
           const validUserId = await resolveEmployeeUserId(emp, client);
           if (validUserId) {
+            const empOutcomes = Array.isArray(emp.outcomes)
+              ? emp.outcomes.filter(Boolean)
+              : (typeof emp.outcomes === 'string' && emp.outcomes.trim() ? emp.outcomes.split(',').map(s => s.trim()).filter(Boolean) : []);
+
+            const empNeedsTraining = Boolean(
+              emp.needs_training ||
+              empOutcomes.some(o => {
+                const ol = o.toLowerCase();
+                return ol.includes('training') || ol.includes('counselling') || ol.includes('education');
+              })
+            );
+            if (empNeedsTraining) requireTraining = true;
+
+            const pAmt = emp.penalty_amount ? Number(emp.penalty_amount) : null;
+            const pWords = pAmt ? numberToWords(pAmt) : null;
+
             await client.query(
-              `INSERT INTO incident_responsible_employees (incident_id, employee_id, department_id, needs_training, assigned_by)
-               VALUES ($1, $2, $3, $4, $5)`,
-              [id, validUserId, deptId || null, emp.needs_training ? true : false, req.user.id]
+              `INSERT INTO incident_responsible_employees (
+                 incident_id, employee_id, department_id, needs_training, assigned_by,
+                 outcomes, penalty_amount, penalty_amount_words, notes
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [
+                id,
+                validUserId,
+                deptId || null,
+                empNeedsTraining,
+                req.user.id,
+                empOutcomes,
+                pAmt,
+                pWords,
+                emp.notes || null
+              ]
             );
           }
         }
@@ -577,7 +650,18 @@ exports.submitManagementAction = async (req, res) => {
     const respCountRes = await client.query(`SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1`, [id]);
     const hasEmployeeRoster = parseInt(respCountRes.rows[0].count) > 0 || incident.has_responsible_person;
 
-    const isLetterOutcome = [
+    const letterOutcomeCheck = await client.query(
+      `SELECT COUNT(*) FROM incident_responsible_employees r
+       WHERE r.incident_id = $1 AND EXISTS (
+         SELECT 1 FROM unnest(r.outcomes) AS o
+         WHERE LOWER(o) LIKE '%warning%' OR LOWER(o) LIKE '%advisory%' OR LOWER(o) LIKE '%penalty%' 
+            OR LOWER(o) LIKE '%suggestion%' OR LOWER(o) LIKE '%deduction%' OR LOWER(o) LIKE '%suspension%'
+       )`,
+      [id]
+    );
+    const hasEmployeeLetterOutcome = parseInt(letterOutcomeCheck.rows[0]?.count || '0', 10) > 0;
+
+    const isLetterOutcome = hasEmployeeLetterOutcome || [
       'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
       'suspension', 'transfer', 'demotion', 'termination', 'disciplinary'
     ].some(k => outcomeLower.includes(k)) || (hasEmployeeRoster && !outcomeLower.includes('training') && !outcomeLower.includes('no action'));
@@ -591,10 +675,31 @@ exports.submitManagementAction = async (req, res) => {
     ].some(k => outcomeLower.includes(k));
 
     if (isTrainingOutcome) {
-      await client.query(
-        `UPDATE incident_responsible_employees SET needs_training = TRUE WHERE incident_id = $1`,
+      // Mark specific employees needing training, or all if none specifically designated
+      const specificTrainingCount = await client.query(
+        `SELECT COUNT(*) FROM incident_responsible_employees 
+         WHERE incident_id = $1 AND EXISTS (
+           SELECT 1 FROM unnest(outcomes) o 
+           WHERE LOWER(o) LIKE '%training%' OR LOWER(o) LIKE '%counselling%' OR LOWER(o) LIKE '%education%'
+         )`,
         [id]
       );
+      if (parseInt(specificTrainingCount.rows[0]?.count || '0', 10) > 0) {
+        await client.query(
+          `UPDATE incident_responsible_employees 
+           SET needs_training = TRUE 
+           WHERE incident_id = $1 AND EXISTS (
+             SELECT 1 FROM unnest(outcomes) o 
+             WHERE LOWER(o) LIKE '%training%' OR LOWER(o) LIKE '%counselling%' OR LOWER(o) LIKE '%education%'
+           )`,
+          [id]
+        );
+      } else {
+        await client.query(
+          `UPDATE incident_responsible_employees SET needs_training = TRUE WHERE incident_id = $1`,
+          [id]
+        );
+      }
     }
 
     let nextStatus = 'closed';

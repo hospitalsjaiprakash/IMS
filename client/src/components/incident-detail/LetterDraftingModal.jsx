@@ -70,32 +70,39 @@ export default function LetterDraftingModal({
       setCcList(Array.isArray(existingLetter.cc_list || existingLetter.cc_recipients) ? (existingLetter.cc_list || existingLetter.cc_recipients) : []);
       setQrCodeUrl(existingLetter.qr_code_data || existingLetter.qr_code_url || '');
     } else {
-      const targetEmp = initialEmployee?.employee_id || initialEmployee?.id || responsibleEmployees[0]?.employee_id || responsibleEmployees[0]?.id || '';
-      setSelectedEmpId(targetEmp);
+      const targetEmpId = initialEmployee?.employee_id || initialEmployee?.id || responsibleEmployees[0]?.employee_id || responsibleEmployees[0]?.id || '';
+      setSelectedEmpId(targetEmpId);
 
-      // Determine recommended letter type from incident proposed outcome
-      const outcome = (incident?.management_decision === 'DISAGREE_MODIFY' && incident?.proposed_outcome)
-        ? incident.proposed_outcome
-        : (incident?.proposed_outcome || '');
-      const outLower = outcome.toLowerCase();
+      const targetEmpObj = responsibleEmployees.find(e => (e.employee_id || e.id) === targetEmpId) || initialEmployee || {};
+      const empOutcomes = (Array.isArray(targetEmpObj.outcomes) && targetEmpObj.outcomes.length > 0)
+        ? targetEmpObj.outcomes
+        : parseProposedOutcomes(incident?.proposed_outcome);
+
+      const outJoined = empOutcomes.join(' ').toLowerCase();
       let defaultType = 'warning_letter';
-      if (outLower.includes('advisory')) defaultType = 'advisory_letter';
-      else if (outLower.includes('suggestion')) defaultType = 'suggestion_letter';
-      else if (outLower.includes('penalty') || outLower.includes('deduction')) defaultType = 'warning_penalty_letter';
+      if (outJoined.includes('advisory')) defaultType = 'advisory_letter';
+      else if (outJoined.includes('suggestion')) defaultType = 'suggestion_letter';
+      else if (outJoined.includes('penalty') || outJoined.includes('deduction')) defaultType = 'warning_penalty_letter';
 
       setLetterType(defaultType);
 
-      // Prefill management penalty amount if specified
-      if (incident?.penalty_amount && (defaultType === 'warning_penalty_letter')) {
-        setPenaltyAmount(String(incident.penalty_amount));
-        setPenaltyAmountWords(incident.penalty_amount_words || convertNumberToWords(incident.penalty_amount));
+      let empPenalty = null;
+      if (targetEmpObj.penalty_amount) {
+        empPenalty = String(targetEmpObj.penalty_amount);
+      } else if (incident?.penalty_amount && defaultType === 'warning_penalty_letter') {
+        empPenalty = String(incident.penalty_amount);
+      }
+
+      if (empPenalty) {
+        setPenaltyAmount(empPenalty);
+        setPenaltyAmountWords(targetEmpObj.penalty_amount_words || incident?.penalty_amount_words || convertNumberToWords(empPenalty));
       } else {
         setPenaltyAmount('');
         setPenaltyAmountWords('');
       }
 
-      if (targetEmp) {
-        loadDefaults(targetEmp, defaultType);
+      if (targetEmpId) {
+        loadDefaults(targetEmpId, defaultType, empPenalty);
       }
     }
   }, [show, existingLetter, initialEmployee, incident]);
@@ -157,7 +164,30 @@ export default function LetterDraftingModal({
 
   const handleEmployeeChange = (empId) => {
     setSelectedEmpId(empId);
-    loadDefaults(empId, letterType);
+    const emp = responsibleEmployees.find(e => (e.employee_id || e.id) === empId);
+    let nextPenalty = null;
+    let nextType = letterType;
+    if (emp) {
+      if (emp.penalty_amount) {
+        nextPenalty = String(emp.penalty_amount);
+        setPenaltyAmount(nextPenalty);
+        setPenaltyAmountWords(emp.penalty_amount_words || convertNumberToWords(nextPenalty));
+      } else {
+        setPenaltyAmount('');
+        setPenaltyAmountWords('');
+      }
+
+      const empOutcomes = (Array.isArray(emp.outcomes) && emp.outcomes.length > 0)
+        ? emp.outcomes
+        : parseProposedOutcomes(incident?.proposed_outcome);
+      const outJoined = empOutcomes.join(' ').toLowerCase();
+      if (outJoined.includes('advisory')) nextType = 'advisory_letter';
+      else if (outJoined.includes('suggestion')) nextType = 'suggestion_letter';
+      else if (outJoined.includes('penalty') || outJoined.includes('deduction')) nextType = 'warning_penalty_letter';
+      else if (outJoined.includes('warning')) nextType = 'warning_letter';
+      setLetterType(nextType);
+    }
+    loadDefaults(empId, nextType, nextPenalty);
   };
 
   const handleTypeChange = (type) => {
@@ -211,6 +241,9 @@ export default function LetterDraftingModal({
   );
 
   const approvedOutcomes = parseProposedOutcomes(incident?.proposed_outcome);
+  const employeeOutcomes = (Array.isArray(selectedEmployeeObj.outcomes) && selectedEmployeeObj.outcomes.length > 0)
+    ? selectedEmployeeObj.outcomes
+    : approvedOutcomes;
 
   const handleSave = async () => {
     if (!selectedEmpId) {
@@ -302,19 +335,30 @@ export default function LetterDraftingModal({
     >
       <div className="space-y-4">
         {/* Recommended Outcomes Banner */}
-        {approvedOutcomes.length > 0 && (
+        {employeeOutcomes.length > 0 && (
           <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-1">
               <span className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles size={13} className="text-indigo-600" />
-                Management Mandated Outcome(s):
+                {selectedEmployeeObj.full_name || selectedEmployeeObj.name ? (
+                  <>Mandated Outcome(s) for <span className="underline decoration-indigo-400">{selectedEmployeeObj.full_name || selectedEmployeeObj.name}</span>:</>
+                ) : (
+                  <>Management Mandated Outcome(s):</>
+                )}
               </span>
-              <span className="text-[10px] text-indigo-600 font-medium">
-                Click to switch template
-              </span>
+              <div className="flex items-center gap-2">
+                {selectedEmployeeObj.penalty_amount && (
+                  <span className="text-[11px] font-bold text-rose-700 bg-rose-100/80 px-2 py-0.5 rounded border border-rose-200">
+                    Individual Penalty: ₹{Number(selectedEmployeeObj.penalty_amount).toLocaleString('en-IN')}
+                  </span>
+                )}
+                <span className="text-[10px] text-indigo-600 font-medium">
+                  Click to switch template
+                </span>
+              </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {approvedOutcomes.map((out, idx) => {
+              {employeeOutcomes.map((out, idx) => {
                 const outLower = out.toLowerCase();
                 const isTraining = outLower.includes('training') || outLower.includes('counselling');
 

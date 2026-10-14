@@ -39,7 +39,23 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
           <p className="whitespace-pre-wrap">{incident.description}</p>
         </div>
         
-        {incident.has_responsible_person && (
+        {incident.responsible_employees && incident.responsible_employees.length > 0 ? (
+          <div className="mt-6 pt-4 border-t border-slate-200">
+            <p className="font-bold text-base mb-2 uppercase tracking-wide">Responsible Personnel & Mandated Outcomes</p>
+            <div className="space-y-2">
+              {incident.responsible_employees.map(emp => (
+                <div key={emp.employee_id || emp.id} className="text-sm">
+                  <p><strong>{emp.full_name}</strong> ({emp.emp_id || 'ID'}) — {emp.designation || 'Staff'} ({emp.department_name || ''})</p>
+                  <p className="text-xs text-slate-600">
+                    Mandated Outcome(s): {(Array.isArray(emp.outcomes) && emp.outcomes.length > 0 ? emp.outcomes : parseProposedOutcomes(incident.proposed_outcome)).join(', ') || 'N/A'}
+                    {emp.penalty_amount ? ` | Penalty: ₹${emp.penalty_amount}` : ''}
+                    {emp.needs_training ? ` | Training: ${emp.training_completed ? 'Completed' : 'Pending'}` : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : incident.has_responsible_person ? (
           <div className="mt-6 pt-4 border-t border-slate-200">
             <p className="font-bold text-base mb-2 uppercase tracking-wide">Responsible Personnel Details</p>
             <p><strong>Responsible Person:</strong> {incident.responsible_person_name}</p>
@@ -49,7 +65,7 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
               <p><strong>Mandatory Training Completed:</strong> No (Pending)</p>
             ) : null}
           </div>
-        )}
+        ) : null}
 
         {finalReport && (
           <div className="mt-6 pt-4 border-t border-slate-200 bg-slate-50 p-4 border border-slate-300">
@@ -139,7 +155,62 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
           )}
           <DetailRow icon={FileText} label="Category" value={incident.incident_category} />
           <DetailRow icon={FileText} label="Type" value={incident.incident_type} />
-          {incident.has_responsible_person && (
+          {incident.responsible_employees && incident.responsible_employees.length > 0 ? (
+            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                Responsible Personnel ({incident.responsible_employees.length})
+              </span>
+              <div className="space-y-2">
+                {incident.responsible_employees.map(emp => {
+                  const empOutcomes = (Array.isArray(emp.outcomes) && emp.outcomes.length > 0)
+                    ? emp.outcomes
+                    : parseProposedOutcomes(incident.proposed_outcome);
+
+                  return (
+                    <div key={emp.employee_id || emp.id} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                          <User size={13} className="text-slate-400 shrink-0" />
+                          <span>{emp.full_name || emp.name}</span>
+                          <span className="text-[11px] font-mono text-slate-500 font-normal">({emp.emp_id || emp.employee_id || 'ID'})</span>
+                        </div>
+                        <span className="text-[11px] text-slate-500">
+                          {[emp.designation, emp.department_name].filter(Boolean).join(' • ')}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                        {empOutcomes.map((out, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                          >
+                            {out}
+                          </span>
+                        ))}
+                        {emp.penalty_amount && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                            Penalty: ₹{Number(emp.penalty_amount).toLocaleString('en-IN')}
+                          </span>
+                        )}
+                        {emp.needs_training && (
+                          emp.training_completed ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              <CheckCircle size={11} /> Training Completed
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                              <AlertTriangle size={11} /> Training Pending
+                            </span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : incident.has_responsible_person ? (
             <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
               <DetailRow icon={User} label="Responsible Person" value={incident.responsible_person_name || '—'} />
               {incident.training_completed ? (
@@ -152,7 +223,7 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
                 </div>
               ) : null}
             </div>
-          )}
+          ) : null}
         </div>
         <div className="mt-4 pt-4 border-t border-slate-100">
           <p className="text-xs font-medium text-slate-500 mb-2">Description</p>

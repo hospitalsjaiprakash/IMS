@@ -126,6 +126,25 @@ export default function IncidentDetailPage() {
   const [showTrainerReportModal, setShowTrainerReportModal] = useState(false);
   const [imcResponsibleEmployees, setImcResponsibleEmployees] = useState([]);
 
+  const handleImcResponsibleEmployeesChange = (newEmps) => {
+    setImcResponsibleEmployees(newEmps);
+    if (newEmps && newEmps.length > 0) {
+      const allOutcomes = new Set();
+      const currentList = parseProposedOutcomes(imcProposedOutcome);
+      currentList.forEach(o => {
+        if (['No Action', 'New Protocol and Process Flow', 'Modifying Protocol and Process Flow', 'Inappropriate Complaint', 'Others'].includes(o)) {
+          allOutcomes.add(o);
+        }
+      });
+      newEmps.forEach(emp => {
+        (emp.outcomes || []).forEach(o => allOutcomes.add(o));
+      });
+      if (allOutcomes.size > 0) {
+        setImcProposedOutcome(Array.from(allOutcomes).join(', '));
+      }
+    }
+  };
+
   const [hodAttachments, setHodAttachments] = useState([]);
   const [imcAttachments, setImcAttachments] = useState([]);
   const [mdAttachments, setMdAttachments] = useState([]);
@@ -1023,7 +1042,16 @@ export default function IncidentDetailPage() {
                             <div>
                               <ProposedOutcomeMultiSelect
                                 selected={parseProposedOutcomes(imcProposedOutcome)}
-                                onChange={(newList) => setImcProposedOutcome(newList.join(', '))}
+                                onChange={(newList) => {
+                                  setImcProposedOutcome(newList.join(', '));
+                                  if (imcResponsibleEmployees.length > 0 && newList.length > 0) {
+                                    setImcResponsibleEmployees(prev => prev.map(e => ({
+                                      ...e,
+                                      outcomes: (e.outcomes && e.outcomes.length > 0) ? e.outcomes : [...newList],
+                                      needs_training: e.needs_training || newList.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'))
+                                    })));
+                                  }
+                                }}
                                 label="Proposed Outcome(s)"
                                 required
                                 placeholder="Select one or more proposed outcomes..."
@@ -1038,15 +1066,17 @@ export default function IncidentDetailPage() {
                                 'training', 'counselling', 'education'
                               ].some(k => outcomeLower.includes(k));
 
-                              if (!isEmpOutcome) return null;
+                              if (!isEmpOutcome && imcResponsibleEmployees.length === 0) return null;
 
                               return (
                                 <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-fade-in mt-3">
                                   <ResponsibleEmployeePicker
-                                    label="Search & Select Responsible Employee(s) Involved"
+                                    label="Search & Select Responsible Employee(s) Involved & Outcomes"
                                     required
                                     selected={imcResponsibleEmployees}
-                                    onChange={setImcResponsibleEmployees}
+                                    onChange={handleImcResponsibleEmployeesChange}
+                                    allowPerEmployeeOutcomes={true}
+                                    defaultOutcomes={parseProposedOutcomes(imcProposedOutcome)}
                                     placeholder="Type hospital staff name or employee ID..."
                                   />
                                 </div>
@@ -1060,7 +1090,7 @@ export default function IncidentDetailPage() {
                                   !incident.all_hod_feedback_submitted ||
                                   !feedbackText.trim() ||
                                   !imcSeverity ||
-                                  parseProposedOutcomes(imcProposedOutcome).length === 0 ||
+                                  (parseProposedOutcomes(imcProposedOutcome).length === 0 && imcResponsibleEmployees.every(e => (e.outcomes || []).length === 0)) ||
                                   (
                                     ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
                                     imcResponsibleEmployees.length === 0 &&
@@ -1534,7 +1564,16 @@ export default function IncidentDetailPage() {
                         <div>
                           <ProposedOutcomeMultiSelect
                             selected={parseProposedOutcomes(imcProposedOutcome)}
-                            onChange={(newList) => setImcProposedOutcome(newList.join(', '))}
+                            onChange={(newList) => {
+                              setImcProposedOutcome(newList.join(', '));
+                              if (imcResponsibleEmployees.length > 0 && newList.length > 0) {
+                                setImcResponsibleEmployees(prev => prev.map(e => ({
+                                  ...e,
+                                  outcomes: (e.outcomes && e.outcomes.length > 0) ? e.outcomes : [...newList],
+                                  needs_training: e.needs_training || newList.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'))
+                                })));
+                              }
+                            }}
                             label="Proposed Outcome(s)"
                             required
                             placeholder="Select one or more proposed outcomes..."
@@ -1550,15 +1589,17 @@ export default function IncidentDetailPage() {
                           'training', 'counselling', 'education'
                         ].some(k => outcomeLower.includes(k));
 
-                        if (!isEmpOutcome) return null;
+                        if (!isEmpOutcome && imcResponsibleEmployees.length === 0) return null;
 
                         return (
                           <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-fade-in">
                             <ResponsibleEmployeePicker
-                              label="Search & Select Responsible Employee(s) Involved"
+                              label="Search & Select Responsible Employee(s) Involved & Outcomes"
                               required
                               selected={imcResponsibleEmployees}
-                              onChange={setImcResponsibleEmployees}
+                              onChange={handleImcResponsibleEmployeesChange}
+                              allowPerEmployeeOutcomes={true}
+                              defaultOutcomes={parseProposedOutcomes(imcProposedOutcome)}
                               placeholder="Type hospital staff name or employee ID..."
                             />
                           </div>
@@ -1571,7 +1612,7 @@ export default function IncidentDetailPage() {
                           disabled={
                             !feedbackText.trim() ||
                             !imcSeverity ||
-                            parseProposedOutcomes(imcProposedOutcome).length === 0 ||
+                            (parseProposedOutcomes(imcProposedOutcome).length === 0 && imcResponsibleEmployees.every(e => (e.outcomes || []).length === 0)) ||
                             (
                               ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
                               imcResponsibleEmployees.length === 0 &&

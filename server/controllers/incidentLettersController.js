@@ -127,10 +127,21 @@ exports.getLetterTemplateDefaults = async (req, res) => {
     );
     const seq = String(parseInt(countRes.rows[0]?.count || '0', 10) + 1).padStart(3, '0');
 
-    // If financial penalty, use penalty_amount from query if provided, or incident (specified by Management)
+    // If financial penalty, use penalty_amount from query if provided, or from employee's specific record, or incident
+    let empPenaltyAmount = null;
+    if (emp) {
+      const respEmp = await query(
+        `SELECT penalty_amount FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2`,
+        [id, emp.id]
+      );
+      if (respEmp.rows.length && respEmp.rows[0].penalty_amount) {
+        empPenaltyAmount = respEmp.rows[0].penalty_amount;
+      }
+    }
+
     const penaltyAmount = (req.query.penaltyAmount !== undefined && req.query.penaltyAmount !== '')
       ? req.query.penaltyAmount
-      : (incident.penalty_amount || null);
+      : (empPenaltyAmount || incident.penalty_amount || null);
 
     const initialData = buildInitialLetterData({
       templateType,

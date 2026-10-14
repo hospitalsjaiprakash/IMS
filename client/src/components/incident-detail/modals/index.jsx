@@ -172,9 +172,9 @@ export function ManagementDecisionModal({
         </div>
 
         {decision === 'AGREE' && (
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-              IMC Recommended Outcome(s)
+              IMC Recommended Overall Outcome(s)
             </span>
             <div className="flex flex-wrap gap-1.5">
               {parseProposedOutcomes(incidentProposedOutcome).length > 0 ? (
@@ -190,6 +190,41 @@ export function ManagementDecisionModal({
                 <span className="text-xs text-slate-500 italic">No specific outcome recorded</span>
               )}
             </div>
+
+            {responsibleEmployees && responsibleEmployees.length > 0 && (
+              <div className="pt-2 border-t border-slate-200/70 space-y-1.5">
+                <span className="text-[11px] font-semibold text-slate-600 block">
+                  Per-Employee Recommended Outcomes:
+                </span>
+                <div className="space-y-1.5">
+                  {responsibleEmployees.map(emp => {
+                    const empOuts = (Array.isArray(emp.outcomes) && emp.outcomes.length > 0)
+                      ? emp.outcomes
+                      : parseProposedOutcomes(incidentProposedOutcome);
+                    return (
+                      <div key={emp.employee_id || emp.id} className="bg-white p-2 rounded-lg border border-slate-200 flex items-center justify-between gap-2 flex-wrap text-xs">
+                        <div>
+                          <span className="font-bold text-slate-800">{emp.full_name || emp.name}</span>
+                          <span className="text-slate-500 text-[11px] ml-1">({emp.emp_id || emp.employee_id || 'ID'}) — {emp.designation || 'Staff'}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {empOuts.map((o, idx) => (
+                            <span key={idx} className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              {o}
+                            </span>
+                          ))}
+                          {emp.penalty_amount && (
+                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                              ₹{Number(emp.penalty_amount).toLocaleString('en-IN')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -204,7 +239,16 @@ export function ManagementDecisionModal({
               <div className="space-y-3 p-3 bg-indigo-50/50 border border-indigo-200 rounded-xl">
                 <ProposedOutcomeMultiSelect
                   selected={parseProposedOutcomes(mdProposedOutcome)}
-                  onChange={(newList) => setMdProposedOutcome(newList.join(', '))}
+                  onChange={(newList) => {
+                    setMdProposedOutcome(newList.join(', '));
+                    if (mdResponsibleEmployees && mdResponsibleEmployees.length > 0 && newList.length > 0) {
+                      setMdResponsibleEmployees(prev => prev.map(e => ({
+                        ...e,
+                        outcomes: (e.outcomes && e.outcomes.length > 0) ? e.outcomes : [...newList],
+                        needs_training: e.needs_training || newList.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'))
+                      })));
+                    }
+                  }}
                   label="Modified Proposed Outcome(s)"
                   required
                   placeholder="Select one or more modified outcomes..."
@@ -212,7 +256,28 @@ export function ManagementDecisionModal({
 
                 <ResponsibleEmployeePicker
                   selected={mdResponsibleEmployees || []}
-                  onChange={(newEmps) => setMdResponsibleEmployees && setMdResponsibleEmployees(newEmps)}
+                  onChange={(newEmps) => {
+                    if (setMdResponsibleEmployees) {
+                      setMdResponsibleEmployees(newEmps);
+                      if (newEmps && newEmps.length > 0) {
+                        const allOutcomes = new Set();
+                        const currentList = parseProposedOutcomes(mdProposedOutcome);
+                        currentList.forEach(o => {
+                          if (['No Action', 'New Protocol and Process Flow', 'Modifying Protocol and Process Flow', 'Inappropriate Complaint', 'Others'].includes(o)) {
+                            allOutcomes.add(o);
+                          }
+                        });
+                        newEmps.forEach(emp => {
+                          (emp.outcomes || []).forEach(o => allOutcomes.add(o));
+                        });
+                        if (allOutcomes.size > 0) {
+                          setMdProposedOutcome(Array.from(allOutcomes).join(', '));
+                        }
+                      }
+                    }
+                  }}
+                  allowPerEmployeeOutcomes={true}
+                  defaultOutcomes={parseProposedOutcomes(mdProposedOutcome)}
                   label="Modify Responsible / Involved Employee(s)"
                 />
               </div>
