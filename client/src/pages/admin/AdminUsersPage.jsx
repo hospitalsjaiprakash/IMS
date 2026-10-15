@@ -13,7 +13,7 @@ import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
 import * as XLSX from 'xlsx';
 import { Link } from 'react-router-dom';
-import { getStatusClass, getStatusLabel, formatDate } from '../../utils/helpers';
+import { getStatusClass, getStatusLabel, formatDate, formatDateTime } from '../../utils/helpers';
 
 export default function AdminUsersPage() {
   const qc = useQueryClient();
@@ -671,7 +671,7 @@ export default function AdminUsersPage() {
                       Showing {filteredPersonnel.length} personnel ({masterEmployees.length || 0} total staff)
                       {syncStatusData?.last_hrms_sync_at && (
                         <span className="ml-2 font-medium text-indigo-600">
-                          (HR Sheet last synced: {new Date(syncStatusData.last_hrms_sync_at).toLocaleDateString()} {new Date(syncStatusData.last_hrms_sync_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                          (HR Sheet last synced: {formatDateTime(syncStatusData.last_hrms_sync_at)})
                         </span>
                       )}
                     </p>

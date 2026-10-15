@@ -27,12 +27,26 @@ export default function ProposedOutcomeMultiSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dropUp, setDropUp] = useState(false);
   const dropdownRef = useRef(null);
 
   // Normalize selected to an array
   const currentSelected = Array.isArray(selected)
     ? selected.filter(Boolean)
     : (typeof selected === 'string' && selected.trim() ? selected.split(',').map(s => s.trim()).filter(Boolean) : []);
+
+  // Determine open direction (up vs down) based on viewport clearance
+  useEffect(() => {
+    if (isOpen && dropdownRef.current) {
+      const rect = dropdownRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (spaceBelow < 280 && rect.top > 240) {
+        setDropUp(true);
+      } else {
+        setDropUp(false);
+      }
+    }
+  }, [isOpen]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -150,7 +164,7 @@ export default function ProposedOutcomeMultiSelect({
 
       {/* Dropdown Options */}
       {isOpen && (
-        <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+        <div className={`absolute z-[100] left-0 right-0 ${dropUp ? 'bottom-full mb-1.5 shadow-2xl animate-in fade-in slide-in-from-bottom-1' : 'top-full mt-1.5 shadow-xl animate-in fade-in slide-in-from-top-1'} bg-white border border-slate-200 rounded-xl overflow-hidden duration-150`}>
           {/* Quick Search */}
           <div className="p-2 border-b border-slate-100 bg-slate-50">
             <input

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { lettersApi } from '../../api';
+import { formatDate } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 export default function LettersCard({
@@ -100,7 +101,10 @@ export default function LettersCard({
     }
     setIsMgmtDeciding(true);
     try {
-      const res = await lettersApi.managementDecision(incident.id, { decision: 'approve' });
+      const res = await lettersApi.managementDecision(incident.id, { 
+        action: 'APPROVE', 
+        decision: 'approve' 
+      });
       toast.success(res.data?.message || 'Letters approved and dispatched successfully.');
       invalidateLetterRelatedQueries();
       if (onRefetch) onRefetch();
@@ -118,7 +122,12 @@ export default function LettersCard({
     }
     setIsMgmtDeciding(true);
     try {
-      await lettersApi.managementDecision(incident.id, { decision: 'reject', notes: rejectReason });
+      await lettersApi.managementDecision(incident.id, { 
+        action: 'REJECT_REVISION', 
+        decision: 'reject', 
+        revisionNotes: rejectReason, 
+        notes: rejectReason 
+      });
       toast.success('Letters returned to IMC for revision.');
       setMgmtRejectModal(false);
       setRejectReason('');
@@ -343,9 +352,14 @@ export default function LettersCard({
                           <span className="font-bold text-xs text-slate-900">
                             {emp.full_name || emp.name}
                           </span>
-                          <span className="text-[10px] font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                            {emp.emp_id || emp.employee_id || 'ID'}
-                          </span>
+                          {(() => {
+                            const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
+                            return empCode ? (
+                              <span className="text-[10px] font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                {empCode}
+                              </span>
+                            ) : null;
+                          })()}
                           <span className="text-[10px] text-slate-500">
                             {[emp.designation, emp.department_name || emp.department].filter(Boolean).join(' • ')}
                           </span>
@@ -572,7 +586,7 @@ export default function LettersCard({
                 Ref. No: <span className="font-mono text-slate-900 font-bold">{selectedViewLetter.ref_number || selectedViewLetter.reference_number}</span>
               </div>
               <div>
-                Date: <span className="text-slate-900">{selectedViewLetter.letter_date?.split('T')[0]}</span>
+                Date: <span className="text-slate-900">{formatDate(selectedViewLetter.letter_date)}</span>
               </div>
             </div>
 
@@ -603,7 +617,7 @@ export default function LettersCard({
 
             {/* Incident Context */}
             <div className="text-[11px] font-sans bg-amber-50/70 border border-amber-200 rounded p-2 text-amber-900">
-              <strong>Incident Reference:</strong> {incident?.reference_id} • Occurred on {incident?.incident_date}
+              <strong>Incident Reference:</strong> {incident?.reference_id} • Occurred on {formatDate(incident?.incident_date)}
             </div>
 
             {/* Body */}

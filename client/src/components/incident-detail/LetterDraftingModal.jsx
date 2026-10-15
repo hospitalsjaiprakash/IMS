@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { lettersApi } from '../../api';
-import { convertNumberToWords, parseProposedOutcomes } from '../../utils/helpers';
+import { convertNumberToWords, parseProposedOutcomes, formatDate } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 const LETTER_TYPES = [
@@ -414,9 +414,10 @@ export default function LetterDraftingModal({
               <option value="">Select Responsible Employee...</option>
               {responsibleEmployees.map(emp => {
                 const idVal = emp.employee_id || emp.id;
+                const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
                 return (
                   <option key={idVal} value={idVal}>
-                    {emp.full_name || emp.name} ({emp.employee_id || emp.emp_id || 'ID'}) — {emp.designation || 'Staff'} ({emp.department || emp.department_name || ''})
+                    {emp.full_name || emp.name} {empCode ? `(${empCode})` : ''} — {emp.designation || 'Staff'} ({emp.department || emp.department_name || ''})
                   </option>
                 );
               })}
@@ -743,7 +744,7 @@ export default function LetterDraftingModal({
                 {selectedEmployeeObj.full_name || selectedEmployeeObj.name || '[Employee Name]'}
               </p>
               <p className="text-slate-600">
-                Employee ID: <span className="font-mono font-semibold">{selectedEmployeeObj.employee_id || selectedEmployeeObj.emp_id || '[Code]'}</span>
+                Employee ID: <span className="font-mono font-semibold">{selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && selectedEmployeeObj.employee_id.length < 20 ? selectedEmployeeObj.employee_id : '') || '[Code]'}</span>
               </p>
               <p className="text-slate-600">
                 Designation: <span className="font-semibold">{recipientDesignation || selectedEmployeeObj.designation || 'Staff'}</span>
@@ -766,7 +767,7 @@ export default function LetterDraftingModal({
 
             {/* Incident Context Badge */}
             <div className="text-[11px] font-sans bg-amber-50/70 border border-amber-200 rounded p-2 text-amber-900">
-              <strong>Incident Reference:</strong> {incident?.reference_id} • Occurred on {incident?.incident_date}
+              <strong>Incident Reference:</strong> {incident?.reference_id} • Occurred on {formatDate(incident?.incident_date)}
             </div>
 
             {/* Body */}

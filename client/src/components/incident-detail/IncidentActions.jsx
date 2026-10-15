@@ -30,7 +30,7 @@ export default function IncidentActions({
 }) {
   const isEmployeeReporter = user?.id === incident.reporter_id && incident.status === 'submitted';
 
-  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !canRemindHod && !isEmployeeReporter && !canGenerateImcReport && !canCloseIncident && !canInvolveDepartments) {
+  if (!canWithdraw && !canHodFeedback && !canRequestRedirect && !canMdAct && !canReopen && !canEscalate && !isEmployeeReporter && !canGenerateImcReport && !canCloseIncident && !canInvolveDepartments) {
     return null;
   }
 
@@ -89,17 +89,6 @@ export default function IncidentActions({
         <button onClick={() => escalateMutation.mutate()} disabled={escalateMutation.isPending} className="btn-secondary btn-sm border-red-200 text-red-600 hover:bg-red-50">
           {escalateMutation.isPending ? <Spinner size={14} /> : <Flame size={14} />}
           Escalate Priority
-        </button>
-      )}
-      {canRemindHod && (
-        <button
-          onClick={() => remindHodMutation.mutate()}
-          disabled={remindHodMutation.isPending}
-          className="btn-secondary btn-sm border-amber-300 text-amber-800 hover:bg-amber-50 font-medium flex items-center gap-1.5 shadow-sm"
-          title="Send system notification and email to HOD requesting feedback"
-        >
-          {remindHodMutation.isPending ? <Spinner size={14} /> : <Bell size={14} className="text-amber-600 animate-pulse" />}
-          Remind HOD (Mail & Notification)
         </button>
       )}
     </div>

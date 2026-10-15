@@ -178,59 +178,104 @@ export function ManagementDecisionModal({
           </select>
         </div>
 
-        {decision === 'AGREE' && (
-          <div className="space-y-3">
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                IMC Recommended Overall Outcome(s)
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {parseProposedOutcomes(incidentProposedOutcome).length > 0 ? (
-                  parseProposedOutcomes(incidentProposedOutcome).map((out, i) => (
-                    <span
-                      key={i}
-                      className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
-                    >
-                      {out}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-xs text-slate-500 italic">No specific outcome recorded</span>
-                )}
-              </div>
-            </div>
+        {decision === 'AGREE' && (() => {
+          const imcOutcomesList = parseProposedOutcomes(incidentProposedOutcome);
+          const isNoAction = imcOutcomesList.length === 0 || imcOutcomesList.some(o => o.toLowerCase() === 'no action');
+          const hasStaff = responsibleEmployees && responsibleEmployees.length > 0;
 
-            {/* Management employee roster management: add or remove employees or adjust individual outcomes */}
-            <div className="p-3 bg-slate-50/70 border border-slate-200 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-slate-800 block">
-                    Involved / Responsible Employee(s)
-                  </span>
-                  <p className="text-[11px] text-slate-500">
-                    Management has executive authority to add, remove, or customize outcomes for employees involved.
-                  </p>
+          if (isNoAction) {
+            return (
+              <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-1.5 animate-fade-in">
+                <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs">
+                  <CheckCircle size={15} className="text-emerald-600 shrink-0" />
+                  <span>IMC Recommendation: No Action</span>
                 </div>
-                {mdResponsibleEmployees && mdResponsibleEmployees.length > 0 && (
-                  <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
-                    {mdResponsibleEmployees.length} staff
-                  </span>
-                )}
+                <p className="text-[11px] text-emerald-800">
+                  The Incident Management Committee reviewed the incident and proposed <strong>No Action</strong>. Agreeing will conclude and officially close this incident without disciplinary actions or personnel mandates.
+                </p>
+              </div>
+            );
+          }
+
+          return (
+            <div className="space-y-3 animate-fade-in">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                  Agreed IMC Recommended Outcome(s)
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {imcOutcomesList.length > 0 ? (
+                    imcOutcomesList.map((out, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                      >
+                        {out}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-500 italic">No specific outcome recorded</span>
+                  )}
+                </div>
               </div>
 
-              <ResponsibleEmployeePicker
-                selected={mdResponsibleEmployees || []}
-                onChange={(newEmps) => {
-                  if (setMdResponsibleEmployees) setMdResponsibleEmployees(newEmps);
-                }}
-                allowPerEmployeeOutcomes={true}
-                defaultOutcomes={parseProposedOutcomes(incidentProposedOutcome)}
-                label=""
-                placeholder="Search hospital staff directory to add or modify involved employee..."
-              />
+              {hasStaff && (
+                <div className="p-3 bg-slate-50/80 border border-slate-200 rounded-xl space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">
+                        Personnel & Assigned Outcomes ({responsibleEmployees.length})
+                      </span>
+                      <p className="text-[11px] text-slate-500">
+                        Agreed with IMC recommendations. To adjust personnel or change outcomes, select &quot;Modify Proposed Outcomes&quot; above.
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full shrink-0">
+                      {responsibleEmployees.length} staff
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {responsibleEmployees.map((emp) => {
+                      const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
+                      const empOutcomes = Array.isArray(emp.outcomes) && emp.outcomes.length > 0 ? emp.outcomes : imcOutcomesList;
+                      return (
+                        <div
+                          key={emp.id || emp.employee_id}
+                          className="p-2.5 bg-white rounded-lg border border-slate-200 flex items-center justify-between gap-3 text-xs shadow-2xs"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-800 flex items-center gap-1.5 truncate">
+                              <span>{emp.full_name || emp.name}</span>
+                              {empCode && (
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                                  {empCode}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-500 truncate">
+                              {[emp.designation, emp.department || emp.department_name].filter(Boolean).join(' • ')}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1 items-center justify-end shrink-0">
+                            {empOutcomes.map((out, idx) => (
+                              <span
+                                key={idx}
+                                className="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
+                              >
+                                {out}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {(decision === 'DISAGREE_REINVESTIGATE' || decision === 'DISAGREE_REVISE_FEEDBACK') ? (
           <div>
@@ -281,6 +326,7 @@ export function ManagementDecisionModal({
                     }
                   }}
                   allowPerEmployeeOutcomes={true}
+                  canSpecifyPenalty={true}
                   defaultOutcomes={parseProposedOutcomes(mdProposedOutcome)}
                   label="Modify Responsible / Involved Employee(s)"
                 />

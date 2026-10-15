@@ -18,15 +18,30 @@ export default function ResponsibleEmployeePicker({
   placeholder = 'Type employee name or ID (e.g. JPHRC-1024 or Rahul)...',
   disabled = false,
   allowPerEmployeeOutcomes = false,
-  defaultOutcomes = []
+  defaultOutcomes = [],
+  canSpecifyPenalty = false
 }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef(null);
 
   const selectedIds = new Set(selected.map(s => String(s.id || s.employee_id || '').toLowerCase()));
+
+  // Calculate vertical clearance for autocomplete results
+  useEffect(() => {
+    if (open && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (spaceBelow < 280 && rect.top > 240) {
+        setDropUp(true);
+      } else {
+        setDropUp(false);
+      }
+    }
+  }, [open, term]);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
@@ -135,6 +150,7 @@ export default function ResponsibleEmployeePicker({
             /* Rich per-employee outcome cards */
             selected.map((emp, index) => {
               const key = emp.id || emp.employee_id;
+              const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
               const empOutcomes = Array.isArray(emp.outcomes) ? emp.outcomes : [];
               const hasPenalty = empOutcomes.some(o => o.toLowerCase().includes('penalty'));
               const hasTraining = empOutcomes.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'));
@@ -154,9 +170,9 @@ export default function ResponsibleEmployeePicker({
                       <div className="min-w-0">
                         <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5 flex-wrap">
                           <span>{emp.full_name || emp.name}</span>
-                          {(emp.employee_id || emp.emp_id) && (
+                          {empCode && (
                             <span className="text-[10px] font-mono px-1.5 py-0.5 bg-indigo-50 text-indigo-700 font-semibold rounded border border-indigo-100">
-                              {emp.employee_id || emp.emp_id}
+                              {empCode}
                             </span>
                           )}
                         </div>
@@ -207,37 +223,49 @@ export default function ResponsibleEmployeePicker({
                     />
                   </div>
 
-                  {/* Optional penalty amount for this employee */}
+                  {/* Optional penalty amount or recommendation notice */}
                   {hasPenalty && (
-                    <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-xl space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-bold text-rose-900 flex items-center gap-1 mb-0">
+                    canSpecifyPenalty ? (
+                      <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-bold text-rose-900 flex items-center gap-1 mb-0">
+                            <DollarSign size={13} className="text-rose-600" />
+                            Individual Penalty Deduction Amount (₹)
+                          </label>
+                          <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded font-medium">
+                            Specific to {emp.full_name || emp.name}
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          step="100"
+                          value={emp.penalty_amount || ''}
+                          disabled={disabled}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? null : Number(e.target.value);
+                            handleUpdateEmployee(key, { penalty_amount: val });
+                          }}
+                          placeholder="Enter penalty amount in INR (e.g. 1000)..."
+                          className="w-full text-xs bg-white border border-rose-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-rose-400 font-semibold"
+                        />
+                        {penaltyWords && (
+                          <p className="text-[11px] text-rose-800 italic font-medium">
+                            Amount in words: {penaltyWords}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-rose-50/60 border border-rose-200 rounded-xl flex items-center justify-between text-xs">
+                        <span className="font-semibold text-rose-900 flex items-center gap-1.5">
                           <DollarSign size={13} className="text-rose-600" />
-                          Individual Penalty Deduction Amount (₹)
-                        </label>
+                          Financial Penalty Recommended
+                        </span>
                         <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded font-medium">
-                          Specific to {emp.full_name || emp.name}
+                          Penalty amount decided solely by Management
                         </span>
                       </div>
-                      <input
-                        type="number"
-                        min="0"
-                        step="100"
-                        value={emp.penalty_amount || ''}
-                        disabled={disabled}
-                        onChange={(e) => {
-                          const val = e.target.value === '' ? null : Number(e.target.value);
-                          handleUpdateEmployee(key, { penalty_amount: val });
-                        }}
-                        placeholder="Enter penalty amount in INR (e.g. 1000)..."
-                        className="w-full text-xs bg-white border border-rose-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-rose-400 font-semibold"
-                      />
-                      {penaltyWords && (
-                        <p className="text-[11px] text-rose-800 italic font-medium">
-                          Amount in words: {penaltyWords}
-                        </p>
-                      )}
-                    </div>
+                    )
                   )}
 
                   {/* Training mandate confirmation badge */}
@@ -257,6 +285,7 @@ export default function ResponsibleEmployeePicker({
             <div className="flex flex-wrap gap-2">
               {selected.map(emp => {
                 const key = emp.id || emp.employee_id;
+                const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
                 return (
                   <div
                     key={key}
@@ -268,9 +297,9 @@ export default function ResponsibleEmployeePicker({
                     <div className="text-left text-xs">
                       <div className="font-semibold text-slate-800">
                         {emp.full_name || emp.name}
-                        {(emp.employee_id || emp.emp_id) && (
+                        {empCode && (
                           <span className="text-slate-500 font-mono ml-1 text-[11px]">
-                            ({emp.employee_id || emp.emp_id})
+                            ({empCode})
                           </span>
                         )}
                       </div>
@@ -321,7 +350,7 @@ export default function ResponsibleEmployeePicker({
 
           {/* Autocomplete dropdown */}
           {open && (term.trim().length >= 2 || results.length > 0) && (
-            <div className="absolute left-0 right-0 top-full mt-1.5 max-h-60 overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200 z-50 divide-y divide-slate-100">
+            <div className={`absolute left-0 right-0 ${dropUp ? 'bottom-full mb-1.5 shadow-2xl' : 'top-full mt-1.5 shadow-xl'} max-h-60 overflow-y-auto bg-white rounded-xl border border-slate-200 z-[100] divide-y divide-slate-100`}>
               {results.length === 0 && !loading ? (
                 <div className="p-3 text-center text-xs text-slate-500">
                   No hospital employee found matching &quot;{term}&quot;

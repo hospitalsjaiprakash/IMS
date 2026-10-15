@@ -549,17 +549,11 @@ export default function IncidentDetailPage() {
 
   return (
     <>
-      <div className="mb-4 print:hidden flex flex-col gap-2">
+      <div className="mb-3 print:hidden">
         <Breadcrumbs items={[
           { label: 'Incidents', to: '/incidents' },
           { label: incident?.reference_id || 'Detail' }
-        ]} />
-        <div>
-          <button onClick={() => navigate('/incidents')} className="btn-ghost text-slate-500 -ml-1 print:hidden">
-            <ArrowLeft size={16} />
-            Back to Incidents
-          </button>
-        </div>
+        ]} className="mb-0" />
       </div>
 
       <IncidentHeader 

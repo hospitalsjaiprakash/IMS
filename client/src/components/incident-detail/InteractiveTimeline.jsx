@@ -39,7 +39,7 @@ function formatTimeDelta(prevDate, currDate) {
     if (days > 0) return `+${days}d ${hours}h later`;
     if (hours > 0) return `+${hours}h ${mins}m later`;
     if (mins > 0) return `+${mins}m later`;
-    return 'just now';
+    return 'Immediate';
   } catch {
     return null;
   }

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi, attachmentsApi, UPLOADS_URL } from '../../api';
+import { formatDate } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 export default function TrainingProgressCard({
@@ -604,7 +605,7 @@ export default function TrainingProgressCard({
               {/* Reference and Date */}
               <div className="flex items-center justify-between text-xs font-bold border-b border-slate-200 pb-2">
                 <div>Ref: <span className="font-mono text-indigo-900">{letterTarget.letter_reference_number || 'JPHRC/TRN'}</span></div>
-                <div>Date: <span>{letterTarget.letter_date ? new Date(letterTarget.letter_date).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN')}</span></div>
+                <div>Date: <span>{formatDate(letterTarget.letter_date || new Date())}</span></div>
               </div>
 
               {/* Recipient */}

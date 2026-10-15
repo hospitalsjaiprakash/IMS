@@ -435,7 +435,16 @@ exports.submitManagementLetterDecision = async (req, res) => {
   try {
     await client.query('BEGIN');
     const { id } = req.params;
-    const { action, revisionNotes } = req.body; // action: 'APPROVE' | 'REJECT_REVISION'
+    const rawAction = (req.body.action || req.body.decision || '').toUpperCase();
+    const rawNotes = req.body.revisionNotes || req.body.notes || '';
+
+    const isRevision = ['REJECT_REVISION', 'REJECT', 'REVISE'].includes(rawAction);
+    const isApproval = ['APPROVE', 'APPROVED', 'ACCEPT'].includes(rawAction);
+
+    if (!isRevision && !isApproval) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid management action specified.' });
+    }
 
     const incRes = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incRes.rows.length) {
@@ -455,8 +464,8 @@ exports.submitManagementLetterDecision = async (req, res) => {
       return res.status(400).json({ error: 'No employee disciplinary letters found to process.' });
     }
 
-    if (action === 'REJECT_REVISION') {
-      if (!revisionNotes || !revisionNotes.trim()) {
+    if (isRevision) {
+      if (!rawNotes || !rawNotes.trim()) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Please provide revision feedback for IMC.' });
       }
@@ -466,7 +475,7 @@ exports.submitManagementLetterDecision = async (req, res) => {
          SET status = 'rejected', revision_notes = $1, updated_at = NOW()
          WHERE incident_id = $2
            AND template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')`,
-        [revisionNotes.trim(), id]
+        [rawNotes.trim(), id]
       );
 
       await client.query(
@@ -485,12 +494,12 @@ exports.submitManagementLetterDecision = async (req, res) => {
           imc.id,
           id,
           'Letters Returned for Revision',
-          `Management requested letter revisions for incident ${incident.reference_id}: "${revisionNotes.trim()}".`,
+          `Management requested letter revisions for incident ${incident.reference_id}: "${rawNotes.trim()}".`,
           'management_action'
         );
       }
 
-      await auditLog(req.user.id, 'LETTERS_REJECTED_FOR_REVISION', id, { revisionNotes }, req.ip);
+      await auditLog(req.user.id, 'LETTERS_REJECTED_FOR_REVISION', id, { revisionNotes: rawNotes }, req.ip);
 
       if (req.io) {
         req.io.emit('incident_updated', { id, status: 'pending_letter_generation' });

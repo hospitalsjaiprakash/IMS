@@ -2,12 +2,17 @@ import { format, formatDistanceToNow, parseISO } from 'date-fns';
 
 export const formatDate = (d) => {
   if (!d) return '—';
-  try { return format(typeof d === 'string' ? parseISO(d) : d, 'dd MMM yyyy'); } catch { return d; }
+  try { return format(typeof d === 'string' ? parseISO(d) : d, 'dd-MM-yyyy'); } catch { return d; }
 };
 
 export const formatDateTime = (d) => {
   if (!d) return '—';
-  try { return format(typeof d === 'string' ? parseISO(d) : d, 'dd MMM yyyy, hh:mm a'); } catch { return d; }
+  try { return format(typeof d === 'string' ? parseISO(d) : d, 'dd-MM-yyyy, hh:mm a'); } catch { return d; }
+};
+
+export const formatTime = (d) => {
+  if (!d) return '—';
+  try { return format(typeof d === 'string' ? parseISO(d) : d, 'hh:mm a'); } catch { return d; }
 };
 
 export const timeAgo = (d) => {
@@ -68,7 +73,7 @@ export const getStatusLabel = (s) => {
 
 export const getSLABadgeInfo = (createdAt, status) => {
   if (!createdAt) return null;
-  if (['resolved', 'withdrawn', 'locked'].includes(status)) return null;
+  if (['resolved', 'closed', 'withdrawn', 'locked'].includes(status)) return null;
 
   const created = new Date(createdAt);
   const now = new Date();
@@ -84,8 +89,8 @@ export const getSLABadgeInfo = (createdAt, status) => {
     if (diffDays > 0) return { text: `Overdue by ${diffDays}d`, isOverdue: true };
     return { text: `Overdue by ${diffHours}h`, isOverdue: true };
   } else {
-    if (diffDays > 0) return { text: `${diffDays}d left`, isOverdue: false };
-    return { text: `${diffHours}h left`, isOverdue: false };
+    // Non-overdue pill removed per user instruction
+    return null;
   }
 };
 
