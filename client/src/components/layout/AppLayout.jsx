@@ -174,7 +174,7 @@ export default function AppLayout() {
           {navItems.map(({ to, icon: Icon, label, matchSearch }) => {
             // For links with a query param (e.g. ?tab=analytics), use reactive location.search
             if (matchSearch) {
-              const isActive = location.search === matchSearch;
+              const isActive = location.search === matchSearch && location.pathname === to.split('?')[0];
               return (
                 <NavLink
                   key={to}

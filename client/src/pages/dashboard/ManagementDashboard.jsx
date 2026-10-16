@@ -222,11 +222,11 @@ export default function ManagementDashboard() {
   const categoryAnalytics = useMemo(() => {
     return INCIDENT_CATEGORIES.map(cat => {
       const catIncidents = allIncidents.filter(inc => inc.incident_category === cat);
-      const solved = catIncidents.filter(inc => inc.status === 'resolved');
+      const solved = catIncidents.filter(inc => inc.status === 'resolved' || inc.status === 'closed');
 
       const feedbackGiven = catIncidents.filter(inc =>
         inc.hod_feedback ||
-        ['with_imc', 'with_head_management', 'resolved'].includes(inc.status)
+        ['with_imc', 'with_head_management', 'resolved', 'closed'].includes(inc.status)
       ).length;
 
       const missing = catIncidents.filter(inc => !inc.hod_feedback);
@@ -380,6 +380,18 @@ export default function ManagementDashboard() {
             placeholder="Search employee..."
           />
         </form>
+      </div>
+
+      {/* Navigation Tabs */}
+      <div className="border-b border-slate-200">
+        <Tabs
+          tabs={[
+            { id: 'overview', label: 'Executive Overview', icon: LayoutDashboard },
+            { id: 'analytics', label: 'Department Analytics & Feedback Tracker', icon: BarChart3 }
+          ]}
+          active={activeTab}
+          onChange={handleTabChange}
+        />
       </div>
 
       {/* OVERVIEW TAB */}
@@ -845,7 +857,7 @@ export default function ManagementDashboard() {
       {/* ANALYTICS & FEEDBACK TRACKER TAB */}
       {activeTab === 'analytics' && (() => {
         // IMC feedback calculations
-        const imcReceived = allIncidents.filter(i => ['with_imc', 'with_head_management', 'resolved', 'redirect_requested'].includes(i.status));
+        const imcReceived = allIncidents.filter(i => ['with_imc', 'with_head_management', 'resolved', 'closed', 'redirect_requested'].includes(i.status));
         const imcGiven = imcReceived.filter(i => !!i.imc_feedback);
         const imcPending = imcReceived.filter(i => !i.imc_feedback);
         const imcPct = imcReceived.length > 0 ? Math.round((imcGiven.length / imcReceived.length) * 100) : 0;

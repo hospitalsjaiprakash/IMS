@@ -23,7 +23,7 @@ import {
   Layers,
   Mail
 } from 'lucide-react';
-import { formatDateTime } from '../../utils/helpers';
+import { formatDateTime, formatDate } from '../../utils/helpers';
 import { UPLOADS_URL } from '../../api';
 
 // Format elapsed time between two timestamps
@@ -699,7 +699,7 @@ export default function InteractiveTimeline({
             timestamp: new Date(t.completed_at || t.assigned_at),
             type: 'training_completed',
             title: 'Dedicated Training Conducted & Documented',
-            subtitle: `Trainer: ${t.trainer_name} (${t.duration_hours || '1.0'} hrs) — ${t.training_topic}`,
+            subtitle: `Trainer: ${t.trainer_name} (${t.duration_minutes || (t.duration_hours ? Math.round(Number(t.duration_hours) * 60) : 60)} mins) — ${t.training_topic}`,
             actor: {
               name: t.trainer_name,
               role: 'Assigned Trainer',
@@ -715,7 +715,7 @@ export default function InteractiveTimeline({
                 {t.summary && <p className="italic text-slate-600">&quot;{t.summary}&quot;</p>}
                 {t.verified_at && (
                   <p className="text-[10px] font-semibold text-emerald-700 mt-1">
-                    ✓ Verified by IMC Convenor on {t.verified_at.split('T')[0]}
+                    ✓ Verified by IMC Convenor on {formatDate(t.verified_at)}
                   </p>
                 )}
               </div>

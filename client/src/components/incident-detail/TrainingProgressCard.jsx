@@ -198,8 +198,8 @@ export default function TrainingProgressCard({
 
         {/* State Banner 1: Pending Assignment or Needs Training */}
         {(isPendingAssignment || (isNeedsTraining && !trainers.length)) && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-start justify-between gap-3 flex-wrap">
-            <div className="space-y-1 max-w-xl">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900">
+            <div className="space-y-1">
               <p className="font-bold flex items-center gap-1.5 text-amber-800">
                 <Clock size={14} className="text-amber-600" /> Awaiting Trainer Appointment (IMC Level)
               </p>
@@ -207,28 +207,19 @@ export default function TrainingProgressCard({
                 Management has ordered mandatory corrective training for the involved employee(s). The IMC appoints a qualified hospital trainer directly. An official Trainer Appointment Letter with verified QR code will be auto-generated and dispatched.
               </p>
             </div>
-            {isImcLead && (
-              <button
-                type="button"
-                onClick={onOpenAssignModal}
-                className="btn-primary btn-sm text-xs bg-indigo-600 hover:bg-indigo-700 shadow-sm ml-auto"
-              >
-                Assign Trainer Now
-              </button>
-            )}
           </div>
         )}
 
         {/* State Banner 2: In Progress */}
         {isInProgress && activeAssignment && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-900 flex items-start justify-between gap-3 flex-wrap">
-            <div className="space-y-1 max-w-xl">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-900">
+            <div className="space-y-1">
               <p className="font-bold flex items-center gap-1.5 text-blue-800">
                 <Clock size={14} className="text-blue-600" /> Hands-on Training Session in Progress
               </p>
               <p className="text-blue-700 text-[11px] leading-relaxed">
                 Assigned Trainer: <strong>{activeAssignment.trainer_name}</strong> ({activeAssignment.trainer_code || 'Staff'}). Target Date:{' '}
-                {activeAssignment.target_completion_date ? activeAssignment.target_completion_date.split('T')[0] : 'Open'}.
+                {activeAssignment.target_completion_date ? formatDate(activeAssignment.target_completion_date) : 'Open'}.
               </p>
               {activeAssignment.trainee_name && (
                 <p className="text-blue-800 text-[11px] font-semibold">
@@ -236,15 +227,6 @@ export default function TrainingProgressCard({
                 </p>
               )}
             </div>
-            {canSubmitReport && (
-              <button
-                type="button"
-                onClick={onOpenReportModal}
-                className="btn-primary btn-sm text-xs bg-emerald-600 hover:bg-emerald-700 border-emerald-600 shadow-sm ml-auto"
-              >
-                Submit Session Report
-              </button>
-            )}
           </div>
         )}
 
@@ -292,7 +274,7 @@ export default function TrainingProgressCard({
                 </p>
                 <p className="text-emerald-700 text-[11px] mt-0.5 leading-relaxed">
                   IMC Convenor verified the training evidence on{' '}
-                  {activeAssignment.verified_at ? activeAssignment.verified_at.split('T')[0] : 'recent date'}.
+                  {activeAssignment.verified_at ? formatDate(activeAssignment.verified_at) : 'recent date'}.
                   {activeAssignment.verification_notes && (
                     <span className="block italic mt-1 font-serif text-slate-700">&quot;{activeAssignment.verification_notes}&quot;</span>
                   )}
@@ -413,10 +395,10 @@ export default function TrainingProgressCard({
               <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs space-y-2.5">
                 <div className="flex items-center justify-between text-[11px] text-slate-500 border-b border-slate-100 pb-2 flex-wrap gap-2">
                   <span>
-                    Conducted on: <strong className="text-slate-700">{t.completion_date?.split('T')[0] || t.conducted_at?.split('T')[0]}</strong>
+                    Conducted on: <strong className="text-slate-700">{formatDate(t.completion_date || t.conducted_at)}</strong>
                   </span>
                   <span>
-                    Duration: <strong className="text-slate-700">{t.duration_hours || '1.0'} hrs</strong>
+                    Duration: <strong className="text-slate-700">{t.duration_minutes || (t.duration_hours ? Math.round(Number(t.duration_hours) * 60) : 60)} mins</strong>
                   </span>
                   {t.venue && (
                     <span className="flex items-center gap-1">

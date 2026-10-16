@@ -4,9 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, authApi, UPLOADS_URL } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText, Lock } from 'lucide-react';
+import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText, Lock, Building, Award } from 'lucide-react';
 import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
-import { formatDateTime, parseProposedOutcomes } from '../../utils/helpers';
+import { formatDateTime, parseProposedOutcomes, getSeverityClass, getStatusLabel } from '../../utils/helpers';
 
 import IncidentHeader from '../../components/incident-detail/IncidentHeader';
 import IncidentDetailsCard from '../../components/incident-detail/IncidentDetailsCard';
@@ -547,6 +547,111 @@ export default function IncidentDetailPage() {
   
   const hodEmployees = incident.responsible_employees?.filter(emp => isHodOfDept(emp.department_name)) || [];
 
+  const hodFeedbacks = (feedbacks || []).filter(f => f.role === 'hod');
+  const imcFeedback = (feedbacks || []).find(f => f.role === 'imc');
+  const mgmtFeedback = (feedbacks || []).find(f => f.role === 'head_management');
+
+  const isFeedbackLocked = (fb) => {
+    if (['resolved', 'closed', 'withdrawn'].includes(incident?.status)) return true;
+    if (fb.role === 'hod') {
+      return (feedbacks || []).some(f => ['imc', 'head_management'].includes(f.role) && new Date(f.created_at) >= new Date(fb.created_at));
+    }
+    if (fb.role === 'investigator') {
+      return (feedbacks || []).some(f => ['imc', 'head_management'].includes(f.role) && new Date(f.created_at) >= new Date(fb.created_at));
+    }
+    if (fb.role === 'imc') {
+      return (feedbacks || []).some(f => f.role === 'head_management' && new Date(f.created_at) >= new Date(fb.created_at));
+    }
+    if (fb.role === 'head_management') {
+      return ['pending_training', 'resolved', 'closed'].includes(incident?.status);
+    }
+    return false;
+  };
+
+  const getLockTitle = (fb) => {
+    if (['resolved', 'closed', 'withdrawn'].includes(incident?.status)) return 'Feedback is locked because the incident is resolved or closed';
+    if (fb.role === 'hod') return 'HOD feedback cannot be edited after IMC/Management has provided review';
+    if (fb.role === 'investigator') return 'Investigation report cannot be edited after upper review';
+    if (fb.role === 'imc') return 'IMC feedback cannot be edited after Management has given their decision';
+    if (fb.role === 'head_management') return 'Management decision cannot be edited after final report';
+    return 'Feedback is locked';
+  };
+
+  const renderFeedbackEntry = (fb) => {
+    const isAuthor = fb.author_id === user?.id;
+    const isLocked = isFeedbackLocked(fb);
+    const canEditThisFb = isAuthor && !isLocked;
+
+    const fbAtts = (attachments || []).filter(a => 
+      (fb.role === 'hod' && a.stage === 'hod_feedback' && a.uploader_id === fb.author_id) ||
+      (fb.role === 'imc' && a.stage === 'imc_feedback' && a.uploader_id === fb.author_id) ||
+      (fb.role === 'head_management' && a.stage === 'md_decision' && a.uploader_id === fb.author_id)
+    );
+
+    return (
+      <div 
+        key={fb.id} 
+        onClick={() => setZoomedFeedback(fb)}
+        className="bg-slate-50 rounded-xl p-4 border border-slate-200 cursor-pointer hover:bg-slate-100 hover:shadow-md hover:border-slate-300 transition-all duration-200"
+        title="Click to zoom and read on projector"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700">
+              {fb.full_name?.charAt(0)}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-800">{fb.full_name}</p>
+              <p className="text-[10px] text-slate-500">
+                {fb.designation} {fb.dept_name ? `· ${fb.dept_name}` : ''} · {fb.role?.replace('_', ' ').toUpperCase()}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">{formatDateTime(fb.created_at)}</span>
+            {canEditThisFb && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openEditFeedback(fb.role, fb.feedback_text, fb.id);
+                }}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors"
+                title="Edit your feedback"
+              >
+                <Pencil size={11} /> Edit
+              </button>
+            )}
+            {isAuthor && isLocked && (
+              <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-lg" title={getLockTitle(fb)}>
+                <Lock size={11} /> Locked
+              </span>
+            )}
+          </div>
+        </div>
+        <p className="text-sm text-slate-700 leading-relaxed mt-2 whitespace-pre-line">{fb.feedback_text}</p>
+        
+        {/* Attachments specific to this feedback */}
+        {fbAtts.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100">
+            {fbAtts.map(att => (
+              <button
+                type="button"
+                key={att.id}
+                onClick={() => setPreviewFile(att)}
+                title={att.original_filename}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-blue-700 font-medium hover:bg-blue-50 hover:border-blue-300 transition-colors shadow-sm max-w-[200px]"
+              >
+                <Paperclip size={12} className="flex-shrink-0" />
+                <span className="truncate">{att.original_filename}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="mb-3 print:hidden">
@@ -632,499 +737,116 @@ export default function IncidentDetailPage() {
               onViewAttachment={(att) => setPreviewFile(att)}
             />
 
-            {/* Formal Letters Workflow Card */}
-            <LettersCard
-              incident={incident}
-              letters={data?.letters || []}
-              responsibleEmployees={incident?.responsible_employees || []}
-              user={user}
-              canImcAct={canImcAct}
-              isManagement={isManagement}
-              onOpenDraftModal={() => {
-                setEditingLetter(null);
-                setDraftingEmployee(null);
-                setShowDraftModal(true);
-              }}
-              onDraftForEmployee={(emp) => {
-                setEditingLetter(null);
-                setDraftingEmployee(emp);
-                setShowDraftModal(true);
-              }}
-              onEditDraft={(letter) => {
-                setEditingLetter(letter);
-                setDraftingEmployee(null);
-                setShowDraftModal(true);
-              }}
-              onRefetch={refetch}
-            />
-
-            {/* Mandatory Training & CAPA Protocol Card */}
-            <TrainingProgressCard
-              incident={incident}
-              trainers={data?.trainers || []}
-              user={user}
-              canImcAct={canImcAct}
-              isManagement={isManagement}
-              onOpenAssignModal={() => setShowAssignTrainerModal(true)}
-              onOpenReportModal={() => setShowTrainerReportModal(true)}
-              onRefetch={refetch}
-            />
-
-            {feedbacks?.length > 0 && (
-              <div className="card p-5">
-                <h2 className="text-sm font-semibold text-slate-800 mb-4">Review History</h2>
-                <div className="space-y-4">
-                  {feedbacks.map(fb => {
-                    const isAuthor = fb.author_id === user?.id;
-
-                    const isFeedbackLocked = () => {
-                      if (['resolved', 'closed', 'withdrawn'].includes(incident?.status)) return true;
-                      if (fb.role === 'hod') {
-                        return (feedbacks || []).some(f => ['imc', 'head_management'].includes(f.role) && new Date(f.created_at) >= new Date(fb.created_at));
-                      }
-                      if (fb.role === 'investigator') {
-                        return (feedbacks || []).some(f => ['imc', 'head_management'].includes(f.role) && new Date(f.created_at) >= new Date(fb.created_at));
-                      }
-                      if (fb.role === 'imc') {
-                        return (feedbacks || []).some(f => f.role === 'head_management' && new Date(f.created_at) >= new Date(fb.created_at));
-                      }
-                      if (fb.role === 'head_management') {
-                        return ['pending_training', 'resolved', 'closed'].includes(incident?.status);
-                      }
-                      return false;
-                    };
-
-                    const isLocked = isFeedbackLocked();
-                    const canEditThisFb = isAuthor && !isLocked;
-
-                    const getLockTitle = () => {
-                      if (['resolved', 'closed', 'withdrawn'].includes(incident?.status)) return 'Feedback is locked because the incident is resolved or closed';
-                      if (fb.role === 'hod') return 'HOD feedback cannot be edited after IMC/Management has provided review';
-                      if (fb.role === 'investigator') return 'Investigation report cannot be edited after upper review';
-                      if (fb.role === 'imc') return 'IMC feedback cannot be edited after Management has given their decision';
-                      if (fb.role === 'head_management') return 'Management decision cannot be edited after final report';
-                      return 'Feedback is locked';
-                    };
-
-                    return (
-                      <div 
-                        key={fb.id} 
-                        onClick={() => setZoomedFeedback(fb)}
-                        className="bg-slate-50 rounded-xl p-4 border border-slate-200 cursor-pointer hover:bg-slate-100 hover:shadow-md hover:border-slate-300 transition-all duration-200"
-                        title="Click to zoom and read on projector"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-lg bg-green-100 flex items-center justify-center text-xs font-bold text-green-700">
-                              {fb.full_name?.charAt(0)}
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium text-slate-800">{fb.full_name}</p>
-                              <p className="text-[10px] text-slate-500">
-                                {fb.designation} {fb.dept_name ? `· ${fb.dept_name}` : ''} · {fb.role?.replace('_', ' ').toUpperCase()}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-400">{formatDateTime(fb.created_at)}</span>
-                            {canEditThisFb && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditFeedback(fb.role, fb.feedback_text, fb.id);
-                                }}
-                                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors"
-                                title="Edit your feedback"
-                              >
-                                <Pencil size={11} /> Edit
-                              </button>
-                            )}
-                            {isAuthor && isLocked && (
-                              <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-lg" title={getLockTitle()}>
-                                <Lock size={11} /> Locked
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-sm text-slate-700 leading-relaxed mt-2 whitespace-pre-line">{fb.feedback_text}</p>
-                        
-                        {/* Attachments specific to this feedback */}
-                        {(() => {
-                          const fbAtts = (attachments || []).filter(a => 
-                            (fb.role === 'hod' && a.stage === 'hod_feedback' && a.uploader_id === fb.author_id) ||
-                            (fb.role === 'imc' && a.stage === 'imc_feedback' && a.uploader_id === fb.author_id) ||
-                            (fb.role === 'head_management' && a.stage === 'md_decision' && a.uploader_id === fb.author_id)
-                          );
-                          if (fbAtts.length === 0) return null;
-                          return (
-                            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100">
-                              {fbAtts.map(att => (
-                                <button
-                                  type="button"
-                                  key={att.id}
-                                  onClick={() => setPreviewFile(att)}
-                                  title={att.original_filename}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-blue-700 font-medium hover:bg-blue-50 hover:border-blue-300 transition-colors shadow-sm max-w-[200px]"
-                                >
-                                  <Paperclip size={12} className="flex-shrink-0" />
-                                  <span className="truncate">{att.original_filename}</span>
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-
-            {/* IMC Employee Training Verification Card */}
-            {canImcAct && incident.status === 'pending_training' && (
-              <div className="card p-5 border-amber-300 bg-amber-50/20 shadow-sm print:hidden">
-                <div className="flex items-center gap-2 mb-3 border-b border-amber-200/60 pb-3">
-                  <UserCheck className="text-amber-700" size={18} />
-                  <h2 className="text-sm font-bold text-amber-900 uppercase tracking-wider">Mandatory Employee Training Verification</h2>
-                </div>
-                <p className="text-sm text-slate-700 mb-4">
-                  Management has mandated corrective training. Review the training completion status below. You can close this incident once HODs have verified their employees, or override and close it now.
-                </p>
-                
-                {incident.responsible_employees?.filter(e => e.needs_training).length > 0 && (
-                  <div className="space-y-3 mb-4">
-                    {incident.responsible_employees.filter(e => e.needs_training).map(emp => (
-                      <div key={emp.employee_id} className="flex justify-between items-center bg-white p-3 rounded-lg border border-slate-200">
-                        <div>
-                          <p className="font-semibold text-slate-800 text-sm">{emp.full_name} ({emp.emp_id})</p>
-                          <p className="text-xs text-slate-500">{emp.department_name}</p>
-                        </div>
-                        <div>
-                          {emp.training_completed ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium bg-green-100 text-green-700 px-2 py-1 rounded-full"><CheckCircle size={14} /> Verified</span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium bg-amber-100 text-amber-700 px-2 py-1 rounded-full"><AlertTriangle size={14} /> Pending</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+            {/* ── STEP 1: CONCERNED DEPARTMENT FEEDBACK (HOD) ── */}
+            {hodFeedbacks.length > 0 && (
+              <div className="card p-5 border border-slate-200 bg-white space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Building size={16} className="text-indigo-600" />
+                    <h2 className="text-sm font-bold text-slate-800">Concerned Department Feedback (HOD)</h2>
                   </div>
-                )}
-                
-                <button
-                  onClick={() => verifyTrainingMutation.mutate()}
-                  disabled={verifyTrainingMutation.isPending}
-                  className="w-full btn-primary bg-amber-600 hover:bg-amber-700 border-amber-600 text-white shadow-md py-2.5 flex items-center justify-center gap-2 font-semibold text-sm transition-all"
-                >
-                  {verifyTrainingMutation.isPending ? <Spinner size={16} className="text-white" /> : <CheckCircle size={16} />}
-                  Confirm Training Completed & Close Incident
-                </button>
-              </div>
-            )}
-
-            {/* HOD Employee Outcome & Training Card */}
-            {user?.role === 'hod' && hodEmployees.length > 0 && (incident.status === 'pending_training' || incident.status === 'resolved' || incident.status === 'closed') && (
-              <div className="card p-5 border-blue-200 bg-blue-50/20 shadow-sm print:hidden">
-                <div className="flex items-center gap-2 mb-3 border-b border-blue-200/60 pb-3">
-                  <UserCheck className="text-blue-700" size={18} />
-                  <h2 className="text-sm font-bold text-blue-900 uppercase tracking-wider">Department Employee Actions</h2>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    {hodFeedbacks.length} Response{hodFeedbacks.length === 1 ? '' : 's'}
+                  </span>
                 </div>
-                <p className="text-sm text-slate-700 mb-4">
-                  The following employees from your department are marked as responsible for this incident. Proposed Outcome: <strong>{incident.proposed_outcome}</strong>
-                </p>
                 <div className="space-y-3">
-                  {hodEmployees.map(emp => (
-                    <div key={emp.employee_id} className="flex justify-between items-center bg-white p-3 rounded-lg border border-slate-200">
-                      <div>
-                        <p className="font-semibold text-slate-800 text-sm">{emp.full_name} ({emp.emp_id})</p>
-                        <p className="text-xs text-slate-500">
-                          {emp.needs_training ? 'Requires Training' : 'No Action Required'}
-                        </p>
-                      </div>
-                      <div>
-                        {emp.needs_training && incident.status === 'pending_training' ? (
-                          emp.training_completed ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium bg-green-100 text-green-700 px-2 py-1 rounded-full"><CheckCircle size={14} /> Training Verified</span>
-                          ) : (
-                            <button
-                              onClick={() => verifyEmployeeTrainingMutation.mutate(emp.employee_id)}
-                              disabled={verifyEmployeeTrainingMutation.isPending}
-                              className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1"
-                            >
-                              {verifyEmployeeTrainingMutation.isPending ? <Spinner size={12} /> : <CheckCircle size={14} />} Mark Training Complete
-                            </button>
-                          )
-                        ) : (
-                          <span className="text-xs text-slate-400 italic">Noted</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                  {hodFeedbacks.map(fb => renderFeedbackEntry(fb))}
                 </div>
               </div>
             )}
 
-            {/* IMC Inline Review & Action Card */}
-            {canImcAct && incident.status !== 'pending_training' && !feedbacks?.some(f => f.role === 'imc') && (
-              <div className="card p-5 border-indigo-200 bg-indigo-50/10 print:hidden">
-                {incident.status === 'redirect_requested' ? (
+            {/* Pending HOD Alert Banner */}
+            {!incident.all_hod_feedback_submitted && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-start gap-2.5">
+                  <Bell className="text-amber-600 flex-shrink-0 mt-0.5 animate-bounce" size={18} />
                   <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <AlertTriangle className="text-orange-600 animate-pulse" size={18} />
-                      <h2 className="text-sm font-semibold text-slate-800">Redirection Request Review</h2>
-                    </div>
-                    
-                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4">
-                      <p className="text-xs text-orange-800 font-semibold uppercase tracking-wider mb-1">
-                        Requested by HOD of {incident.redirect_requested_by_dept || 'Department'}
-                      </p>
-                      <p className="text-sm text-slate-700 italic">
-                        "{incident.redirect_reason || 'No reason provided.'}"
-                      </p>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div>
-                        <label className="field-label field-required mb-1.5 font-medium text-slate-700">
-                          Select Concern Department(s) (Target HODs)
-                        </label>
-                        <SearchableMultiSelect
-                          options={departmentsList.map(d => d.name)}
-                          value={redirectTargetDepts}
-                          onChange={setRedirectTargetDepts}
-                          placeholder="Search and select one or more concern departments…"
-                        />
-                        <p className="text-xs text-slate-500 mt-1.5">
-                          You can select multiple departments. The HOD of each selected department will review and provide feedback.
-                        </p>
-                      </div>
-
-                      <div className="flex justify-end gap-2 pt-2">
-                        <button
-                          onClick={() => setShowRejectRedirectModal(true)}
-                          className="btn-secondary flex items-center gap-2 border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300"
-                        >
-                          Reject Request
-                        </button>
-                        <button
-                          onClick={() => approveRedirectMutation.mutate()}
-                          disabled={redirectTargetDepts.length === 0 || approveRedirectMutation.isPending}
-                          className="btn-primary flex items-center gap-2 bg-orange-600 hover:bg-orange-700 border-orange-600"
-                        >
-                          {approveRedirectMutation.isPending && <Spinner size={14} className="text-white" />}
-                          Approve & Redirect to Concern Department(s)
-                        </button>
-                      </div>
-                    </div>
+                    <p className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                      Concerned Department HOD Feedback Pending
+                    </p>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      {incident.pending_hod_departments?.length > 0 ? (
+                        <>Awaiting feedback from HOD of: <strong>{incident.pending_hod_departments.join(', ')}</strong>. </>
+                      ) : (
+                        <>Concerned HOD has not yet submitted feedback. </>
+                      )}
+                      {canHodFeedback ? 'Please submit your department feedback below.' : 'Per hospital policy, IMC Quality Review unlocks after concerned HODs respond.'}
+                    </p>
                   </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 mb-4">
-                      <MessageSquare className="text-indigo-600" size={18} />
-                      <h2 className="text-sm font-semibold text-slate-800">Quality Review (IMC)</h2>
-                    </div>
-                    {!incident.all_hod_feedback_submitted && (
-                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div className="flex items-start gap-2.5">
-                          <Bell className="text-amber-600 flex-shrink-0 mt-0.5 animate-bounce" size={18} />
-                          <div>
-                            <p className="text-xs font-bold text-amber-900 uppercase tracking-wider">
-                              Concerned Department HOD Feedback Pending
-                            </p>
-                            <p className="text-xs text-amber-800 mt-0.5">
-                              {incident.pending_hod_departments?.length > 0 ? (
-                                <>Awaiting feedback from HOD of: <strong>{incident.pending_hod_departments.join(', ')}</strong>. </>
-                              ) : (
-                                <>Concerned HOD has not yet submitted feedback. </>
-                              )}
-                              Per hospital policy, IMC Quality Review unlocks only after all concerned HODs have submitted feedback.
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => remindHodMutation.mutate()}
-                          disabled={remindHodMutation.isPending}
-                          className="btn-secondary btn-sm flex items-center gap-1.5 border-amber-300 text-amber-900 hover:bg-amber-100 flex-shrink-0 shadow-sm font-semibold"
-                        >
-                          {remindHodMutation.isPending ? <Spinner size={13} /> : <Bell size={13} className="text-amber-600" />}
-                          Send Reminder to Pending HOD(s)
-                        </button>
-                      </div>
-                    )}
-                    {isLead ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-4 mb-4">
-                          <label className="field-label mb-0">Investigator Required?</label>
-                          <div className="flex items-center gap-4">
-                            <label className="flex items-center gap-1.5 cursor-pointer">
-                              <input type="radio" name="invReq" checked={investigatorRequired} onChange={() => setInvestigatorRequired(true)} className="w-4 h-4 text-indigo-600" />
-                              <span className="text-sm text-slate-700">Yes</span>
-                            </label>
-                            <label className="flex items-center gap-1.5 cursor-pointer">
-                              <input type="radio" name="invReq" checked={!investigatorRequired} onChange={() => setInvestigatorRequired(false)} className="w-4 h-4 text-indigo-600" />
-                              <span className="text-sm text-slate-700">No</span>
-                            </label>
-                          </div>
-                        </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {canHodFeedback && (
+                    <button
+                      onClick={() => setShowFeedbackModal(true)}
+                      className="btn-primary btn-sm text-xs bg-amber-600 hover:bg-amber-700 border-amber-600 shadow-sm font-semibold"
+                    >
+                      Provide Feedback Now
+                    </button>
+                  )}
+                  {canRemindHod && (
+                    <button
+                      onClick={() => remindHodMutation.mutate()}
+                      disabled={remindHodMutation.isPending}
+                      className="btn-secondary btn-sm flex items-center gap-1.5 border-amber-300 text-amber-900 hover:bg-amber-100 shadow-sm font-semibold text-xs"
+                    >
+                      {remindHodMutation.isPending ? <Spinner size={12} /> : <Bell size={12} className="text-amber-600" />}
+                      Send Reminder
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
-                        {investigatorRequired ? (
-                          <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-5">
-                            <InvestigatorPicker
-                              id="primary-investigator-search"
-                              label="Select Primary Investigator(s) — IMC Members"
-                              icon={Shield}
-                              required
-                              mode="imc"
-                              imcMembers={imcMembers}
-                              selected={primaryInvestigators}
-                              onChange={setPrimaryInvestigators}
-                              placeholder="Type IMC member name or employee ID…"
-                              accent="indigo"
-                            />
-                            <div className="border-t border-indigo-100" />
-                            <InvestigatorPicker
-                              id="secondary-investigator-search"
-                              label="Select Secondary Investigator(s) — Non-IMC Employees"
-                              icon={Users}
-                              mode="non_imc"
-                              imcMembers={imcMembers}
-                              selected={secondaryInvestigators}
-                              onChange={setSecondaryInvestigators}
-                              excludeIds={[
-                                ...primaryInvestigators.map(p => p.id),
-                                ...primaryInvestigators.map(p => p.employee_id)
-                              ].filter(Boolean)}
-                              placeholder="Type employee name or employee ID…"
-                              accent="blue"
-                            />
-                            <div className="flex justify-end">
-                              <button
-                                onClick={() => assignInvestigatorMutation.mutate([
-                                  ...primaryInvestigators.map(p => p.id || p.employee_id),
-                                  ...secondaryInvestigators.map(s => s.id || s.employee_id)
-                                ])}
-                                disabled={!incident.all_hod_feedback_submitted || primaryInvestigators.length === 0 || assignInvestigatorMutation.isPending}
-                                title={
-                                  !incident.all_hod_feedback_submitted
-                                    ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}`
-                                    : primaryInvestigators.length === 0 ? 'Select at least one primary investigator (IMC member)' : ''
-                                }
-                                className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {assignInvestigatorMutation.isPending ? <Spinner size={12} /> : null}
-                                Assign Investigator(s) ({primaryInvestigators.length + secondaryInvestigators.length})
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div>
-                              <label className="field-label mb-1">Your Review & Findings</label>
-                              <textarea
-                                value={feedbackText}
-                                onChange={e => setFeedbackText(e.target.value)}
-                                placeholder="Enter quality assessment, root cause observation, or corrective action recommendations..."
-                                className="textarea"
-                                rows={3}
-                              />
-                              <FileUploadArea files={imcAttachments} setFiles={setImcAttachments} />
-                            </div>
-                            <div>
-                              <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
-                              <select
-                                value={imcSeverity}
-                                onChange={(e) => setImcSeverity(e.target.value)}
-                                className="select w-full"
-                                required
-                              >
-                                <option value="">Select Severity...</option>
-                                <option value="Minor">Minor</option>
-                                <option value="Major">Major</option>
-                                <option value="Grave">Grave</option>
-                              </select>
-                            </div>
-                            <div>
-                              <ProposedOutcomeMultiSelect
-                                selected={parseProposedOutcomes(imcProposedOutcome)}
-                                onChange={(newList) => {
-                                  setImcProposedOutcome(newList.join(', '));
-                                  if (imcResponsibleEmployees.length > 0 && newList.length > 0) {
-                                    setImcResponsibleEmployees(prev => prev.map(e => ({
-                                      ...e,
-                                      outcomes: (e.outcomes && e.outcomes.length > 0) ? e.outcomes : [...newList],
-                                      needs_training: e.needs_training || newList.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'))
-                                    })));
-                                  }
-                                }}
-                                label="Proposed Outcome(s)"
-                                required
-                                placeholder="Select one or more proposed outcomes..."
-                              />
-                            </div>
+            {/* Redirection Request Review (for IMC Convenor if redirection requested) */}
+            {incident.status === 'redirect_requested' && canImcAct && (
+              <div className="card p-5 border-orange-200 bg-orange-50/20 print:hidden">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle className="text-orange-600 animate-pulse" size={18} />
+                  <h2 className="text-sm font-semibold text-slate-800">Redirection Request Review</h2>
+                </div>
+                
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4">
+                  <p className="text-xs text-orange-800 font-semibold uppercase tracking-wider mb-1">
+                    Requested by HOD of {incident.redirect_requested_by_dept || 'Department'}
+                  </p>
+                  <p className="text-sm text-slate-700 italic">
+                    "{incident.redirect_reason || 'No reason provided.'}"
+                  </p>
+                </div>
 
-                            {(() => {
-                              const outcomeLower = (imcProposedOutcome || '').toLowerCase();
-                              const isEmpOutcome = [
-                                'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
-                                'suspension', 'transfer', 'demotion', 'termination', 'disciplinary',
-                                'training', 'counselling', 'education'
-                              ].some(k => outcomeLower.includes(k));
+                <div className="space-y-4">
+                  <div>
+                    <label className="field-label field-required mb-1.5 font-medium text-slate-700">
+                      Select Concern Department(s) (Target HODs)
+                    </label>
+                    <SearchableMultiSelect
+                      options={departmentsList.map(d => d.name)}
+                      value={redirectTargetDepts}
+                      onChange={setRedirectTargetDepts}
+                      placeholder="Search and select one or more concern departments…"
+                    />
+                    <p className="text-xs text-slate-500 mt-1.5">
+                      You can select multiple departments. The HOD of each selected department will review and provide feedback.
+                    </p>
+                  </div>
 
-                              if (!isEmpOutcome && imcResponsibleEmployees.length === 0) return null;
-
-                              return (
-                                <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-fade-in mt-3">
-                                  <ResponsibleEmployeePicker
-                                    label="Search & Select Responsible Employee(s) Involved & Outcomes"
-                                    required
-                                    selected={imcResponsibleEmployees}
-                                    onChange={handleImcResponsibleEmployeesChange}
-                                    allowPerEmployeeOutcomes={true}
-                                    defaultOutcomes={parseProposedOutcomes(imcProposedOutcome)}
-                                    placeholder="Type hospital staff name or employee ID..."
-                                  />
-                                </div>
-                              );
-                            })()}
-
-                            <div className="flex justify-end gap-2 mt-4">
-                              <button
-                                onClick={() => imcFeedbackMutation.mutate(true)}
-                                disabled={
-                                  !incident.all_hod_feedback_submitted ||
-                                  !feedbackText.trim() ||
-                                  !imcSeverity ||
-                                  (parseProposedOutcomes(imcProposedOutcome).length === 0 && imcResponsibleEmployees.every(e => (e.outcomes || []).length === 0)) ||
-                                  (
-                                    ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
-                                    imcResponsibleEmployees.length === 0 &&
-                                    (!incident.responsible_employees || incident.responsible_employees.length === 0)
-                                  ) ||
-                                  imcFeedbackMutation.isPending
-                                }
-                                className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                title={!incident.all_hod_feedback_submitted ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}` : ''}
-                              >
-                                {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
-                                Forward to Management
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center">
-                        <MessageSquare className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                        <h3 className="text-sm font-bold text-slate-700">Awaiting Convenor Action</h3>
-                        <p className="text-xs text-slate-500 mt-1">
-                          The IMC Convenor is responsible for submitting the quality review and assigning investigators.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      onClick={() => setShowRejectRedirectModal(true)}
+                      className="btn-secondary flex items-center gap-2 border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300 text-xs"
+                    >
+                      Reject Request
+                    </button>
+                    <button
+                      onClick={() => approveRedirectMutation.mutate()}
+                      disabled={redirectTargetDepts.length === 0 || approveRedirectMutation.isPending}
+                      className="btn-primary flex items-center gap-2 bg-orange-600 hover:bg-orange-700 border-orange-600 text-xs"
+                    >
+                      {approveRedirectMutation.isPending && <Spinner size={14} className="text-white" />}
+                      Approve & Redirect to Concern Department(s)
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1727,6 +1449,311 @@ export default function IncidentDetailPage() {
                 )}
               </div>
             )}
+
+            {/* ── STEP 3: IMC QUALITY ASSESSMENT & PROPOSED OUTCOMES ── */}
+            {imcFeedback ? (
+              <div className="card p-5 border border-indigo-200 bg-white space-y-4">
+                <div className="flex items-center justify-between border-b border-indigo-100 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={18} className="text-indigo-600" />
+                    <h2 className="text-sm font-bold text-slate-800">Quality Assessment & Findings (IMC)</h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {incident.severity && (
+                      <span className={`badge ${getSeverityClass(incident.severity)}`}>
+                        {incident.severity}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {renderFeedbackEntry(imcFeedback)}
+                {incident.responsible_employees?.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      Responsible Staff & Mandated Outcomes:
+                    </p>
+                    <div className="space-y-2">
+                      {incident.responsible_employees.map(emp => (
+                        <div key={emp.employee_id || emp.id} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between gap-2 flex-wrap text-xs">
+                          <div>
+                            <span className="font-bold text-slate-800">{emp.full_name}</span>
+                            <span className="text-[11px] text-slate-500 ml-1 font-mono">({emp.emp_id || emp.employee_id || 'Staff'})</span>
+                            <span className="text-[11px] text-slate-500 block">{emp.designation || 'Staff'} · {emp.department_name || ''}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 justify-end">
+                            {(Array.isArray(emp.outcomes) && emp.outcomes.length > 0 ? emp.outcomes : parseProposedOutcomes(incident.proposed_outcome)).map((out, i) => (
+                              <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                {out}
+                              </span>
+                            ))}
+                            {emp.penalty_amount && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                ₹{emp.penalty_amount}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              canImcAct && incident.status !== 'pending_training' && incident.status !== 'redirect_requested' && (
+                <div className="card p-5 border-indigo-200 bg-indigo-50/10 print:hidden space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <MessageSquare className="text-indigo-600" size={18} />
+                    <h2 className="text-sm font-semibold text-slate-800">Quality Review (IMC)</h2>
+                  </div>
+                  {isLead ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-4 mb-4">
+                        <label className="field-label mb-0">Investigator Required?</label>
+                        <div className="flex items-center gap-4">
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="invReq" checked={investigatorRequired} onChange={() => setInvestigatorRequired(true)} className="w-4 h-4 text-indigo-600" />
+                            <span className="text-sm text-slate-700">Yes</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="invReq" checked={!investigatorRequired} onChange={() => setInvestigatorRequired(false)} className="w-4 h-4 text-indigo-600" />
+                            <span className="text-sm text-slate-700">No</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {investigatorRequired ? (
+                        <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-5">
+                          <InvestigatorPicker
+                            id="primary-investigator-search"
+                            label="Select Primary Investigator(s) — IMC Members"
+                            icon={Shield}
+                            required
+                            mode="imc"
+                            imcMembers={imcMembers}
+                            selected={primaryInvestigators}
+                            onChange={setPrimaryInvestigators}
+                            placeholder="Type IMC member name or employee ID…"
+                            accent="indigo"
+                          />
+                          <div className="border-t border-indigo-100" />
+                          <InvestigatorPicker
+                            id="secondary-investigator-search"
+                            label="Select Secondary Investigator(s) — Non-IMC Employees"
+                            icon={Users}
+                            mode="non_imc"
+                            imcMembers={imcMembers}
+                            selected={secondaryInvestigators}
+                            onChange={setSecondaryInvestigators}
+                            excludeIds={[
+                              ...primaryInvestigators.map(p => p.id),
+                              ...primaryInvestigators.map(p => p.employee_id)
+                            ].filter(Boolean)}
+                            placeholder="Type employee name or employee ID…"
+                            accent="blue"
+                          />
+                          <div className="flex justify-end">
+                            <button
+                              onClick={() => assignInvestigatorMutation.mutate([
+                                ...primaryInvestigators.map(p => p.id || p.employee_id),
+                                ...secondaryInvestigators.map(s => s.id || s.employee_id)
+                              ])}
+                              disabled={!incident.all_hod_feedback_submitted || primaryInvestigators.length === 0 || assignInvestigatorMutation.isPending}
+                              title={
+                                !incident.all_hod_feedback_submitted
+                                  ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}`
+                                  : primaryInvestigators.length === 0 ? 'Select at least one primary investigator (IMC member)' : ''
+                              }
+                              className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {assignInvestigatorMutation.isPending ? <Spinner size={12} /> : null}
+                              Assign Investigator(s) ({primaryInvestigators.length + secondaryInvestigators.length})
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <label className="field-label mb-1">Your Review & Findings</label>
+                            <textarea
+                              value={feedbackText}
+                              onChange={e => setFeedbackText(e.target.value)}
+                              placeholder="Enter quality assessment, root cause observation, or corrective action recommendations..."
+                              className="textarea"
+                              rows={3}
+                            />
+                            <FileUploadArea files={imcAttachments} setFiles={setImcAttachments} />
+                          </div>
+                          <div>
+                            <label className="field-label mb-1">Assign Severity <span className="text-red-500">*</span></label>
+                            <select
+                              value={imcSeverity}
+                              onChange={(e) => setImcSeverity(e.target.value)}
+                              className="select w-full"
+                              required
+                            >
+                              <option value="">Select Severity...</option>
+                              <option value="Minor">Minor</option>
+                              <option value="Major">Major</option>
+                              <option value="Grave">Grave</option>
+                            </select>
+                          </div>
+                          <div>
+                            <ProposedOutcomeMultiSelect
+                              selected={parseProposedOutcomes(imcProposedOutcome)}
+                              onChange={(newList) => {
+                                setImcProposedOutcome(newList.join(', '));
+                                if (imcResponsibleEmployees.length > 0 && newList.length > 0) {
+                                  setImcResponsibleEmployees(prev => prev.map(e => ({
+                                    ...e,
+                                    outcomes: (e.outcomes && e.outcomes.length > 0) ? e.outcomes : [...newList],
+                                    needs_training: e.needs_training || newList.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'))
+                                  })));
+                                }
+                              }}
+                              label="Proposed Outcome(s)"
+                              required
+                              placeholder="Select one or more proposed outcomes..."
+                            />
+                          </div>
+
+                          {(() => {
+                            const outcomeLower = (imcProposedOutcome || '').toLowerCase();
+                            const isEmpOutcome = [
+                              'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
+                              'suspension', 'transfer', 'demotion', 'termination', 'disciplinary',
+                              'training', 'counselling', 'education'
+                            ].some(k => outcomeLower.includes(k));
+
+                            if (!isEmpOutcome && imcResponsibleEmployees.length === 0) return null;
+
+                            return (
+                              <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 animate-fade-in mt-3">
+                                <ResponsibleEmployeePicker
+                                  label="Search & Select Responsible Employee(s) Involved & Outcomes"
+                                  required
+                                  selected={imcResponsibleEmployees}
+                                  onChange={handleImcResponsibleEmployeesChange}
+                                  allowPerEmployeeOutcomes={true}
+                                  defaultOutcomes={parseProposedOutcomes(imcProposedOutcome)}
+                                  placeholder="Type hospital staff name or employee ID..."
+                                />
+                              </div>
+                            );
+                          })()}
+
+                          <div className="flex justify-end gap-2 mt-4">
+                            <button
+                              onClick={() => imcFeedbackMutation.mutate(true)}
+                              disabled={
+                                !incident.all_hod_feedback_submitted ||
+                                !feedbackText.trim() ||
+                                !imcSeverity ||
+                                (parseProposedOutcomes(imcProposedOutcome).length === 0 && imcResponsibleEmployees.every(e => (e.outcomes || []).length === 0)) ||
+                                (
+                                  ['warning', 'advisory', 'suggestion', 'penalty', 'suspension', 'transfer', 'demotion', 'termination', 'training', 'counselling'].some(k => (imcProposedOutcome || '').toLowerCase().includes(k)) &&
+                                  imcResponsibleEmployees.length === 0 &&
+                                  (!incident.responsible_employees || incident.responsible_employees.length === 0)
+                                ) ||
+                                imcFeedbackMutation.isPending
+                              }
+                              className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={!incident.all_hod_feedback_submitted ? `Disabled: Awaiting feedback from HOD of: ${incident.pending_hod_departments?.join(', ')}` : ''}
+                            >
+                              {imcFeedbackMutation.isPending ? <Spinner size={12} /> : null}
+                              Forward to Management
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center">
+                      <MessageSquare className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                      <h3 className="text-sm font-bold text-slate-700">Awaiting Convenor Action</h3>
+                      <p className="text-xs text-slate-500 mt-1">
+                        The IMC Convenor is responsible for submitting the quality review and assigning investigators.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+
+            {/* ── STEP 4: EXECUTIVE MANAGEMENT DECISION & DIRECTIVES ── */}
+            {mgmtFeedback && (
+              <div className="card p-5 border border-purple-200 bg-white space-y-4">
+                <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Award size={18} className="text-purple-600" />
+                    <h2 className="text-sm font-bold text-slate-800">Executive Management Directive & Decision</h2>
+                  </div>
+                  <span className="badge badge-purple text-xs">
+                    Executive Endorsement
+                  </span>
+                </div>
+                {renderFeedbackEntry(mgmtFeedback)}
+              </div>
+            )}
+
+            {incident.status === 'with_head_management' && (
+              <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-900 text-sm flex items-center gap-2">
+                    <Clock size={16} className="text-amber-600 animate-pulse" /> Awaiting Executive Management Decision
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    The IMC Convenor has finalized quality findings and proposed outcomes. Executive Management review and final directive is required.
+                  </p>
+                </div>
+                {canMdAct && (
+                  <button
+                    type="button"
+                    onClick={() => setShowMdModal(true)}
+                    className="btn-primary btn-sm text-xs bg-amber-600 hover:bg-amber-700 border-amber-600 shadow-sm flex items-center gap-1.5 font-semibold"
+                  >
+                    Provide Management Decision Now →
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* ── STEP 5: FORMAL LETTERS & NOTICES ── */}
+            <LettersCard
+              incident={incident}
+              letters={data?.letters || []}
+              responsibleEmployees={incident?.responsible_employees || []}
+              user={user}
+              canImcAct={canImcAct}
+              isManagement={isManagement}
+              onOpenDraftModal={() => {
+                setEditingLetter(null);
+                setDraftingEmployee(null);
+                setShowDraftModal(true);
+              }}
+              onDraftForEmployee={(emp) => {
+                setEditingLetter(null);
+                setDraftingEmployee(emp);
+                setShowDraftModal(true);
+              }}
+              onEditDraft={(letter) => {
+                setEditingLetter(letter);
+                setDraftingEmployee(null);
+                setShowDraftModal(true);
+              }}
+              onRefetch={refetch}
+            />
+
+            {/* ── STEP 6: MANDATORY TRAINING & CAPA PROTOCOL ── */}
+            <TrainingProgressCard
+              incident={incident}
+              trainers={data?.trainers || []}
+              user={user}
+              canImcAct={canImcAct}
+              isManagement={isManagement}
+              onOpenAssignModal={() => setShowAssignTrainerModal(true)}
+              onOpenReportModal={() => setShowTrainerReportModal(true)}
+              onRefetch={refetch}
+            />
 
             {user?.role === 'employee' && (
               <div className="card p-5">

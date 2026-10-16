@@ -15,7 +15,7 @@ export default function TrainerReportModal({
 }) {
   const queryClient = useQueryClient();
   const [completionDate, setCompletionDate] = useState(new Date().toISOString().split('T')[0]);
-  const [durationHours, setDurationHours] = useState('1.5');
+  const [durationMinutes, setDurationMinutes] = useState('90');
   const [venue, setVenue] = useState('Ward Nursing Station');
   const [customVenue, setCustomVenue] = useState('');
   const [methodology, setMethodology] = useState('Practical Demonstration & Hands-on SOP Simulation');
@@ -43,7 +43,8 @@ export default function TrainerReportModal({
       const fd = new FormData();
       if (trainerAssignment?.id) fd.append('assignmentId', trainerAssignment.id);
       fd.append('completionDate', completionDate);
-      fd.append('durationHours', durationHours);
+      fd.append('durationMinutes', durationMinutes);
+      fd.append('durationHours', (Number(durationMinutes) / 60).toFixed(1));
       fd.append('venue', finalVenue);
       fd.append('methodology', methodology);
       fd.append('preAssessment', preAssessment);
@@ -136,16 +137,18 @@ export default function TrainerReportModal({
               />
             </div>
             <div>
-              <label className="field-label field-required text-xs">Duration (Hours)</label>
+              <label className="field-label field-required text-xs">Duration (Minutes)</label>
               <input
                 type="number"
-                step="0.5"
-                min="0.5"
-                value={durationHours}
-                onChange={e => setDurationHours(e.target.value)}
+                step="5"
+                min="10"
+                max="480"
+                value={durationMinutes}
+                onChange={e => setDurationMinutes(e.target.value)}
                 className="input text-xs font-semibold"
-                placeholder="e.g. 1.5"
+                placeholder="e.g. 90"
               />
+              <span className="text-[10px] text-slate-400 mt-0.5 block">e.g. 60 mins (1 hr), 90 mins (1.5 hrs)</span>
             </div>
             <div>
               <label className="field-label field-required text-xs flex items-center gap-1">
