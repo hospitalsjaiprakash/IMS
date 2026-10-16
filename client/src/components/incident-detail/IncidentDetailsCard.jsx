@@ -96,7 +96,7 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
 
       {/* --- NORMAL UI CONTENT --- */}
       <div className="card p-5 print:hidden">
-        <h2 className="text-sm font-semibold text-slate-800 mb-4">Incident Details</h2>
+        <h2 className="text-sm font-bold text-slate-800 mb-4">Step 1: Incident Registration & Reporting Details</h2>
         <div className="space-y-3 text-sm">
           {incident.departments && incident.departments.length > 1 ? (
             <div className="py-2 px-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
@@ -135,95 +135,8 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
           )}
           <DetailRow icon={Users} label="Occurred To" value={incident.occurred_to} />
           <DetailRow icon={AlertTriangle} label="Severity" value={incident.severity} />
-          {incident.proposed_outcome && (
-            <div className="flex items-start gap-3">
-              <FileText size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 flex justify-between gap-4 min-w-0">
-                <span className="text-slate-500 flex-shrink-0">Proposed Outcome(s)</span>
-                <div className="flex flex-wrap justify-end gap-1.5 max-w-[70%]">
-                  {parseProposedOutcomes(incident.proposed_outcome).map((out, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
-                    >
-                      {out}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
           <DetailRow icon={FileText} label="Category" value={incident.incident_category} />
           <DetailRow icon={FileText} label="Type" value={incident.incident_type} />
-          {incident.responsible_employees && incident.responsible_employees.length > 0 ? (
-            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Responsible Personnel ({incident.responsible_employees.length})
-              </span>
-              <div className="space-y-2">
-                {incident.responsible_employees.map(emp => {
-                  const empOutcomes = (Array.isArray(emp.outcomes) && emp.outcomes.length > 0)
-                    ? emp.outcomes
-                    : parseProposedOutcomes(incident.proposed_outcome);
-
-                  return (
-                    <div key={emp.employee_id || emp.id} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                          <User size={13} className="text-slate-400 shrink-0" />
-                          <span>{emp.full_name || emp.name}</span>
-                          <span className="text-[11px] font-mono text-slate-500 font-normal">({emp.emp_id || emp.employee_id || 'ID'})</span>
-                        </div>
-                        <span className="text-[11px] text-slate-500">
-                          {[emp.designation, emp.department_name].filter(Boolean).join(' • ')}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                        {empOutcomes.map((out, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
-                          >
-                            {out}
-                          </span>
-                        ))}
-                        {emp.penalty_amount && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                            Penalty: ₹{Number(emp.penalty_amount).toLocaleString('en-IN')}
-                          </span>
-                        )}
-                        {emp.needs_training && (
-                          emp.training_completed ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                              <CheckCircle size={11} /> Training Completed
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                              <AlertTriangle size={11} /> Training Pending
-                            </span>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : incident.has_responsible_person ? (
-            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
-              <DetailRow icon={User} label="Responsible Person" value={incident.responsible_person_name || '—'} />
-              {incident.training_completed ? (
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 px-3 py-1.5 rounded-lg border border-green-200">
-                  <CheckCircle size={14} /> Training Completed & Verified
-                </div>
-              ) : incident.status === 'pending_training' ? (
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
-                  <AlertTriangle size={14} /> Mandatory Training Pending
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </div>
         <div className="mt-4 pt-4 border-t border-slate-100">
           <p className="text-xs font-medium text-slate-500 mb-2">Description</p>

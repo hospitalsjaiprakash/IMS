@@ -560,6 +560,12 @@ exports.imcVerifyTraining = async (req, res) => {
         [id]
       );
 
+      await client.query(
+        `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, stage)
+         VALUES ($1, $2, 'imc', $3, 'training_rework_request')`,
+        [id, req.user.id, `IMC Training Rework Request:\n${(reviewNotes || 'Additional practical session required.').trim()}`]
+      );
+
       await client.query('COMMIT');
 
       await createNotification(

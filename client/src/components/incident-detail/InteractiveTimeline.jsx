@@ -390,13 +390,11 @@ export default function InteractiveTimeline({
           <div className="text-xs space-y-2 text-slate-700">
             <div className="flex flex-wrap gap-2 text-[11px]">
               <span className="px-2 py-0.5 rounded font-semibold bg-purple-100 text-purple-800">
-                Assigned Severity: {incident.severity || 'Major'}
+                Assigned Severity: {incident.imc_severity || incident.severity || 'Minor'}
               </span>
-              {incident.proposed_outcome && (
-                <span className="px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-700">
-                  Proposed: {incident.proposed_outcome}
-                </span>
-              )}
+              <span className="px-2 py-0.5 rounded bg-indigo-50 border border-indigo-200 font-semibold text-indigo-800">
+                IMC Proposed Outcome: {imcFeedback.proposed_outcome || incident.imc_proposed_outcome || incident.proposed_outcome || 'No Action'}
+              </span>
             </div>
             <blockquote className="bg-white p-2.5 rounded-lg border-l-2 border-purple-400 italic text-slate-700 shadow-2xs whitespace-pre-line">
               "{imcFeedback.feedback_text}"
@@ -472,6 +470,11 @@ export default function InteractiveTimeline({
                 isReturned ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-violet-50 border-violet-200 text-violet-900'
               }`}>
                 Decision: <span className="uppercase font-bold">{decisionLabel}</span>
+                {decisionCode === 'DISAGREE_MODIFY' && (
+                  <div className="text-[11px] font-normal text-violet-800 mt-1 pt-1 border-t border-violet-200">
+                    Directive: <strong>{incident.proposed_outcome}</strong> (IMC Proposed: {incident.imc_proposed_outcome || 'No Action'})
+                  </div>
+                )}
               </div>
               {matchedFb?.feedback_text ? (
                 <blockquote className={`bg-white p-2.5 rounded-lg border-l-2 italic text-slate-700 shadow-2xs whitespace-pre-line ${

@@ -353,10 +353,11 @@ exports.submitImcFeedback = async (req, res) => {
       });
     }
 
+    const imcFeedbackStage = incident.management_decision === 'DISAGREE_REVISE_FEEDBACK' ? 'revised_imc' : 'initial_imc';
     await client.query(
-      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text)
-       VALUES ($1, $2, 'imc', $3)`,
-      [id, req.user.id, feedbackText]
+      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, stage, proposed_outcome)
+       VALUES ($1, $2, 'imc', $3, $4, $5)`,
+      [id, req.user.id, feedbackText, imcFeedbackStage, cleanProposedOutcome || null]
     );
     
     // Insert attachments if any
@@ -443,10 +444,19 @@ exports.submitImcFeedback = async (req, res) => {
         `UPDATE incidents 
          SET severity = COALESCE($1, severity), 
              proposed_outcome = COALESCE($2, proposed_outcome),
-             needs_training = CASE WHEN $3 = TRUE THEN TRUE ELSE needs_training END,
+             imc_proposed_outcome = COALESCE($2, imc_proposed_outcome, proposed_outcome),
+             imc_severity = COALESCE($1, imc_severity, severity),
+             imc_responsible_employees = $3,
+             needs_training = CASE WHEN $4 = TRUE THEN TRUE ELSE needs_training END,
              updated_at = NOW() 
-         WHERE id = $4`,
-        [severity || null, cleanProposedOutcome || null, anyEmployeeNeedsTraining, id]
+         WHERE id = $5`,
+        [
+          severity || null,
+          cleanProposedOutcome || null,
+          JSON.stringify(Array.isArray(imcResponsibleEmployees) ? imcResponsibleEmployees : []),
+          anyEmployeeNeedsTraining,
+          id
+        ]
       );
     }
 
@@ -532,9 +542,9 @@ exports.submitManagementAction = async (req, res) => {
       : `Decision: ${decisionLabel}`;
 
     await client.query(
-      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text)
-       VALUES ($1, $2, 'head_management', $3)`,
-      [id, req.user.id, finalFeedbackText]
+      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, stage, proposed_outcome)
+       VALUES ($1, $2, 'head_management', $3, $4, $5)`,
+      [id, req.user.id, finalFeedbackText, decision.toLowerCase(), cleanProposedOutcome || null]
     );
 
     // Save attached files (supporting documents / executive notes)

@@ -485,6 +485,12 @@ exports.submitManagementLetterDecision = async (req, res) => {
         [id]
       );
 
+      await client.query(
+        `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, stage)
+         VALUES ($1, $2, 'head_management', $3, 'letter_revision_request')`,
+        [id, req.user.id, `Management Letter Revision Request:\n${rawNotes.trim()}`]
+      );
+
       await client.query('COMMIT');
 
       // Notify IMC
