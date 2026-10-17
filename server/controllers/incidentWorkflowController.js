@@ -341,6 +341,7 @@ exports.submitImcFeedback = async (req, res) => {
     }
 
     forwardToMd = forwardToMd === 'true' || forwardToMd === true;
+    let cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
 
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -469,9 +470,12 @@ exports.submitImcFeedback = async (req, res) => {
       }
     }
 
-    let cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
     if (!cleanProposedOutcome && collectedEmployeeOutcomes.size > 0) {
       cleanProposedOutcome = Array.from(collectedEmployeeOutcomes).join(', ');
+      await client.query(
+        `UPDATE feedbacks SET proposed_outcome = $1 WHERE incident_id = $2 AND role = 'imc' AND stage = $3`,
+        [cleanProposedOutcome, id, imcFeedbackStage]
+      );
     }
 
     if (severity || cleanProposedOutcome || anyEmployeeNeedsTraining) {
@@ -555,8 +559,9 @@ exports.submitImcFeedback = async (req, res) => {
     res.json({ success: true });
 
   } catch (error) {
+    console.error('submitImcFeedback error:', error);
     await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Failed to submit IMC feedback' });
+    res.status(500).json({ error: error.message || 'Failed to submit IMC feedback' });
   } finally {
     client.release();
   }
