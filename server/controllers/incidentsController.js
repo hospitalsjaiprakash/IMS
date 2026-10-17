@@ -888,7 +888,7 @@ exports.getIncident = async (req, res) => {
                     'stage', a.stage
                   )
                 ) FILTER (WHERE a.id IS NOT NULL),
-                '[]'::jsonb
+                '[]'::json
               ) as attachments
        FROM incident_events ie
        LEFT JOIN attachments a ON a.event_id = ie.id
