@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users, CheckCircle, DollarSign } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../../../components/ui';
 import { UPLOADS_URL, API_BASE_URL, attachmentsApi } from '../../../api';
 import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS, parseProposedOutcomes } from '../../../utils/helpers';
@@ -139,6 +139,26 @@ export function ManagementDecisionModal({
     ...(mdResponsibleEmployees || []).flatMap(e => e.outcomes || [])
   ].join(' ').toLowerCase();
 
+  const employeesWithPenalty = useMemo(() => {
+    return (mdResponsibleEmployees || []).filter(e =>
+      (e.outcomes || []).some(o => o.toLowerCase().includes('penalty'))
+    );
+  }, [mdResponsibleEmployees]);
+
+  const hasEmployeePenalties = employeesWithPenalty.length > 0;
+  const totalEmployeePenalty = useMemo(() => {
+    return employeesWithPenalty.reduce((sum, e) => sum + (Number(e.penalty_amount) || 0), 0);
+  }, [employeesWithPenalty]);
+
+  // Keep penaltyAmount synchronized with employee penalties when specified
+  useEffect(() => {
+    if (decision === 'DISAGREE_MODIFY' && hasEmployeePenalties) {
+      if (setPenaltyAmount && Number(penaltyAmount) !== totalEmployeePenalty) {
+        setPenaltyAmount(totalEmployeePenalty > 0 ? String(totalEmployeePenalty) : '');
+      }
+    }
+  }, [decision, hasEmployeePenalties, totalEmployeePenalty]);
+
   const isPenaltyOutcome = allCurrentOutcomes.includes('penalty') || allCurrentOutcomes.includes('deduction');
   const isLetterOutcome = [
     'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
@@ -147,7 +167,7 @@ export function ManagementDecisionModal({
   const isTrainingOutcome = ['training', 'counselling', 'education', 'mishandling'].some(k => allCurrentOutcomes.includes(k));
   const isDirectClosure = !isLetterOutcome && !isTrainingOutcome;
 
-  const penaltyWordsPreview = convertNumberToWords(penaltyAmount);
+  const penaltyWordsPreview = convertNumberToWords(hasEmployeePenalties ? totalEmployeePenalty : penaltyAmount);
 
   return (
     <Modal open={show} onClose={onClose} title="Executive Management Decision & Governance" size="lg"
@@ -286,22 +306,36 @@ export function ManagementDecisionModal({
           <>
             {decision === 'DISAGREE_MODIFY' && (
               <div className="space-y-3 p-3 bg-indigo-50/50 border border-indigo-200 rounded-xl">
-                <ProposedOutcomeMultiSelect
-                  selected={parseProposedOutcomes(mdProposedOutcome)}
-                  onChange={(newList) => {
-                    setMdProposedOutcome(newList.join(', '));
-                    if (mdResponsibleEmployees && mdResponsibleEmployees.length > 0 && newList.length > 0) {
-                      setMdResponsibleEmployees(prev => prev.map(e => ({
-                        ...e,
-                        outcomes: (e.outcomes && e.outcomes.length > 0) ? e.outcomes : [...newList],
-                        needs_training: e.needs_training || newList.some(o => o.toLowerCase().includes('training') || o.toLowerCase().includes('counselling'))
-                      })));
-                    }
-                  }}
-                  label="Modified Proposed Outcome(s)"
-                  required
-                  placeholder="Select one or more modified outcomes..."
-                />
+                {/* If employees are already selected, show a concise aggregated tag summary instead of a duplicate multiselect box */}
+                {mdResponsibleEmployees && mdResponsibleEmployees.length > 0 ? (
+                  <div className="p-2.5 bg-white rounded-lg border border-indigo-200 text-xs flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-900 block mb-1">
+                        Aggregated Disciplinary Directives ({parseProposedOutcomes(mdProposedOutcome).length})
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {parseProposedOutcomes(mdProposedOutcome).map(o => (
+                          <span key={o} className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {o}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-slate-500 italic">
+                      Directives assigned individually on employee cards below
+                    </span>
+                  </div>
+                ) : (
+                  <ProposedOutcomeMultiSelect
+                    selected={parseProposedOutcomes(mdProposedOutcome)}
+                    onChange={(newList) => {
+                      setMdProposedOutcome(newList.join(', '));
+                    }}
+                    label="Modified Proposed Outcome(s)"
+                    required
+                    placeholder="Select one or more modified outcomes..."
+                  />
+                )}
 
                 <ResponsibleEmployeePicker
                   selected={mdResponsibleEmployees || []}
@@ -333,60 +367,75 @@ export function ManagementDecisionModal({
               </div>
             )}
 
-            {/* Financial Penalty Input - Strictly specified by Management */}
+            {/* Financial Penalty Display / Input - Avoids duplication when employee penalties are set */}
             {isPenaltyOutcome && (
-              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="field-label field-required text-xs text-rose-900 font-bold mb-0">
-                    Penalty Deduction Amount (₹)
-                  </label>
-                  <span className="text-[10px] text-rose-700 font-semibold bg-rose-100 px-2 py-0.5 rounded">
-                    Management Discretion
+              hasEmployeePenalties ? (
+                <div className="p-2.5 bg-rose-50/70 border border-rose-200 rounded-xl flex items-center justify-between text-xs animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                      <DollarSign size={14} />
+                    </div>
+                    <div>
+                      <div className="font-bold text-rose-950">
+                        Disciplinary Penalty Deductions: ₹{totalEmployeePenalty.toLocaleString('en-IN')}
+                      </div>
+                      <div className="text-[11px] text-rose-700 italic">
+                        {totalEmployeePenalty > 0 ? penaltyWordsPreview : 'Enter deduction amounts on employee card(s) above'}
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-semibold bg-rose-100 text-rose-800 px-2 py-0.5 rounded shrink-0">
+                    Allocated across {employeesWithPenalty.length} staff
                   </span>
                 </div>
-                <input
-                  type="number"
-                  min="0"
-                  step="100"
-                  value={penaltyAmount}
-                  onChange={e => setPenaltyAmount && setPenaltyAmount(e.target.value)}
-                  placeholder="Enter amount in Rupees (e.g. 1000)..."
-                  className="input text-xs font-bold"
-                />
-                {penaltyWordsPreview && (
-                  <p className="text-xs font-semibold text-rose-800 italic">
-                    Amount in words: {penaltyWordsPreview}
-                  </p>
-                )}
-              </div>
+              ) : (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <label className="field-label field-required text-xs text-rose-900 font-bold mb-0">
+                      Penalty Deduction Amount (₹)
+                    </label>
+                    <span className="text-[10px] text-rose-700 font-semibold bg-rose-100 px-2 py-0.5 rounded">
+                      Management Discretion
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={penaltyAmount}
+                    onChange={e => setPenaltyAmount && setPenaltyAmount(e.target.value)}
+                    placeholder="Enter amount in Rupees (e.g. 1000)..."
+                    className="input text-xs font-bold"
+                  />
+                  {penaltyWordsPreview && (
+                    <p className="text-xs font-semibold text-rose-800 italic">
+                      Amount in words: {penaltyWordsPreview}
+                    </p>
+                  )}
+                </div>
+              )
             )}
 
-            {/* Next Path Indicator Badge */}
-            <div className="p-3 rounded-xl border text-xs">
-              {isDirectClosure && (
-                <div className="bg-emerald-50 border-emerald-200 text-emerald-900 p-2.5 rounded-lg flex items-center gap-2">
-                  <CheckCircle className="text-emerald-600 shrink-0" size={16} />
-                  <span>
-                    <strong>Path A (Direct Closure):</strong> Outcome is <em>{effectiveOutcome || 'No Action'}</em>. Submitting this decision will officially <strong>CLOSE</strong> the incident immediately.
+            {/* Streamlined Workflow Pipeline Indicator */}
+            <div className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between text-xs flex-wrap gap-2">
+              <span className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Next Workflow Pipeline:</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {isDirectClosure && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <CheckCircle size={12} /> Path A: Direct Case Closure
                   </span>
-                </div>
-              )}
-              {isLetterOutcome && (
-                <div className="bg-indigo-50 border-indigo-200 text-indigo-900 p-2.5 rounded-lg flex items-center gap-2">
-                  <FileText className="text-indigo-600 shrink-0" size={16} />
-                  <span>
-                    <strong>Path B (Letter Dispatch):</strong> Outcome involves formal employee letters. This case will be forwarded to IMC to draft official letterhead notices, after which Management will review & dispatch via email.
+                )}
+                {isLetterOutcome && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                    <FileText size={12} /> Path B: Official Notice Letters
                   </span>
-                </div>
-              )}
-              {isTrainingOutcome && (
-                <div className="bg-amber-50 border-amber-200 text-amber-900 p-2.5 rounded-lg flex items-center gap-2">
-                  <AlertCircle className="text-amber-600 shrink-0" size={16} />
-                  <span>
-                    <strong>Path C (Training Protocol):</strong> Outcome involves mandatory training. This case will be forwarded to IMC to assign a trainer and collect completion evidence.
+                )}
+                {isTrainingOutcome && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                    <AlertCircle size={12} /> Path C: Mandatory Retraining
                   </span>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div>

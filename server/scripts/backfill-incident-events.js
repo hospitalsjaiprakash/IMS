@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const { query, getClient } = require('../config/database');
 const { recordEvent, linkAttachmentsToEvent } = require('../utils/incidentEvents');
 
@@ -619,6 +620,42 @@ async function backfill() {
             source: 'backfill',
             occurredAt: earliestInv.assigned_at || inc.created_at
           });
+        }
+      }
+
+      // Check for any investigator report feedbacks in feedbacks table not captured in events
+      const invFeedbacks = fbs.filter(f => f.role === 'investigator' && !consumedFbIds.has(f.id));
+      for (const invFb of invFeedbacks) {
+        consumedFbIds.add(invFb.id);
+        const invAtts = attachments.filter(att => att.stage === 'investigator_report' && Math.abs(new Date(att.created_at) - new Date(invFb.created_at)) < 300000);
+        const invEvt = await recordEvent(client, {
+          incidentId: inc.id,
+          eventType: 'INVESTIGATION_REPORT_SUBMITTED',
+          actor: {
+            id: invFb.author_id,
+            full_name: invFb.full_name,
+            role: 'investigator',
+            designation: invFb.designation,
+            department: invFb.dept_name || invFb.department
+          },
+          roundNo: 1,
+          statusBefore: 'with_investigator',
+          statusAfter: 'with_imc_review',
+          title: 'Joint Investigation Report Submitted',
+          summary: `Submitted by ${invFb.full_name} on behalf of the investigation panel`,
+          payload: {
+            report_text: invFb.feedback_text,
+            submitted_by: invFb.full_name,
+            findings: invFb.feedback_text,
+            attachments_count: invAtts.length
+          },
+          isSystemEvent: false,
+          source: 'backfill',
+          occurredAt: invFb.created_at
+        });
+
+        if (invAtts.length > 0) {
+          await linkAttachmentsToEvent(client, invEvt.id, invAtts.map(att => att.id));
         }
       }
 
