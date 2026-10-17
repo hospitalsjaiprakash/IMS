@@ -5,6 +5,7 @@ const { sendEmail } = require('../utils/emailService');
 const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeService');
 const { buildInitialLetterData, TEMPLATE_DEFINITIONS, formatDate } = require('../utils/letterTemplates');
 const { numberToWords } = require('../utils/numberToWords');
+const { recordEvent, recordLetterVersion, getNextRoundNo } = require('../utils/incidentEvents');
 
 /**
  * Helper to normalize template keys between frontend and database check constraints
@@ -308,10 +309,52 @@ exports.saveLetterDraft = async (req, res) => {
       savedLetter = insertRes.rows[0];
     }
 
-    await auditLog(req.user.id, 'LETTER_DRAFTED', id, {
+    const isRevision = Boolean(letterId);
+    const eventType = isRevision ? 'LETTER_REVISED' : 'LETTER_DRAFTED';
+    const round = await getNextRoundNo(null, id, eventType);
+
+    const letterEvent = await recordEvent(null, {
+      incidentId: id,
+      eventType,
+      actor: req.user,
+      roundNo: round,
+      title: isRevision
+        ? `Disciplinary Letter Revised: ${savedLetter.reference_number}`
+        : `Disciplinary Letter Drafted: ${savedLetter.reference_number}`,
+      summary: `${req.user.full_name} ${isRevision ? 'revised' : 'drafted'} ${finalTemplateType.replace(/_/g, ' ')} for ${finalEmpName} (${finalEmpDept || 'Staff'}). Ref: ${savedLetter.reference_number}.`,
+      payload: {
+        letterId: savedLetter.id,
+        recipientName: finalEmpName,
+        recipientEmpNo: finalEmpNo,
+        recipientDepartment: finalEmpDept,
+        recipientDesignation: finalEmpDesig,
+        templateType: finalTemplateType,
+        referenceNumber: savedLetter.reference_number,
+        subject: savedLetter.subject,
+        penaltyAmount: pAmt
+      }
+    });
+
+    await recordLetterVersion(null, {
       letterId: savedLetter.id,
-      templateType,
-      recipientName
+      incidentId: id,
+      eventId: letterEvent.id,
+      templateType: finalTemplateType,
+      referenceNumber: savedLetter.reference_number,
+      subject: savedLetter.subject,
+      salutation: savedLetter.salutation,
+      bodyText: finalBodyText,
+      penaltyAmount: pAmt,
+      penaltyAmountWords: finalPenaltyWords,
+      ccRecipients: finalCcRecipients,
+      changeSummary: isRevision ? 'Letter revised by IMC' : 'Initial draft created',
+      createdBy: req.user.id
+    });
+
+    await auditLog(req.user.id, isRevision ? 'LETTER_REVISED' : 'LETTER_DRAFTED', id, {
+      letterId: savedLetter.id,
+      templateType: finalTemplateType,
+      recipientName: finalEmpName
     }, req.ip);
 
     if (req.io) {
@@ -335,6 +378,7 @@ exports.saveLetterDraft = async (req, res) => {
 exports.deleteLetterDraft = async (req, res) => {
   try {
     const { id, letterId } = req.params;
+    const existing = await query(`SELECT * FROM incident_letters WHERE id = $1 AND incident_id = $2`, [letterId, id]);
     const delRes = await query(
       `DELETE FROM incident_letters WHERE id = $1 AND incident_id = $2 AND status = 'drafted' RETURNING id`,
       [letterId, id]
@@ -342,6 +386,21 @@ exports.deleteLetterDraft = async (req, res) => {
     if (!delRes.rows.length) {
       return res.status(400).json({ error: 'Letter could not be deleted or is already submitted.' });
     }
+
+    const letter = existing.rows[0] || {};
+    await recordEvent(null, {
+      incidentId: id,
+      eventType: 'LETTER_DELETED',
+      actor: req.user,
+      title: `Draft Letter Discarded`,
+      summary: `Draft letter (${letter.template_type ? letter.template_type.replace(/_/g, ' ') : 'notice'} for ${letter.recipient_name || 'Staff'}) was discarded by IMC.`,
+      payload: {
+        letterId,
+        recipientName: letter.recipient_name,
+        templateType: letter.template_type,
+        referenceNumber: letter.reference_number
+      }
+    });
 
     if (req.io) {
       req.io.emit('incident_updated', { id });
@@ -388,6 +447,28 @@ exports.submitLettersToManagement = async (req, res) => {
        WHERE id = $1`,
       [id]
     );
+
+    const submitRound = await getNextRoundNo(client, id, 'LETTERS_SUBMITTED_TO_MGMT');
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'LETTERS_SUBMITTED_TO_MGMT',
+      actor: req.user,
+      roundNo: submitRound,
+      statusBefore: 'pending_letter_generation',
+      statusAfter: 'pending_management_letter_approval',
+      title: `Formal Letters Submitted to Management (Round ${submitRound})`,
+      summary: `IMC submitted ${lettersRes.rows.length} disciplinary / advisory letter(s) to Executive Management for final review and dispatch approval.`,
+      payload: {
+        letters: lettersRes.rows.map(l => ({
+          id: l.id,
+          recipientName: l.recipient_name,
+          employeeNo: l.recipient_emp_no,
+          templateType: l.template_type,
+          referenceNumber: l.reference_number,
+          subject: l.subject
+        }))
+      }
+    });
 
     await client.query('COMMIT');
 
@@ -491,6 +572,22 @@ exports.submitManagementLetterDecision = async (req, res) => {
         [id, req.user.id, `Management Letter Revision Request:\n${rawNotes.trim()}`]
       );
 
+      const revRound = await getNextRoundNo(client, id, 'LETTERS_RETURNED_FOR_REVISION');
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: 'LETTERS_RETURNED_FOR_REVISION',
+        actor: req.user,
+        roundNo: revRound,
+        statusBefore: 'pending_management_letter_approval',
+        statusAfter: 'pending_letter_generation',
+        title: `Letters Returned for Revision (Round ${revRound})`,
+        summary: `Executive Management returned formal letters to IMC for revision. Notes: "${rawNotes.trim()}"`,
+        payload: {
+          revisionNotes: rawNotes.trim(),
+          returnedLettersCount: lettersRes.rows.length
+        }
+      });
+
       await client.query('COMMIT');
 
       // Notify IMC
@@ -563,6 +660,27 @@ exports.submitManagementLetterDecision = async (req, res) => {
        WHERE id = $3`,
       [nextStatus, resolvedAt, id]
     );
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'LETTERS_APPROVED_DISPATCHED',
+      actor: req.user,
+      statusBefore: 'pending_management_letter_approval',
+      statusAfter: nextStatus,
+      title: `Formal Letters Approved & Dispatched`,
+      summary: `Executive Management approved and authorized dispatch of ${lettersRes.rows.length} formal letter(s). Dispatched to recipients via verified email with QR code.`,
+      payload: {
+        letters: lettersRes.rows.map(l => ({
+          id: l.id,
+          recipientName: l.recipient_name,
+          recipientEmail: l.recipient_email,
+          templateType: l.template_type,
+          referenceNumber: l.reference_number,
+          subject: l.subject
+        })),
+        nextStatus
+      }
+    });
 
     await client.query('COMMIT');
 

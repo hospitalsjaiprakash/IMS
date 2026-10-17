@@ -10,7 +10,7 @@ import { formatDateTime, parseProposedOutcomes, getSeverityClass, getStatusLabel
 
 import IncidentHeader from '../../components/incident-detail/IncidentHeader';
 import IncidentDetailsCard from '../../components/incident-detail/IncidentDetailsCard';
-import InteractiveTimeline from '../../components/incident-detail/InteractiveTimeline';
+import { CaseStoryFeed, CaseStoryMiniMap } from '../../components/case-story';
 import IncidentActions from '../../components/incident-detail/IncidentActions';
 import FileUploadArea from '../../components/incident-detail/FileUploadArea';
 import InvestigatorPicker, { isImcUser } from '../../components/incident-detail/InvestigatorPicker';
@@ -739,23 +739,15 @@ export default function IncidentDetailPage() {
               onViewAttachment={(att) => setPreviewFile(att)}
             />
 
-            {/* ── STEP 2: CONCERNED DEPARTMENT FEEDBACK (HOD) ── */}
-            {hodFeedbacks.length > 0 && (
-              <div className="card p-5 border border-slate-200 bg-white space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Building size={16} className="text-indigo-600" />
-                    <h2 className="text-sm font-bold text-slate-800">Step 2: Concerned Department Feedback (HOD)</h2>
-                  </div>
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                    {hodFeedbacks.length} Response{hodFeedbacks.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {hodFeedbacks.map(fb => renderFeedbackEntry(fb))}
-                </div>
-              </div>
-            )}
+            {/* ── CASE CHRONOLOGICAL STORY FEED (SERIAL START-TO-END) ── */}
+            <CaseStoryFeed
+              events={data?.events || []}
+              incident={incident}
+              onViewAttachment={(att) => setPreviewFile(att)}
+            />
+
+            {/* ── NEXT ACTION & ACTIVE WORKFLOW AREA ── */}
+            <div id="next-action-area" className="space-y-5 pt-2">
 
             {/* Pending HOD Alert Banner */}
             {!incident.all_hod_feedback_submitted && (
@@ -858,7 +850,7 @@ export default function IncidentDetailPage() {
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <Shield className="text-indigo-600" size={18} />
-                    <h2 className="text-sm font-bold text-slate-800">Step 3: Investigation Panel in Progress</h2>
+                    <h2 className="text-sm font-bold text-slate-800">Investigation Panel in Progress</h2>
                   </div>
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
                     Awaiting Centralized Report
@@ -938,7 +930,7 @@ export default function IncidentDetailPage() {
                   <div className="flex items-center gap-2">
                     <MessageSquare className="text-indigo-600" size={18} />
                     <div>
-                      <h2 className="text-sm font-bold text-slate-800">Step 3: Submit Joint Investigation Report</h2>
+                      <h2 className="text-sm font-bold text-slate-800">Submit Joint Investigation Report</h2>
                       <p className="text-xs text-slate-500">Submitting on behalf of the entire investigation panel</p>
                     </div>
                   </div>
@@ -1362,185 +1354,8 @@ export default function IncidentDetailPage() {
               </div>
             )}
 
-            {/* Centralized Joint Investigation Report Card (Visible for general viewing when submitted) */}
-            {latestInvReport && !canImcReviewInvestigator && (
-              <div className="card p-5 border border-indigo-200 bg-white shadow-2xs space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="text-emerald-600" size={20} />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-800">Step 3: Joint Investigation Report</h2>
-                      <p className="text-xs text-slate-500">
-                        Submitted on behalf of the panel by <span className="font-semibold text-slate-700">{latestInvReport.full_name}</span>
-                        {latestInvReport.created_at && <> • {formatDateTime(latestInvReport.created_at)}</>}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Report Submitted
-                  </span>
-                </div>
-
-                {/* Appointed Panel Roster */}
-                {incident.investigators?.length > 0 && (
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-2">
-                      Appointed Investigation Panel:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {incident.investigators.map(inv => {
-                        const isPrimary = Boolean(inv.role === 'imc' || inv.is_imc_member || inv.is_imc_lead);
-                        return (
-                          <div
-                            key={inv.id || inv.investigator_id}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs shadow-2xs"
-                          >
-                            <span className="font-semibold text-slate-800">{inv.full_name}</span>
-                            {inv.employee_id && <span className="text-[10px] text-slate-400 font-mono">({inv.employee_id})</span>}
-                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                              isPrimary ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-blue-100 text-blue-700 border border-blue-200'
-                            }`}>
-                              {isPrimary ? 'Primary (IMC)' : 'Secondary'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Report Findings Text */}
-                <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-1.5">
-                  <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                    Investigation Findings & Analysis:
-                  </p>
-                  <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
-                    {latestInvReport.feedback_text}
-                  </p>
-                </div>
-
-                {/* Evidence Attachments if any */}
-                {investigationAttachmentsList?.length > 0 && (
-                  <div className="pt-2 border-t border-slate-100">
-                    <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
-                      <Paperclip size={13} className="text-indigo-600" />
-                      Attached Evidence & Documents ({investigationAttachmentsList.length})
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {investigationAttachmentsList.map(att => (
-                        <a
-                          key={att.id}
-                          href={`${UPLOADS_URL}/${att.stored_filename}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-700 transition-colors shadow-2xs"
-                        >
-                          <FileText size={13} className="text-indigo-600" />
-                          <span className="truncate max-w-[200px]">{att.original_filename}</span>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {incident.status === 'with_imc_review' && (
-                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-xs text-purple-900 flex items-center gap-2">
-                    <Clock size={15} className="text-purple-600 flex-shrink-0" />
-                    <span>The joint investigation report is currently under review and satisfaction assessment by the IMC Convenor.</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── STEP 4: IMC QUALITY ASSESSMENT & PROPOSED OUTCOMES ── */}
-            {imcFeedbacks.length > 0 ? (
-              <div className="card p-5 border border-indigo-200 bg-white space-y-4">
-                <div className="flex items-center justify-between border-b border-indigo-100 pb-3 flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck size={18} className="text-indigo-600" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-800">Step 4: Quality Assessment & Proposed Outcome (IMC)</h2>
-                      <p className="text-[11px] text-slate-500">Root cause evaluation, quality assessment, and recommended hospital sanctions</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {(incident.imc_severity || incident.severity) && (
-                      <span className={`badge ${getSeverityClass(incident.imc_severity || incident.severity)}`}>
-                        Assessed Severity: {incident.imc_severity || incident.severity}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* IMC Recommended Outcomes Banner */}
-                <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                      <ShieldCheck size={14} className="text-indigo-600" />
-                      IMC Recommended Outcome(s):
-                    </span>
-                    <span className="text-[10px] text-indigo-600 font-semibold bg-white px-2 py-0.5 rounded border border-indigo-200">
-                      Recommendation forwarded to Management
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {parseProposedOutcomes(incident.imc_proposed_outcome || incident.proposed_outcome || 'No Action').map((out, idx) => (
-                      <span key={idx} className="badge bg-indigo-100 text-indigo-900 border border-indigo-300 font-bold text-xs">
-                        {out}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Feedbacks from IMC in chronological order */}
-                <div className="space-y-3">
-                  {imcFeedbacks.map((fb, idx) => (
-                    <div key={fb.id || idx} className="space-y-1">
-                      {imcFeedbacks.length > 1 && (
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-700 uppercase">
-                          <History size={12} />
-                          {fb.stage === 'revised_imc'
-                            ? `Revised Quality Assessment (Round ${idx + 1} — Post-Management Review)`
-                            : `Initial Quality Assessment (Round ${idx + 1})`}
-                        </div>
-                      )}
-                      {renderFeedbackEntry(fb)}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Responsible Staff identified by IMC */}
-                {((incident.imc_responsible_employees && incident.imc_responsible_employees.length > 0) || (incident.responsible_employees && incident.responsible_employees.length > 0)) && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
-                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                      Responsible Staff Identified by IMC:
-                    </p>
-                    <div className="space-y-2">
-                      {(incident.imc_responsible_employees?.length > 0 ? incident.imc_responsible_employees : incident.responsible_employees).map(emp => (
-                        <div key={emp.employee_id || emp.id || emp.emp_id} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between gap-2 flex-wrap text-xs">
-                          <div>
-                            <span className="font-bold text-slate-800">{emp.full_name || emp.name}</span>
-                            <span className="text-[11px] text-slate-500 ml-1 font-mono">({emp.emp_id || emp.employee_id || 'Staff'})</span>
-                            <span className="text-[11px] text-slate-500 block">{emp.designation || 'Staff'} · {emp.department_name || emp.department || ''}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5 justify-end">
-                            {(Array.isArray(emp.outcomes) && emp.outcomes.length > 0
-                              ? emp.outcomes
-                              : parseProposedOutcomes(incident.imc_proposed_outcome || incident.proposed_outcome || 'No Action')
-                            ).map((out, i) => (
-                              <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                                {out}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              canImcAct && incident.status !== 'pending_training' && incident.status !== 'redirect_requested' && (
+            {/* Active Quality Review (IMC) Form — Active when IMC assessment pending */}
+            {canImcAct && incident.status !== 'pending_training' && incident.status !== 'redirect_requested' && incident.status !== 'with_investigator' && !incident.has_imc_feedback && (
                 <div className="card p-5 border-indigo-200 bg-indigo-50/10 print:hidden space-y-4">
                   <div className="flex items-center gap-2 mb-2">
                     <MessageSquare className="text-indigo-600" size={18} />
@@ -1717,155 +1532,9 @@ export default function IncidentDetailPage() {
                     </div>
                   )}
                 </div>
-              )
-            )}
+              )}
 
-            {/* ── STEP 5: EXECUTIVE MANAGEMENT DECISION & DIRECTIVES ── */}
-            {mgmtFeedbacks.length > 0 && (
-              <div className="card p-5 border border-purple-200 bg-white space-y-4">
-                <div className="flex items-center justify-between border-b border-purple-100 pb-3 flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <Award size={18} className="text-purple-600" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-800">Step 5: Executive Management Directive & Decision</h2>
-                      <p className="text-[11px] text-slate-500">Hospital executive review, final sanction order, and policy directives</p>
-                    </div>
-                  </div>
-                  <span className="badge badge-purple text-xs font-semibold">
-                    {incident.management_decision === 'DISAGREE_MODIFY' ? 'Outcome Modified by Management' :
-                     incident.management_decision === 'AGREE' ? 'Executive Endorsement' :
-                     incident.management_decision === 'DISAGREE_REVISE_FEEDBACK' ? 'Revision Requested by Management' :
-                     incident.management_decision === 'DISAGREE_REINVESTIGATE' ? 'Re-investigation Ordered' : 'Executive Decision'}
-                  </span>
-                </div>
 
-                {/* OUTCOME COMPARISON CARD (Especially when Modified) */}
-                {incident.management_decision === 'DISAGREE_MODIFY' && (
-                  <div className="bg-gradient-to-r from-amber-50 via-purple-50 to-indigo-50 border-2 border-purple-300 rounded-xl p-4 space-y-3 shadow-xs">
-                    <div className="flex items-center gap-2 text-xs font-bold text-purple-950 uppercase tracking-wider">
-                      <ArrowRightLeft size={15} className="text-purple-700" />
-                      Outcome Modification Audit: IMC Recommendation Overruled by Management
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
-                      <div className="bg-white/95 p-3 rounded-xl border border-indigo-200 shadow-2xs">
-                        <span className="text-[10px] font-bold uppercase text-indigo-700 block mb-1">
-                          IMC Recommended Outcome:
-                        </span>
-                        <div className="flex flex-wrap gap-1">
-                          {parseProposedOutcomes(incident.imc_proposed_outcome || 'No Action').map((out, idx) => (
-                            <span key={idx} className="badge bg-indigo-50 text-indigo-800 border border-indigo-200 text-xs font-semibold">
-                              {out}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="bg-white/95 p-3 rounded-xl border-2 border-purple-400 shadow-xs">
-                        <span className="text-[10px] font-bold uppercase text-purple-800 block mb-1 flex items-center gap-1">
-                          <CheckCircle2 size={12} className="text-purple-600" />
-                          Management Final Directive:
-                        </span>
-                        <div className="flex flex-wrap gap-1">
-                          {parseProposedOutcomes(incident.proposed_outcome).map((out, idx) => (
-                            <span key={idx} className="badge bg-purple-100 text-purple-900 border border-purple-300 text-xs font-bold">
-                              {out}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {incident.penalty_amount && (
-                      <div className="text-xs text-rose-800 bg-rose-50 border border-rose-200 p-2.5 rounded-lg font-medium">
-                        Financial Penalty Imposed by Management: <strong>₹{incident.penalty_amount}</strong>
-                        {incident.penalty_amount_words ? ` (${incident.penalty_amount_words})` : ''}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* When Management Agreed with IMC */}
-                {incident.management_decision === 'AGREE' && (
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2 text-xs text-emerald-900">
-                    <CheckCircle size={16} className="text-emerald-600 flex-shrink-0" />
-                    <div>
-                      <span className="font-bold">Executive Endorsement: </span>
-                      Management reviewed and fully concurred with IMC findings and recommended outcome ({incident.proposed_outcome}).
-                    </div>
-                  </div>
-                )}
-
-                {/* When Returned for Revised Feedback */}
-                {incident.management_decision === 'DISAGREE_REVISE_FEEDBACK' && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 text-xs text-amber-900">
-                    <AlertTriangle size={16} className="text-amber-600 flex-shrink-0" />
-                    <div>
-                      <span className="font-bold">Returned for Revised Quality Review: </span>
-                      Management requested the IMC Convenor to re-evaluate quality observations and revise proposed sanctions.
-                    </div>
-                  </div>
-                )}
-
-                {/* When Returned for Re-investigation */}
-                {incident.management_decision === 'DISAGREE_REINVESTIGATE' && (
-                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center gap-2 text-xs text-rose-900">
-                    <AlertTriangle size={16} className="text-rose-600 flex-shrink-0" />
-                    <div>
-                      <span className="font-bold">Returned for Re-investigation: </span>
-                      Management deemed investigation findings inconclusive and ordered the panel to reinvestigate.
-                    </div>
-                  </div>
-                )}
-
-                {/* Chronological list of all Management Feedbacks */}
-                <div className="space-y-3">
-                  {mgmtFeedbacks.map((fb, idx) => (
-                    <div key={fb.id || idx} className="space-y-1">
-                      {mgmtFeedbacks.length > 1 && (
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-purple-700 uppercase">
-                          <History size={12} />
-                          Management Directive #{idx + 1}
-                        </div>
-                      )}
-                      {renderFeedbackEntry(fb)}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Final mandated responsible staff table under Management */}
-                {incident.responsible_employees?.length > 0 && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
-                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                      Final Mandated Staff Sanctions (Executive Order):
-                    </p>
-                    <div className="space-y-2">
-                      {incident.responsible_employees.map(emp => (
-                        <div key={emp.employee_id || emp.id} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between gap-2 flex-wrap text-xs">
-                          <div>
-                            <span className="font-bold text-slate-800">{emp.full_name}</span>
-                            <span className="text-[11px] text-slate-500 ml-1 font-mono">({emp.emp_id || emp.employee_id || 'Staff'})</span>
-                            <span className="text-[11px] text-slate-500 block">{emp.designation || 'Staff'} · {emp.department_name || ''}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5 justify-end">
-                            {(Array.isArray(emp.outcomes) && emp.outcomes.length > 0 ? emp.outcomes : parseProposedOutcomes(incident.proposed_outcome)).map((out, i) => (
-                              <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-purple-50 text-purple-800 border border-purple-200">
-                                {out}
-                              </span>
-                            ))}
-                            {emp.penalty_amount && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                ₹{emp.penalty_amount}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
             {incident.status === 'with_head_management' && (
               <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
@@ -1943,7 +1612,7 @@ export default function IncidentDetailPage() {
                       <CheckCircle size={18} />
                     </div>
                     <div>
-                      <h2 className="text-sm font-bold text-slate-800">Step 8: Final Report & Hospital Resolution</h2>
+                      <h2 className="text-sm font-bold text-slate-800">Hospital Case Resolution & CAPA Report</h2>
                       <p className="text-[11px] text-slate-500">Official incident closure summary and comprehensive CAPA implementation</p>
                     </div>
                   </div>
@@ -1975,18 +1644,50 @@ export default function IncidentDetailPage() {
                 </div>
               </div>
             )}
-          </div>
 
+            {/* ── CASE CONCLUDED & CLOSED BANNER (WHEN ARCHIVED) ── */}
+            {['closed', 'resolved'].includes(incident.status) && (
+              <div className="bg-emerald-50/80 border border-emerald-300 rounded-2xl p-5 shadow-xs space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center">
+                      <CheckCircle2 size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-emerald-950">Hospital Incident Officially Concluded</h3>
+                      <p className="text-xs text-emerald-800">All required actions, investigations, and governance protocols are archived.</p>
+                    </div>
+                  </div>
+                  <span className="badge badge-success text-xs font-bold">Case Closed</span>
+                </div>
+
+                {(isManagement || canImcAct) && (
+                  <div className="pt-2 border-t border-emerald-200 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setShowReopenModal(true)}
+                      className="btn-secondary btn-sm text-xs text-rose-700 hover:text-rose-800 hover:bg-rose-50 border-rose-200 flex items-center gap-1.5 font-semibold"
+                    >
+                      <RotateCcw size={13} />
+                      <span>Reopen Incident for Exceptional Review</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            </div> {/* ── END next-action-area ── */}
+          </div> {/* ── END lg:col-span-2 ── */}
+
+          {/* ── SIDEBAR MINI-MAP ── */}
           <div className="space-y-5">
-            <InteractiveTimeline
+            <CaseStoryMiniMap
               incident={incident}
-              feedbacks={feedbacks}
-              attachments={attachments}
-              finalReport={finalReport}
-              timelineEvents={data.timelineEvents}
-              letters={data?.letters || []}
-              trainers={data?.trainers || []}
-              onViewAttachment={(att) => setPreviewFile(att)}
+              events={data?.events || []}
+              onScrollToNextAction={() => {
+                const el = document.getElementById('next-action-area');
+                el?.scrollIntoView({ behavior: 'smooth' });
+              }}
             />
           </div>
         </div>

@@ -206,7 +206,7 @@ export default function LettersCard({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-slate-800">Step 6: Formal Disciplinary & Advisory Letters</h2>
+                <h2 className="text-sm font-bold text-slate-800">Formal Disciplinary & Advisory Letters</h2>
                 {employeeLetters.length > 0 && (
                   <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
                     {employeeLetters.length} Letter{employeeLetters.length === 1 ? '' : 's'} ({uniqueEmployeesCount} Staff)

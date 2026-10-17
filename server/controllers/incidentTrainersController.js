@@ -4,6 +4,7 @@ const { createNotification } = require('../utils/notifications');
 const { sendEmail } = require('../utils/emailService');
 const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeService');
 const { buildTrainerAppointmentLetterData, formatDate } = require('../utils/letterTemplates');
+const { recordEvent, linkAttachmentsToEvent, getNextRoundNo } = require('../utils/incidentEvents');
 
 // =============================================
 // GET PERSONAL TRAINER ASSIGNMENTS
@@ -270,6 +271,34 @@ exports.assignTrainer = async (req, res) => {
       );
     }
 
+    const round = await getNextRoundNo(client, id, 'TRAINER_ASSIGNED');
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'TRAINER_ASSIGNED',
+      actor: req.user,
+      roundNo: round,
+      statusBefore: incident.status,
+      statusAfter: nextIncidentStatus,
+      title: `Designated Trainer Appointed: ${trainerUser.full_name}`,
+      summary: `Appointed ${trainerUser.full_name} (${trainerUser.designation || 'Trainer'}, ${trainerUser.department || ''}) to conduct training on "${trainingTopic}". Formal Appointment Letter ${letterData.referenceNumber} generated and dispatched.`,
+      payload: {
+        trainer: {
+          id: trainerUser.id,
+          name: trainerUser.full_name,
+          employeeId: trainerUser.employee_id,
+          department: trainerUser.department,
+          designation: trainerUser.designation,
+          email: trainerUser.email
+        },
+        topic: trainingTopic,
+        instructions: trainingInstructions,
+        targetDate,
+        trainees: traineesRoster,
+        letterReferenceNumber: letterData.referenceNumber,
+        assignmentId: insertRes.rows[0].id
+      }
+    });
+
     await client.query('COMMIT');
 
     // Notify assigned trainer
@@ -486,6 +515,34 @@ exports.submitTrainerReport = async (req, res) => {
       [id]
     );
 
+    const round = await getNextRoundNo(client, id, 'TRAINING_REPORT_SUBMITTED');
+    const durationText = calculatedMinutes ? `${calculatedMinutes} mins` : 'N/A';
+    const reportEvent = await recordEvent(client, {
+      incidentId: id,
+      eventType: 'TRAINING_REPORT_SUBMITTED',
+      actor: req.user,
+      roundNo: round,
+      statusBefore: 'training_in_progress',
+      statusAfter: 'pending_imc_training_review',
+      title: `Training Report & Attendance Submitted (${durationText})`,
+      summary: `Trainer ${req.user.full_name} submitted completion report for training session on "${assignment.training_topic || 'Assigned Topic'}". Duration: ${durationText}. Venue: ${venue || 'On-site'}. Awaiting IMC review.`,
+      payload: {
+        assignmentId,
+        conductedAt: conductedAt || completionDate || new Date(),
+        durationMinutes: calculatedMinutes,
+        methodology,
+        venue,
+        preAssessment,
+        postAssessment,
+        capaRecommendations,
+        reportSummary: fullReportSummary
+      }
+    });
+
+    if (attachmentId) {
+      await linkAttachmentsToEvent(client, reportEvent.id, [attachmentId]);
+    }
+
     await client.query('COMMIT');
 
     // Notify IMC Convenor
@@ -566,6 +623,22 @@ exports.imcVerifyTraining = async (req, res) => {
         [id, req.user.id, `IMC Training Rework Request:\n${(reviewNotes || 'Additional practical session required.').trim()}`]
       );
 
+      const reworkRound = await getNextRoundNo(client, id, 'TRAINING_REWORK_REQUESTED');
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: 'TRAINING_REWORK_REQUESTED',
+        actor: req.user,
+        roundNo: reworkRound,
+        statusBefore: 'pending_imc_training_review',
+        statusAfter: 'training_in_progress',
+        title: `Training Rework Requested by IMC (Round ${reworkRound})`,
+        summary: `IMC reviewed training report and requested follow-up / rework. Notes: "${(reviewNotes || 'Additional practical session required.').trim()}"`,
+        payload: {
+          assignmentId,
+          reviewNotes: (reviewNotes || '').trim()
+        }
+      });
+
       await client.query('COMMIT');
 
       await createNotification(
@@ -601,6 +674,21 @@ exports.imcVerifyTraining = async (req, res) => {
        WHERE id = $1`,
       [id]
     );
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'TRAINING_VERIFIED_BY_IMC',
+      actor: req.user,
+      statusBefore: 'pending_imc_training_review',
+      statusAfter: 'with_head_management',
+      title: `Training Verified by IMC & Escalated to Management`,
+      summary: `IMC verified satisfactory completion of corrective training for ${assignment.trainee_name || 'trainee'}. Forwarded to Executive Management for final closure.`,
+      payload: {
+        assignmentId,
+        traineeName: assignment.trainee_name,
+        reviewNotes: (reviewNotes || 'Training verified and endorsed by IMC.').trim()
+      }
+    });
 
     await client.query('COMMIT');
 
@@ -679,6 +767,19 @@ exports.managementCloseTraining = async (req, res) => {
        WHERE id = $2`,
       [closureNotes ? `Training confirmed and closed: ${closureNotes.trim()}` : null, id]
     );
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'MGMT_TRAINING_CLOSED',
+      actor: req.user,
+      statusBefore: 'with_head_management',
+      statusAfter: 'closed',
+      title: `Incident Closed by Management Post-Training`,
+      summary: `Executive Management reviewed completed training and closed the incident. ${closureNotes ? `Notes: "${closureNotes.trim()}"` : ''}`,
+      payload: {
+        closureNotes: closureNotes ? closureNotes.trim() : null
+      }
+    });
 
     await client.query('COMMIT');
 

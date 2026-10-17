@@ -4,6 +4,7 @@ const { createNotification } = require('../utils/notifications');
 const { generateReferenceId } = require('../utils/referenceId');
 const { sendEmail, templates } = require('../utils/emailService');
 const { checkAndAutoEscalate21Days } = require('../services/cronService');
+const { recordEvent, linkAttachmentsToEvent } = require('../utils/incidentEvents');
 
 const categoryDepartmentMapping = {
   'Asset Related': 'Asset',
@@ -206,6 +207,37 @@ exports.createIncident = async (req, res) => {
           [incident.id, req.user.id, 'submission', file.originalname, storedFilename, file.size, file.mimetype]
         );
       }
+    }
+
+    // Record immutable INCIDENT_CREATED event in journal
+    const createdEvent = await recordEvent(client, {
+      incidentId: incident.id,
+      eventType: 'INCIDENT_CREATED',
+      actor: req.user,
+      roundNo: 1,
+      statusBefore: null,
+      statusAfter: incident.status,
+      title: 'Incident Reported',
+      summary: `Reported by ${req.user.full_name || 'Staff'} (${req.user.department || 'Hospital Staff'})`,
+      payload: {
+        reference_id: incident.reference_id,
+        incident_date: incident.incident_date,
+        incident_time: incident.incident_time,
+        main_location_id: incident.main_location_id,
+        sub_location_id: incident.sub_location_id,
+        occurred_to: incident.occurred_to,
+        reported_severity: incident.severity,
+        incident_category: incident.incident_category,
+        incident_type: incident.incident_type,
+        department_ids: departmentIds,
+        description: incident.description,
+        has_responsible_person: incident.has_responsible_person
+      },
+      isSystemEvent: false
+    });
+
+    if (req.files && req.files.length > 0) {
+      await client.query('UPDATE attachments SET event_id = $1 WHERE incident_id = $2', [createdEvent.id, incident.id]);
     }
 
     await client.query('COMMIT');
@@ -832,13 +864,37 @@ exports.getIncident = async (req, res) => {
     );
     isTargetHod = targetHodCheck.rows.length > 0 || (incident.redirect_requested_by_user_id === userId);
 
-    // Get audit logs for dynamic lifecycle timeline
+    // Get audit logs for backwards compatibility
     const auditLogsRes = await query(
       `SELECT al.*, u.full_name, u.role, u.department as user_department, u.designation as user_designation
        FROM audit_logs al
        LEFT JOIN users u ON u.id = al.user_id
        WHERE al.incident_id = $1
        ORDER BY al.created_at ASC`,
+      [incident.id]
+    );
+
+    // Get comprehensive dynamic Case Story events from incident_events journal
+    const eventsRes = await query(
+      `SELECT ie.*,
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'id', a.id,
+                    'original_filename', a.original_filename,
+                    'stored_filename', a.stored_filename,
+                    'file_size', a.file_size,
+                    'mime_type', a.mime_type,
+                    'stage', a.stage
+                  )
+                ) FILTER (WHERE a.id IS NOT NULL),
+                '[]'::jsonb
+              ) as attachments
+       FROM incident_events ie
+       LEFT JOIN attachments a ON a.event_id = ie.id
+       WHERE ie.incident_id = $1
+       GROUP BY ie.id
+       ORDER BY ie.seq ASC`,
       [incident.id]
     );
 
@@ -857,7 +913,8 @@ exports.getIncident = async (req, res) => {
       finalReport: finalReport.rows[0] || null,
       letters: lettersRes.rows,
       trainers: trainersRes.rows,
-      timelineEvents: auditLogsRes.rows
+      timelineEvents: auditLogsRes.rows,
+      events: eventsRes.rows
     });
 
   } catch (error) {
@@ -894,6 +951,17 @@ exports.withdrawIncident = async (req, res) => {
        WHERE id = $2`,
       [reason || null, id]
     );
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'INCIDENT_WITHDRAWN',
+      actor: req.user,
+      statusBefore: incident.status,
+      statusAfter: 'withdrawn',
+      title: 'Incident Withdrawn by Reporter',
+      summary: reason ? `Reason: "${reason}"` : 'Reporter withdrew the incident before committee review.',
+      payload: { reason }
+    });
 
     await auditLog(req.user.id, 'INCIDENT_WITHDRAWN', id, { reason }, req.ip);
 

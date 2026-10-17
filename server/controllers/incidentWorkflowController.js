@@ -2,6 +2,7 @@ const { query, getClient } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
+const { recordEvent, getNextRoundNo } = require('../utils/incidentEvents');
 const bcrypt = require('bcryptjs');
 
 function formatProposedOutcome(outcome) {
@@ -201,6 +202,30 @@ exports.submitHodFeedback = async (req, res) => {
       );
     }
 
+    // Record immutable HOD_FEEDBACK_SUBMITTED event
+    const dNameRes = await client.query('SELECT name FROM departments WHERE id = $1', [deptId]);
+    const deptName = dNameRes.rows[0]?.name || req.user.department || 'Department';
+
+    const hodEvt = await recordEvent(client, {
+      incidentId: id,
+      eventType: 'HOD_FEEDBACK_SUBMITTED',
+      actor: req.user,
+      title: `Department Feedback: ${deptName}`,
+      summary: `Submitted by ${req.user.full_name} (${req.user.designation || 'HOD'})`,
+      payload: {
+        department_name: deptName,
+        feedback_text: feedbackText,
+        all_responded: allResponded
+      }
+    });
+
+    if (req.files && req.files.length > 0) {
+      await client.query(
+        `UPDATE attachments SET event_id = $1 WHERE incident_id = $2 AND stage = 'hod_feedback' AND uploader_id = $3 AND event_id IS NULL`,
+        [hodEvt.id, id, req.user.id]
+      );
+    }
+
     await client.query('COMMIT');
 
     // Notify IMC (in-app + email) only if ready
@@ -277,6 +302,16 @@ exports.claimIncident = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'IMC_CLAIMED',
+      actor: req.user,
+      title: 'Incident Claimed by IMC Member',
+      summary: `Locked for review for ${lockMinutes} minutes`,
+      payload: { lock_minutes: lockMinutes, expires_at: expiresAt },
+      isSystemEvent: true
+    });
 
     await auditLog(req.user.id, 'IMC_CLAIM', id, { lockMinutes }, req.ip);
 
@@ -479,6 +514,36 @@ exports.submitImcFeedback = async (req, res) => {
         }
       }
     }
+    // Record immutable IMC_ASSESSMENT_SUBMITTED event
+    const imcRound = await getNextRoundNo(client, id, 'IMC_ASSESSMENT_SUBMITTED');
+    const isRevised = imcRound > 1;
+
+    const imcEvt = await recordEvent(client, {
+      incidentId: id,
+      eventType: 'IMC_ASSESSMENT_SUBMITTED',
+      actor: req.user,
+      roundNo: imcRound,
+      statusBefore: incident.status,
+      statusAfter: forwardToMd ? 'with_head_management' : incident.status,
+      title: isRevised ? `IMC Revised Quality Assessment (Round ${imcRound})` : 'IMC Quality Assessment & Proposed Outcome',
+      summary: `Assessed Severity: ${severity || incident.severity || 'Minor'} · Proposed Outcome: ${cleanProposedOutcome || 'No Action'}`,
+      payload: {
+        round_no: imcRound,
+        is_revised: isRevised,
+        severity: severity || incident.severity,
+        proposed_outcome: cleanProposedOutcome || 'No Action',
+        responsible_employees: imcResponsibleEmployees,
+        feedback_text: feedbackText,
+        forwarded_to_management: Boolean(forwardToMd)
+      }
+    });
+
+    if (req.files && req.files.length > 0) {
+      await client.query(
+        `UPDATE attachments SET event_id = $1 WHERE incident_id = $2 AND stage = 'imc_feedback' AND uploader_id = $3 AND event_id IS NULL`,
+        [imcEvt.id, id, req.user.id]
+      );
+    }
 
     await client.query('COMMIT');
     await auditLog(req.user.id, 'IMC_FEEDBACK_SUBMITTED', id, { forwardToMd }, req.ip);
@@ -585,6 +650,22 @@ exports.submitManagementAction = async (req, res) => {
         `UPDATE incidents SET status = $1, management_decision = $2, management_notes = $3, updated_at = NOW() WHERE id = $4`,
         [nextStatus, decision, notes, id]
       );
+
+      // Record Management return event
+      const isReinvestigate = decision === 'DISAGREE_REINVESTIGATE';
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: isReinvestigate ? 'MGMT_RETURNED_FOR_REINVESTIGATION' : 'MGMT_RETURNED_FOR_REVISION',
+        actor: req.user,
+        statusBefore: incident.status,
+        statusAfter: nextStatus,
+        title: isReinvestigate ? 'Management Ordered Re-investigation' : 'Management Returned for Revised Review',
+        summary: isReinvestigate
+          ? `Findings inconclusive. Notes: "${notes || 'Re-investigation required'}"`
+          : `Revision requested. Notes: "${notes || 'Revise quality findings/outcomes'}"`,
+        payload: { decision, notes, next_status: nextStatus }
+      });
+
       await client.query('COMMIT');
       await auditLog(req.user.id, 'MANAGEMENT_RETURNED', id, { decision, nextStatus }, req.ip);
 
@@ -814,6 +895,45 @@ exports.submitManagementAction = async (req, res) => {
       }
     }
 
+    // Record Management decision event (agreed or modified)
+    if (decision === 'DISAGREE_MODIFY') {
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: 'MGMT_DECISION_MODIFIED',
+        actor: req.user,
+        statusBefore: incident.status,
+        statusAfter: nextStatus,
+        title: 'Management Directive: Outcome Modified',
+        summary: `IMC Proposed: [ ${incident.imc_proposed_outcome || 'No Action'} ] ──► Management Directed: [ ${cleanProposedOutcome || incident.proposed_outcome} ]`,
+        payload: {
+          decision: 'DISAGREE_MODIFY',
+          imc_proposed_outcome: incident.imc_proposed_outcome || 'No Action',
+          final_mandated_outcome: cleanProposedOutcome || incident.proposed_outcome,
+          penalty_amount: penaltyAmount || incident.penalty_amount,
+          responsible_employees: responsibleEmployees,
+          notes,
+          next_status: nextStatus
+        }
+      });
+    } else {
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: 'MGMT_DECISION_AGREED',
+        actor: req.user,
+        statusBefore: incident.status,
+        statusAfter: nextStatus,
+        title: 'Executive Management Endorsement',
+        summary: `Management concurred with IMC findings and recommendation (${cleanProposedOutcome || incident.proposed_outcome})`,
+        payload: {
+          decision: 'AGREE',
+          endorsed_outcome: cleanProposedOutcome || incident.proposed_outcome,
+          responsible_employees: responsibleEmployees,
+          notes,
+          next_status: nextStatus
+        }
+      });
+    }
+
     await client.query('COMMIT');
     await auditLog(req.user.id, 'MANAGEMENT_DECISION', id, { decision, nextStatus }, req.ip);
 
@@ -874,6 +994,28 @@ exports.generateImcReport = async (req, res) => {
       [newStatus, id]
     );
 
+    // Record immutable FINAL_REPORT_GENERATED event
+    const finalEvt = await recordEvent(client, {
+      incidentId: id,
+      eventType: 'FINAL_REPORT_GENERATED',
+      actor: req.user,
+      statusBefore: incident.status,
+      statusAfter: newStatus,
+      title: 'Official Final Report Generated',
+      summary: `Assessed Fault Type: ${incident.fault_type || 'Hospital / Process'} · CAPA documented`,
+      payload: {
+        fault_type: incident.fault_type,
+        corrective_actions: incident.corrective_actions
+      }
+    });
+
+    if (req.files && req.files.length > 0) {
+      await client.query(
+        `UPDATE attachments SET event_id = $1 WHERE incident_id = $2 AND stage = 'imc_report' AND event_id IS NULL`,
+        [finalEvt.id, id]
+      );
+    }
+
     await client.query('COMMIT');
 
     const reporterRes = await query('SELECT email, full_name FROM users WHERE id = $1', [incident.reporter_id]);
@@ -932,6 +1074,17 @@ exports.closeIncident = async (req, res) => {
       `UPDATE incidents SET status = 'closed', resolved_at = NOW(), updated_at = NOW() WHERE id = $1`,
       [id]
     );
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'INCIDENT_CLOSED',
+      actor: req.user,
+      statusBefore: 'resolved',
+      statusAfter: 'closed',
+      title: 'Incident Officially Closed',
+      summary: 'All findings, directives, letters, and training verification fulfilled. Case closed.',
+      payload: {}
+    });
 
     const inc = await query(`SELECT reporter_id, reference_id FROM incidents WHERE id = $1`, [id]);
     const incident = inc.rows[0];
@@ -1118,6 +1271,29 @@ exports.submitInvestigatorReport = async (req, res) => {
     // Incident status advances to with_imc_review for Convenor evaluation
     await client.query(`UPDATE incidents SET status = 'with_imc_review', updated_at = NOW() WHERE id = $1`, [id]);
 
+    // Record immutable INVESTIGATION_REPORT_SUBMITTED event
+    const invReportEvt = await recordEvent(client, {
+      incidentId: id,
+      eventType: 'INVESTIGATION_REPORT_SUBMITTED',
+      actor: req.user,
+      statusBefore: 'with_investigator',
+      statusAfter: 'with_imc_review',
+      title: 'Joint Investigation Report Submitted',
+      summary: `Submitted by ${req.user.full_name} on behalf of the investigation panel`,
+      payload: {
+        report_text: reportText.trim(),
+        submitted_by: req.user.full_name,
+        attachments_count: req.files ? req.files.length : 0
+      }
+    });
+
+    if (req.files && req.files.length > 0) {
+      await client.query(
+        `UPDATE attachments SET event_id = $1 WHERE incident_id = $2 AND stage = 'investigator_report' AND event_id IS NULL`,
+        [invReportEvt.id, id]
+      );
+    }
+
     await client.query('COMMIT');
 
     const incRes = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
@@ -1192,15 +1368,15 @@ exports.rejectInvestigatorReport = async (req, res) => {
       return res.status(400).json({ error: 'Please provide remarks explaining why reinvestigation is required.' });
     }
 
-    // Record Convenor's feedback into feedbacks table
+    // Record Convenor's feedback into feedbacks table with explicit stage
     await client.query(
-      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text) VALUES ($1, $2, 'imc', $3)`,
+      `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, stage) VALUES ($1, $2, 'imc', $3, 'investigation_returned')`,
       [id, req.user.id, feedbackText.trim()]
     );
     
     let assignedInvs = [];
 
-    // If action is 'reassign' and new investigator IDs are provided, reassign them
+    // If action is 'reassign' and new investigator IDs are provided, reassign them non-destructively
     if (action === 'reassign' && Array.isArray(investigatorIds) && investigatorIds.length > 0) {
       try {
         assignedInvs = await resolveAndValidateInvestigators(investigatorIds, (sql, p) => client.query(sql, p));
@@ -1209,30 +1385,52 @@ exports.rejectInvestigatorReport = async (req, res) => {
         return res.status(400).json({ error: validationErr.message });
       }
 
-      // Remove previous investigator assignments
-      await client.query('DELETE FROM investigators WHERE incident_id = $1', [id]);
+      // Deactivate previous investigator panel (non-destructive!)
+      await client.query('UPDATE investigators SET is_active = FALSE WHERE incident_id = $1', [id]);
+
+      const nextRoundRes = await client.query('SELECT COALESCE(MAX(round_no), 0) + 1 as nr FROM investigators WHERE incident_id = $1', [id]);
+      const nextRoundNo = parseInt(nextRoundRes.rows[0].nr, 10) || 2;
 
       for (const inv of assignedInvs) {
         await client.query(
-          `INSERT INTO investigators (incident_id, investigator_id, assigned_by, status) 
-           VALUES ($1, $2, $3, 'assigned')`,
-          [id, inv.id, req.user.id]
+          `INSERT INTO investigators (incident_id, investigator_id, assigned_by, status, round_no, is_active) 
+           VALUES ($1, $2, $3, 'assigned', $4, TRUE)`,
+          [id, inv.id, req.user.id, nextRoundNo]
         );
       }
     } else {
       // Re-open existing investigators for same team
-      await client.query(`UPDATE investigators SET status = 'assigned', completed_at = NULL WHERE incident_id = $1`, [id]);
+      await client.query(`UPDATE investigators SET status = 'assigned', completed_at = NULL WHERE incident_id = $1 AND is_active = TRUE`, [id]);
       const prevInvs = await client.query(
         `SELECT DISTINCT u.id, u.email, u.full_name 
          FROM investigators inv
          JOIN users u ON u.id = inv.investigator_id
-         WHERE inv.incident_id = $1`,
+         WHERE inv.incident_id = $1 AND inv.is_active = TRUE`,
         [id]
       );
       assignedInvs = prevInvs.rows;
     }
     
     await client.query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
+
+    // Record immutable INVESTIGATION_RETURNED event
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'INVESTIGATION_RETURNED',
+      actor: req.user,
+      statusBefore: 'with_imc_review',
+      statusAfter: 'with_investigator',
+      title: action === 'reassign' ? 'Investigation Returned & Panel Reassigned' : 'Investigation Returned for Re-investigation',
+      summary: action === 'reassign'
+        ? `IMC Convenor requested re-investigation and reassigned panel. Remarks: "${feedbackText.trim()}"`
+        : `IMC Convenor requested re-investigation with same team. Remarks: "${feedbackText.trim()}"`,
+      payload: {
+        action,
+        feedback_text: feedbackText.trim(),
+        reassigned: action === 'reassign',
+        new_panel: assignedInvs.map(inv => ({ id: inv.id, full_name: inv.full_name }))
+      }
+    });
     
     await client.query('COMMIT');
 
@@ -1282,6 +1480,18 @@ exports.reopenIncident = async (req, res) => {
       `UPDATE incidents SET status = 'with_imc', updated_at = NOW() WHERE id = $1 AND status = 'resolved'`,
       [id]
     );
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'INCIDENT_REOPENED',
+      actor: req.user,
+      statusBefore: 'resolved',
+      statusAfter: 'with_imc',
+      title: 'Incident Reopened by Staff',
+      summary: `Incident reopened. Reason: "${reason}"`,
+      payload: { reason }
+    });
+
     await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason }, req.ip);
 
     if (req.io) {
@@ -1359,6 +1569,26 @@ exports.assignInvestigator = async (req, res) => {
     }
 
     await query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'INVESTIGATION_PANEL_ASSIGNED',
+      actor: req.user,
+      statusBefore: 'with_imc',
+      statusAfter: 'with_investigator',
+      title: 'Investigation Panel Appointed',
+      summary: `IMC Convenor appointed ${uniqueInvUsers.length} investigator(s) as a collective panel`,
+      payload: {
+        panel: uniqueInvUsers.map(u => ({
+          id: u.id,
+          full_name: u.full_name,
+          employee_id: u.employee_id,
+          designation: u.designation,
+          department: u.department,
+          is_primary: Boolean(u.role === 'imc' || u.is_imc_member || u.is_imc_lead)
+        }))
+      }
+    });
 
     const incResult = await query('SELECT reference_id FROM incidents WHERE id = $1', [id]);
     const refId = incResult.rows[0]?.reference_id || 'Unknown';
@@ -1472,6 +1702,18 @@ exports.involveDepartments = async (req, res) => {
         sendEmail(leader.email, templates.newIncidentHod(incident, leader)).catch(() => {});
       }
     }
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'DEPARTMENTS_INVOLVED',
+      actor: req.user,
+      title: 'Additional Department(s) Involment',
+      summary: `Linked: ${addedDepts.map(d => d.name).join(', ')}`,
+      payload: {
+        added_departments: addedDepts.map(d => d.name),
+        new_status: newStatus
+      }
+    });
 
     await auditLog(req.user.id, 'DEPARTMENTS_INVOLVED', id, {
       addedDepartments: addedDepts.map(d => d.name),

@@ -2,6 +2,7 @@ const { query, getClient } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
+const { recordEvent } = require('../utils/incidentEvents');
 
 // ── UPDATE INCIDENT (employee, while submitted) ────────────────────────────
 exports.updateIncident = async (req, res) => {
@@ -51,6 +52,16 @@ exports.updateIncident = async (req, res) => {
     );
 
     await auditLog(req.user.id, 'INCIDENT_EDITED', id, { fields: Object.keys(req.body) }, req.ip);
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'INCIDENT_EDITED',
+      actor: req.user,
+      title: 'Incident Details Edited',
+      summary: `Updated by reporter: ${Object.keys(req.body).join(', ')}`,
+      payload: { fields: Object.keys(req.body) }
+    });
+
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to update incident.' });
@@ -93,6 +104,16 @@ exports.escalatePriority = async (req, res) => {
     }
 
     await auditLog(req.user.id, 'PRIORITY_ESCALATED', id, { escalatedBy }, req.ip);
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'PRIORITY_ESCALATED',
+      actor: req.user,
+      title: 'Priority Escalated',
+      summary: `Incident priority escalated by ${escalatedBy}`,
+      payload: { escalated_by: escalatedBy }
+    });
+
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to escalate priority.' });
@@ -148,6 +169,17 @@ exports.requestRedirect = async (req, res) => {
         sendEmail(m.email, templates.redirectRequested(incident, m, deptName, reason)).catch(() => { });
       }
     }
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'REDIRECT_REQUESTED',
+      actor: req.user,
+      statusBefore: incident.status,
+      statusAfter: 'redirect_requested',
+      title: 'Department Redirection Requested',
+      summary: `HOD of ${deptName} requested routing to another department. Reason: "${reason}"`,
+      payload: { from_department: deptName, reason }
+    });
 
     await auditLog(req.user.id, 'REDIRECT_REQUESTED', id, { reason, fromDept: deptName }, req.ip);
     res.json({ success: true });
@@ -270,6 +302,17 @@ exports.approveRedirect = async (req, res) => {
       }
     }
 
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'REDIRECT_APPROVED',
+      actor: req.user,
+      statusBefore: incident.status,
+      statusAfter: (incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod'),
+      title: 'Department Redirection Approved',
+      summary: `IMC Convenor approved redirection to: ${deptNames.join(', ')}`,
+      payload: { target_departments: deptNames, is_partial: actionType === 'partial' }
+    });
+
     await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartments: deptNames, isPartial: actionType === 'partial' }, req.ip);
 
     if (req.io) {
@@ -357,6 +400,17 @@ exports.rejectRedirect = async (req, res) => {
       }
     }
 
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'REDIRECT_REJECTED',
+      actor: req.user,
+      statusBefore: incident.status,
+      statusAfter: newStatus,
+      title: 'Department Redirection Rejected',
+      summary: `IMC Convenor rejected redirection. Reason: "${reason}". Original department stays responsible.`,
+      payload: { reason, requested_by_dept: incident.redirect_requested_by_dept }
+    });
+
     await auditLog(req.user.id, 'REDIRECT_REJECTED', id, { reason, requestedByDept: incident.redirect_requested_by_dept, requestedByUserId: incident.redirect_requested_by_user_id }, req.ip);
 
     if (req.io) {
@@ -432,6 +486,15 @@ exports.verifyEmployeeTraining = async (req, res) => {
           'training_all_verified');
       }
     }
+
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'EMPLOYEE_TRAINING_VERIFIED',
+      actor: req.user,
+      title: 'Employee Training Verified by HOD',
+      summary: `HOD verified training completion for staff member`,
+      payload: { employee_id: employeeId }
+    });
 
     await auditLog(req.user.id, 'EMPLOYEE_TRAINING_VERIFIED', id, { employeeId }, req.ip);
     res.json({ success: true, message: 'Employee training verified.' });
@@ -584,6 +647,15 @@ exports.editFeedback = async (req, res) => {
       [feedbackText, fb.id]
     );
 
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'FEEDBACK_EDITED',
+      actor: req.user,
+      title: 'Feedback Edited',
+      summary: `${fb.role.toUpperCase()} feedback updated`,
+      payload: { feedback_id: fb.id, role: fb.role, previous_text: fb.feedback_text, new_text: feedbackText }
+    });
+
     await auditLog(req.user.id, 'FEEDBACK_EDITED', id, { feedbackId: fb.id, role: fb.role }, req.ip);
     res.json({ success: true });
   } catch (e) {
@@ -658,6 +730,16 @@ exports.remindHod = async (req, res) => {
         );
       }
     }
+
+    await recordEvent(query, {
+      incidentId: id,
+      eventType: 'HOD_REMINDER_SENT',
+      actor: req.user,
+      title: 'HOD Feedback Reminder Sent',
+      summary: `Reminder sent to ${hodUsers.length} HOD(s) by ${remindedBy}`,
+      payload: { reminded_by: remindedBy, hod_count: hodUsers.length },
+      isSystemEvent: true
+    });
 
     await auditLog(req.user.id, 'HOD_REMINDED', id, { remindedBy, hodCount: hodUsers.length }, req.ip);
     res.json({ success: true, count: hodUsers.length, message: `Reminder sent to ${hodUsers.length} HOD(s) via Mail and In-App Notification.` });
