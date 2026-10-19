@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
-import { mockDepartments } from '../../api/mockData';
 import { INCIDENT_CATEGORIES } from '../../utils/helpers';
 import { useAuthStore } from '../../store/authStore';
 import { StatCard, Spinner, Alert, Tabs, Modal } from '../../components/ui';
@@ -263,8 +262,8 @@ export default function ManagementDashboard() {
   }, [allIncidents]);
 
   const departmentLeaderboard = useMemo(() => {
-    return mockDepartments.map(d => {
-      const deptName = d.name;
+    const uniqueDepts = Array.from(new Set(allIncidents.flatMap(i => i.departments || []))).filter(Boolean);
+    return uniqueDepts.map(deptName => {
       const dInc = allIncidents.filter(i => (i.departments || []).includes(deptName));
       const { avgHod } = computeStats(dInc);
       const activeCount = dInc.filter(i => i.status !== 'resolved' && i.status !== 'withdrawn').length;

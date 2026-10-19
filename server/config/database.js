@@ -68,7 +68,7 @@ pool.query(`
   ALTER TABLE users
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
 
-  ALTER TABLE office_portal_employees
+  ALTER TABLE master_employees
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
 
   ALTER TABLE incident_responsible_employees

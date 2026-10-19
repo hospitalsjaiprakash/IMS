@@ -408,7 +408,7 @@ exports.login = async (req, res) => {
     await query('UPDATE users SET last_sync = NOW() WHERE id = $1', [user.id]);
 
     if (!user.phone) {
-      const portalRes = await query('SELECT phone FROM office_portal_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
+      const portalRes = await query('SELECT phone FROM master_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
       if (portalRes.rows[0]?.phone) {
         user.phone = portalRes.rows[0].phone;
         await query('UPDATE users SET phone = $1 WHERE id = $2', [user.phone, user.id]).catch(() => {});
@@ -457,7 +457,7 @@ exports.getMe = async (req, res) => {
     }
     await syncHodDepartment(user);
     if (!user.phone) {
-      const portalRes = await query('SELECT phone FROM office_portal_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
+      const portalRes = await query('SELECT phone FROM master_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
       if (portalRes.rows[0]?.phone) {
         user.phone = portalRes.rows[0].phone;
         await query('UPDATE users SET phone = $1 WHERE id = $2', [user.phone, user.id]).catch(() => {});
@@ -514,9 +514,9 @@ exports.updateContactInfo = async (req, res) => {
 
     const updatedUser = result.rows[0];
 
-    // Also update office_portal_employees if present so it stays in sync
+    // Also update master_employees if present so it stays in sync
     await query(
-      `UPDATE office_portal_employees SET email = $1, phone = COALESCE($2, phone) WHERE employee_id = $3`,
+      `UPDATE master_employees SET email = $1, phone = COALESCE($2, phone) WHERE employee_id = $3`,
       [updatedUser.email, updatedUser.phone, updatedUser.employee_id]
     ).catch(() => {});
 
