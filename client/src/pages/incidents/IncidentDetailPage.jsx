@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, authApi, UPLOADS_URL } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText, Lock, Building, Award, ArrowRightLeft, History, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Clock, Calendar, CheckCircle, AlertTriangle, MessageSquare, UserCheck, Bell, Pencil, Paperclip, Shield, Users, ShieldCheck, FileText, Lock, Building, Award, ArrowRightLeft, History, CheckCircle2, AlertCircle, RotateCcw } from 'lucide-react';
 import { Alert, Spinner, Breadcrumbs, SkeletonDetail, SearchableMultiSelect } from '../../components/ui';
 import { formatDateTime, parseProposedOutcomes, getSeverityClass, getStatusLabel } from '../../utils/helpers';
 

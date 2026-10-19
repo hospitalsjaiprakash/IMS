@@ -27,9 +27,10 @@ export class ErrorBoundary extends React.Component {
             <p className="text-sm text-slate-500 mb-6">
               The application encountered an unexpected error. Our team has been notified.
             </p>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
-              <pre className="text-left text-xs bg-slate-100 p-3 rounded-lg overflow-auto max-h-32 mb-6 text-slate-700">
+            {this.state.error && (
+              <pre className="text-left text-xs bg-slate-100 p-3 rounded-lg overflow-auto max-h-48 mb-6 text-slate-700 font-mono whitespace-pre-wrap">
                 {this.state.error.toString()}
+                {this.state.error.stack ? `\n\n${this.state.error.stack}` : ''}
               </pre>
             )}
             <button
