@@ -113,19 +113,6 @@ exports.createIncident = async (req, res) => {
     // Generate reference ID
     const refId = await generateReferenceId(client);
 
-    // Duplicate detection
-    const dupCheck = await client.query(
-      `SELECT i.id, i.reference_id FROM incidents i
-       JOIN incident_departments id ON id.incident_id = i.id
-       WHERE id.department_id = ANY($1)
-         AND i.incident_type = $2
-         AND i.incident_date BETWEEN $3::date - INTERVAL '3 days' AND $3::date + INTERVAL '3 days'
-         AND i.status NOT IN ('withdrawn', 'resolved')
-         AND i.id != uuid_generate_v4()
-       LIMIT 1`,
-      [departmentIds, incidentType, incidentDate]
-    );
-
     // Determine initial status
     let status = 'with_hod';
     const severity = 'Pending';
@@ -160,14 +147,6 @@ exports.createIncident = async (req, res) => {
       await client.query(
         'INSERT INTO incident_departments (incident_id, department_id) VALUES ($1, $2)',
         [incident.id, deptId]
-      );
-    }
-
-    // Mark potential duplicate
-    if (dupCheck.rows.length > 0) {
-      await client.query(
-        'UPDATE incidents SET potential_duplicate_of = $1 WHERE id = $2',
-        [dupCheck.rows[0].id, incident.id]
       );
     }
 
@@ -231,7 +210,8 @@ exports.createIncident = async (req, res) => {
         incident_type: incident.incident_type,
         department_ids: departmentIds,
         description: incident.description,
-        has_responsible_person: incident.has_responsible_person
+        has_responsible_person: incident.has_responsible_person,
+        responsible_person_name: incident.responsible_person_name
       },
       isSystemEvent: false
     });
@@ -294,8 +274,7 @@ exports.createIncident = async (req, res) => {
         id: incident.id,
         referenceId: incident.reference_id,
         status: incident.status
-      },
-      potentialDuplicate: dupCheck.rows[0] || null
+      }
     });
 
   } catch (error) {

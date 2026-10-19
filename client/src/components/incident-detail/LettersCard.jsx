@@ -219,9 +219,9 @@ export default function LettersCard({
             </div>
           </div>
 
-          {/* Action buttons on top right */}
+          {/* Action buttons on top right (only if no staff roster exists below, avoiding duplicate buttons) */}
           <div className="flex items-center gap-2">
-            {isPendingLetterGeneration && isImcLead && (
+            {isPendingLetterGeneration && isImcLead && !(responsibleEmployees.length > 0 || (incident?.responsible_employees || []).length > 0) && (
               <button
                 type="button"
                 onClick={onOpenDraftModal}
@@ -502,24 +502,24 @@ export default function LettersCard({
                       <Eye size={12} /> View Official Letter
                     </button>
 
-                    <div className="flex items-center gap-1">
-                      {isDraft && isImcLead && (
+                    <div className="flex items-center gap-1.5">
+                      {(isDraft || isRejected || letter.status === 'rejected' || isPendingLetterGeneration) && isImcLead && (
                         <>
                           <button
                             type="button"
                             onClick={() => onEditDraft(letter)}
-                            className="p-1 text-slate-500 hover:text-indigo-600 rounded transition-colors"
-                            title="Edit Letter Draft"
+                            className="px-2 py-0.5 rounded text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors flex items-center gap-1"
+                            title="Edit / Revise Letter"
                           >
-                            <Edit3 size={13} />
+                            <Edit3 size={11} /> Edit Letter
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteDraft(letter.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                            title="Delete Draft"
+                            className="px-2 py-0.5 rounded text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors flex items-center gap-1"
+                            title="Delete / Discard Letter"
                           >
-                            <Trash2 size={13} />
+                            <Trash2 size={11} /> Delete
                           </button>
                         </>
                       )}

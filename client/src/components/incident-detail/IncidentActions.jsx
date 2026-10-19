@@ -12,7 +12,6 @@ export default function IncidentActions({
   canMdAct,
   canReopen,
   canEscalate,
-  canRemindHod,
   canInvolveDepartments,
   setShowWithdrawModal,
   setShowFeedbackModal,
@@ -23,7 +22,6 @@ export default function IncidentActions({
   setShowInvolveDeptModal,
   openEditIncident,
   escalateMutation,
-  remindHodMutation,
   closeIncidentMutation,
   canGenerateImcReport,
   canCloseIncident

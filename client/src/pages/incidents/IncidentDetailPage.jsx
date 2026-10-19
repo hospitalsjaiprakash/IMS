@@ -777,16 +777,6 @@ export default function IncidentDetailPage() {
                       Provide Feedback Now
                     </button>
                   )}
-                  {canRemindHod && (
-                    <button
-                      onClick={() => remindHodMutation.mutate()}
-                      disabled={remindHodMutation.isPending}
-                      className="btn-secondary btn-sm flex items-center gap-1.5 border-amber-300 text-amber-900 hover:bg-amber-100 shadow-sm font-semibold text-xs"
-                    >
-                      {remindHodMutation.isPending ? <Spinner size={12} /> : <Bell size={12} className="text-amber-600" />}
-                      Send Reminder
-                    </button>
-                  )}
                 </div>
               </div>
             )}

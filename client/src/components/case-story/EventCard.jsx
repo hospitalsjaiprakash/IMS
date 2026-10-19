@@ -316,6 +316,7 @@ function getEventVisuals(eventType) {
 
 export default function EventCard({
   event,
+  incident,
   index,
   totalEvents,
   prevEvent,
@@ -456,7 +457,7 @@ export default function EventCard({
           )}
 
           {/* RICH PAYLOAD RENDERERS */}
-          {renderEventPayload(event, payload, onViewAttachment)}
+          {renderEventPayload(event, payload, onViewAttachment, incident)}
 
           {/* ATTACHMENTS SECTION */}
           {attachments.length > 0 && (
@@ -524,7 +525,7 @@ export default function EventCard({
 /**
  * Specialized sub-renderers based on event_type with complete data fidelity
  */
-function renderEventPayload(event, payload, onViewAttachment) {
+function renderEventPayload(event, payload, onViewAttachment, incident) {
   const type = event.event_type;
 
   // 1. INCIDENT REPORTED
@@ -534,6 +535,8 @@ function renderEventPayload(event, payload, onViewAttachment) {
     const severity = payload.reported_severity || payload.reportedSeverity || payload.severity;
     const category = payload.incident_category || payload.incidentCategory || payload.category;
     const description = payload.description || payload.details;
+    const respPerson = payload.responsible_person_name || payload.responsiblePersonName || (incident && (incident.responsible_person_name || incident.responsiblePersonName));
+    const hasResp = payload.has_responsible_person ?? incident?.has_responsible_person;
 
     return (
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-white p-2.5 rounded-lg border border-slate-200 text-xs">
@@ -556,6 +559,19 @@ function renderEventPayload(event, payload, onViewAttachment) {
           <span className="font-semibold text-slate-800 truncate block" title={category}>
             {category || '—'}
           </span>
+        </div>
+        <div className="col-span-2 sm:col-span-4 bg-slate-50/80 p-2 rounded border border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-bold uppercase text-slate-500">Responsible Employee(s):</span>
+            <span className="font-bold text-slate-800 text-xs">
+              {respPerson || (hasResp ? 'Identified in report' : 'None identified / Not applicable')}
+            </span>
+          </div>
+          {hasResp && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+              Staff Accountability Flagged
+            </span>
+          )}
         </div>
         {description && (
           <div className="col-span-2 sm:col-span-4 pt-1.5 border-t border-slate-100 mt-0.5">

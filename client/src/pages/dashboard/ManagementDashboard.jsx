@@ -398,31 +398,89 @@ export default function ManagementDashboard() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
 
-          {/* SLA Breach Alerts Panel */}
-          {(overdueCount > 0 || activeGraveCount > 0) && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                <ShieldAlert size={20} className="text-red-600" />
+          {/* KPI Stat Cards — High Level Overview */}
+          <div className="space-y-5">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <LayoutDashboard size={16} className="text-indigo-600" />
+                Incident Overview
+              </h3>
+
+              {/* Primary Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div
+                  onClick={() => navigate('/incidents')}
+                  className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 hover:shadow-md transition-shadow cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-blue-800/70 uppercase tracking-wide">Total Incidents</p>
+                      <p className="text-3xl font-extrabold text-blue-900 mt-1">{totals.total}</p>
+                    </div>
+                    <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <FileText size={24} className="text-blue-600" />
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => navigate('/incidents', { state: { status: 'active' } })}
+                  className="card p-5 bg-gradient-to-br from-red-50 to-orange-50 border-red-100 hover:shadow-md transition-shadow cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-red-800/70 uppercase tracking-wide">Active Incidents</p>
+                      <p className="text-3xl font-extrabold text-red-900 mt-1">{totals.active}</p>
+                    </div>
+                    <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Activity size={24} className="text-red-600" />
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => navigate('/incidents', { state: { status: 'resolved' } })}
+                  className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 hover:shadow-md transition-shadow cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-green-800/70 uppercase tracking-wide">Resolved</p>
+                      <p className="text-3xl font-extrabold text-green-900 mt-1">{totals.resolved}</p>
+                    </div>
+                    <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <CheckCircle size={24} className="text-green-600" />
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-bold text-red-800">SLA Breach & Escalation Alerts</h3>
-                <ul className="mt-1 space-y-1 text-sm text-red-700">
-                  {overdueCount > 0 && (
-                    <li className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                      <strong>{overdueCount}</strong> incidents have been pending action for more than 48 hours.
-                    </li>
-                  )}
-                  {activeGraveCount > 0 && (
-                    <li className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                      <strong>{activeGraveCount}</strong> active Grave incidents require immediate investigation.
-                    </li>
-                  )}
-                </ul>
+
+              {/* Secondary Metrics (Pills) */}
+              <div className="flex flex-wrap gap-2.5 mt-3">
+                {totals.lettersAwaitingApproval > 0 && (
+                  <button onClick={() => navigate('/incidents', { state: { status: 'pending_management_letter_approval' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 border border-purple-300 rounded-lg text-xs font-bold text-purple-800 hover:bg-purple-200 transition-colors shadow-sm animate-pulse">
+                    <Mail size={14} className="text-purple-600" /> Letters Awaiting Approval: {totals.lettersAwaitingApproval}
+                  </button>
+                )}
+                {totals.mgmtDecisionPending > 0 && (
+                  <button onClick={() => navigate('/incidents', { state: { status: 'with_head_management' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-200 transition-colors shadow-sm">
+                    <Clock size={14} className="text-amber-600" /> Decisions Pending: {totals.mgmtDecisionPending}
+                  </button>
+                )}
+                <button onClick={() => navigate('/incidents', { state: { severity: 'Grave' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
+                  <AlertTriangle size={14} className="text-purple-600" /> Grave: {totals.graveCount}
+                </button>
+                <button onClick={() => navigate('/incidents', { state: { status: 'redirect_requested' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
+                  <Clock size={14} className="text-orange-600" /> Redirects: {totals.redirectCount}
+                </button>
+                <button onClick={() => navigate('/incidents', { state: { status: 'withdrawn' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
+                  <XOctagon size={14} className="text-slate-500" /> Withdrawn: {totals.withdrawn}
+                </button>
+                <button onClick={() => navigate('/incidents', { state: { reviewStage: 'trainingPending' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
+                  <Users size={14} className="text-rose-600" /> Training Pending: {totals.trainingPending}
+                </button>
               </div>
             </div>
-          )}
+          </div>
 
           {/* Executive Action Center: Letters Awaiting Approval & Decisions Pending */}
           {(pendingLettersApproval.length > 0 || pendingMgmtDecisions.length > 0) && (
@@ -574,89 +632,6 @@ export default function ManagementDashboard() {
             </div>
           )}
 
-          {/* KPI Stat Cards — High Level Overview */}
-          <div className="space-y-5">
-            <div>
-              <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
-                <LayoutDashboard size={16} className="text-indigo-600" />
-                Incident Overview
-              </h3>
-
-              {/* Primary Metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div
-                  onClick={() => navigate('/incidents')}
-                  className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 hover:shadow-md transition-shadow cursor-pointer group"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-blue-800/70 uppercase tracking-wide">Total Incidents</p>
-                      <p className="text-3xl font-extrabold text-blue-900 mt-1">{totals.total}</p>
-                    </div>
-                    <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <FileText size={24} className="text-blue-600" />
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => navigate('/incidents', { state: { status: 'active' } })}
-                  className="card p-5 bg-gradient-to-br from-red-50 to-orange-50 border-red-100 hover:shadow-md transition-shadow cursor-pointer group"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-red-800/70 uppercase tracking-wide">Active Incidents</p>
-                      <p className="text-3xl font-extrabold text-red-900 mt-1">{totals.active}</p>
-                    </div>
-                    <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <Activity size={24} className="text-red-600" />
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => navigate('/incidents', { state: { status: 'resolved' } })}
-                  className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border-green-100 hover:shadow-md transition-shadow cursor-pointer group"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-green-800/70 uppercase tracking-wide">Resolved</p>
-                      <p className="text-3xl font-extrabold text-green-900 mt-1">{totals.resolved}</p>
-                    </div>
-                    <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <CheckCircle size={24} className="text-green-600" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Secondary Metrics (Pills) */}
-              <div className="flex flex-wrap gap-2.5 mt-3">
-                {totals.lettersAwaitingApproval > 0 && (
-                  <button onClick={() => navigate('/incidents', { state: { status: 'pending_management_letter_approval' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 border border-purple-300 rounded-lg text-xs font-bold text-purple-800 hover:bg-purple-200 transition-colors shadow-sm animate-pulse">
-                    <Mail size={14} className="text-purple-600" /> Letters Awaiting Approval: {totals.lettersAwaitingApproval}
-                  </button>
-                )}
-                {totals.mgmtDecisionPending > 0 && (
-                  <button onClick={() => navigate('/incidents', { state: { status: 'with_head_management' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-200 transition-colors shadow-sm">
-                    <Clock size={14} className="text-amber-600" /> Decisions Pending: {totals.mgmtDecisionPending}
-                  </button>
-                )}
-                <button onClick={() => navigate('/incidents', { state: { severity: 'Grave' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <AlertTriangle size={14} className="text-purple-600" /> Grave: {totals.graveCount}
-                </button>
-                <button onClick={() => navigate('/incidents', { state: { status: 'redirect_requested' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <Clock size={14} className="text-orange-600" /> Redirects: {totals.redirectCount}
-                </button>
-                <button onClick={() => navigate('/incidents', { state: { status: 'withdrawn' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <XOctagon size={14} className="text-slate-500" /> Withdrawn: {totals.withdrawn}
-                </button>
-                <button onClick={() => navigate('/incidents', { state: { reviewStage: 'trainingPending' } })} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm">
-                  <Users size={14} className="text-rose-600" /> Training Pending: {totals.trainingPending}
-                </button>
-              </div>
-            </div>
-
             {/* Accountability Pipeline Stepper */}
             <div>
               <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
@@ -746,7 +721,6 @@ export default function ManagementDashboard() {
                 </div>
               </div>
             </div>
-          </div>
 
           {/* Recent Incidents */}
           <div className="card overflow-hidden">

@@ -407,32 +407,6 @@ export default function ImcDashboard() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
 
-          {/* SLA Breach Alerts Panel */}
-          {(totals.overdueCount > 0 || totals.activeGraveCount > 0) && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                <ShieldAlert size={20} className="text-red-600" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-red-800">SLA Breach & Escalation Alerts</h3>
-                <ul className="mt-1 space-y-1 text-sm text-red-700">
-                  {totals.overdueCount > 0 && (
-                    <li className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                      <strong>{totals.overdueCount}</strong> incidents have been pending action for more than 48 hours.
-                    </li>
-                  )}
-                  {totals.activeGraveCount > 0 && (
-                    <li className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                      <strong>{totals.activeGraveCount}</strong> active Grave incidents require immediate investigation.
-                    </li>
-                  )}
-                </ul>
-              </div>
-            </div>
-          )}
-
           {/* KPI Stat Cards — High Level Overview */}
           <div className="space-y-5">
             <div>

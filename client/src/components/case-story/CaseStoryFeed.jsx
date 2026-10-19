@@ -233,6 +233,7 @@ export default function CaseStoryFeed({
               <EventCard
                 key={evt.id || idx}
                 event={evt}
+                incident={incident}
                 index={idx}
                 totalEvents={filteredEvents.length}
                 prevEvent={prevEvt}

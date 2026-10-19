@@ -380,11 +380,11 @@ exports.deleteLetterDraft = async (req, res) => {
     const { id, letterId } = req.params;
     const existing = await query(`SELECT * FROM incident_letters WHERE id = $1 AND incident_id = $2`, [letterId, id]);
     const delRes = await query(
-      `DELETE FROM incident_letters WHERE id = $1 AND incident_id = $2 AND status = 'drafted' RETURNING id`,
+      `DELETE FROM incident_letters WHERE id = $1 AND incident_id = $2 AND status IN ('draft', 'drafted', 'rejected') RETURNING id`,
       [letterId, id]
     );
     if (!delRes.rows.length) {
-      return res.status(400).json({ error: 'Letter could not be deleted or is already submitted.' });
+      return res.status(400).json({ error: 'Letter could not be deleted or has already been approved/dispatched.' });
     }
 
     const letter = existing.rows[0] || {};
@@ -622,33 +622,61 @@ exports.submitManagementLetterDecision = async (req, res) => {
     );
 
     // Check if training remains to be scheduled or completed for involved staff
-    const trainingCheck = await client.query(
-      `SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE AND (training_completed IS NULL OR training_completed = FALSE)`,
-      [id]
-    );
-    const incNeedsTrainingRes = await client.query(
-      `SELECT needs_training FROM incidents WHERE id = $1`,
-      [id]
-    );
-    const hasRemainingTraining = (parseInt(trainingCheck.rows[0]?.count || '0', 10) > 0) || Boolean(incNeedsTrainingRes.rows[0]?.needs_training);
+    let hasRemainingTraining = false;
+    try {
+      const trainingCheck = await client.query(
+        `SELECT COUNT(*) FROM incident_responsible_employees 
+         WHERE incident_id = $1 
+           AND needs_training = TRUE 
+           AND (training_completed IS NULL OR training_completed = FALSE)`,
+        [id]
+      );
+      hasRemainingTraining = parseInt(trainingCheck.rows[0]?.count || '0', 10) > 0;
+    } catch (trainErr) {
+      console.warn('[ManagementLetterDecision] Training check fallback:', trainErr.message);
+      try {
+        const incCheck = await client.query(
+          `SELECT needs_training, training_completed FROM incidents WHERE id = $1`,
+          [id]
+        );
+        hasRemainingTraining = Boolean(incCheck.rows[0]?.needs_training) && !Boolean(incCheck.rows[0]?.training_completed);
+      } catch (_) {
+        hasRemainingTraining = false;
+      }
+    }
+
+    if (!hasRemainingTraining) {
+      try {
+        const incNeedsTrainingRes = await client.query(
+          `SELECT needs_training, training_completed FROM incidents WHERE id = $1`,
+          [id]
+        );
+        if (Boolean(incNeedsTrainingRes.rows[0]?.needs_training) && !Boolean(incNeedsTrainingRes.rows[0]?.training_completed)) {
+          hasRemainingTraining = true;
+        }
+      } catch (_) {}
+    }
 
     let nextStatus = 'closed';
     if (hasRemainingTraining) {
-      // Check if trainer is already assigned
-      const trainerAssignRes = await client.query(
-        `SELECT status FROM incident_trainers WHERE incident_id = $1 ORDER BY created_at DESC LIMIT 1`,
-        [id]
-      );
-      if (trainerAssignRes.rows.length > 0) {
-        const tStatus = trainerAssignRes.rows[0].status;
-        if (tStatus === 'completed') {
-          nextStatus = 'pending_imc_training_review';
-        } else if (tStatus === 'verified' || tStatus === 'verified_by_imc') {
-          nextStatus = 'with_head_management';
+      try {
+        const trainerAssignRes = await client.query(
+          `SELECT status FROM incident_trainers WHERE incident_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [id]
+        );
+        if (trainerAssignRes.rows.length > 0) {
+          const tStatus = trainerAssignRes.rows[0].status;
+          if (tStatus === 'completed') {
+            nextStatus = 'pending_imc_training_review';
+          } else if (tStatus === 'verified' || tStatus === 'verified_by_imc') {
+            nextStatus = 'with_head_management';
+          } else {
+            nextStatus = 'training_in_progress';
+          }
         } else {
-          nextStatus = 'training_in_progress';
+          nextStatus = 'pending_trainer_assignment';
         }
-      } else {
+      } catch (trErr) {
         nextStatus = 'pending_trainer_assignment';
       }
     }
@@ -661,10 +689,12 @@ exports.submitManagementLetterDecision = async (req, res) => {
       [nextStatus, resolvedAt, id]
     );
 
+    const roundNo = await getNextRoundNo(client, id, 'LETTERS_APPROVED_DISPATCHED');
     await recordEvent(client, {
       incidentId: id,
       eventType: 'LETTERS_APPROVED_DISPATCHED',
       actor: req.user,
+      roundNo,
       statusBefore: 'pending_management_letter_approval',
       statusAfter: nextStatus,
       title: `Formal Letters Approved & Dispatched`,
@@ -684,74 +714,88 @@ exports.submitManagementLetterDecision = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // DISPATCH EMAILS IN BACKGROUND (Multi-recipient delivery to employee & CCs)
-    const incidentUrl = getIncidentUrl(id);
-    for (const letter of lettersRes.rows) {
-      const qrCodeDataUrl = letter.qr_code_url || await generateIncidentQrCode(id);
-      const emailHtml = buildLetterEmailHtml(letter, incident, incidentUrl, qrCodeDataUrl);
+    // ── POST-COMMIT ASYNCHRONOUS NOTIFICATIONS & EMAIL DISPATCH (NON-BLOCKING) ──
+    try {
+      const incidentUrl = getIncidentUrl(id);
+      for (const letter of lettersRes.rows) {
+        try {
+          const qrCodeDataUrl = letter.qr_code_url || await generateIncidentQrCode(id);
+          const emailHtml = buildLetterEmailHtml(letter, incident, incidentUrl, qrCodeDataUrl);
 
-      // 1. Send to Recipient Employee
-      if (letter.recipient_email) {
-        sendEmail(letter.recipient_email, {
-          subject: `${letter.subject} - Ref: ${letter.reference_number}`,
-          html: emailHtml,
-          text: `${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo:\n${letter.recipient_name} (${letter.recipient_emp_no || ''})\n${letter.recipient_department} - ${letter.recipient_designation}\n\n${letter.body_text}\n\nVerify incident at: ${incidentUrl}`
-        }).catch(err => console.error('[Letter Dispatch] Email to employee failed:', err));
-      }
+          if (letter.recipient_email) {
+            sendEmail(letter.recipient_email, {
+              subject: `${letter.subject} - Ref: ${letter.reference_number}`,
+              html: emailHtml,
+              text: `${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo:\n${letter.recipient_name} (${letter.recipient_emp_no || ''})\n${letter.recipient_department} - ${letter.recipient_designation}\n\n${letter.body_text}\n\nVerify incident at: ${incidentUrl}`
+            }).catch(err => console.error('[Letter Dispatch] Email to employee failed:', err.message));
+          }
 
-      // 2. Send to CC Recipients
-      const ccList = Array.isArray(letter.cc_recipients) ? letter.cc_recipients : [];
-      for (const cc of ccList) {
-        if (cc.email) {
-          sendEmail(cc.email, {
-            subject: `[CC] ${letter.subject} - Ref: ${letter.reference_number}`,
-            html: emailHtml,
-            text: `[CARBON COPY]\n\n${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo: ${letter.recipient_name}\n\n${letter.body_text}\n\nIncident URL: ${incidentUrl}`
-          }).catch(err => console.error('[Letter Dispatch] CC email failed:', err));
+          let ccList = [];
+          if (Array.isArray(letter.cc_recipients)) {
+            ccList = letter.cc_recipients;
+          } else if (typeof letter.cc_recipients === 'string') {
+            try { ccList = JSON.parse(letter.cc_recipients); } catch (_) { ccList = []; }
+          }
+
+          for (const cc of ccList) {
+            if (cc && cc.email) {
+              sendEmail(cc.email, {
+                subject: `[CC] ${letter.subject} - Ref: ${letter.reference_number}`,
+                html: emailHtml,
+                text: `[CARBON COPY]\n\n${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo: ${letter.recipient_name}\n\n${letter.body_text}\n\nIncident URL: ${incidentUrl}`
+              }).catch(err => console.error('[Letter Dispatch] CC email failed:', err.message));
+            }
+          }
+        } catch (lErr) {
+          console.warn('[Letter Dispatch] Warning generating email for letter:', letter.id, lErr.message);
         }
       }
-    }
 
-    // Notifications
-    const imcMembers = await query("SELECT id FROM users WHERE role = 'imc' OR is_imc_lead = TRUE");
-    if (hasRemainingTraining) {
-      for (const m of imcMembers.rows) {
-        await createNotification(
-          m.id,
-          id,
-          'Letters Dispatched — Proceed with Training',
-          `Management approved and dispatched ${lettersRes.rows.length} disciplinary letter(s) for incident ${incident.reference_id}. File remains active for Mandatory Training.`,
-          'management_action'
-        );
+      // Notifications
+      const imcMembers = await query("SELECT id FROM users WHERE role = 'imc' OR is_imc_lead = TRUE");
+      if (hasRemainingTraining) {
+        for (const m of imcMembers.rows) {
+          await createNotification(
+            m.id,
+            id,
+            'Letters Dispatched — Proceed with Training',
+            `Management approved and dispatched ${lettersRes.rows.length} disciplinary letter(s) for incident ${incident.reference_id}. File remains active for Mandatory Training.`,
+            'management_action'
+          ).catch(() => {});
+        }
+      } else {
+        if (incident.reporter_id) {
+          await createNotification(
+            incident.reporter_id,
+            id,
+            'Incident Concluded & Closed',
+            `Management has approved formal directives and officially closed incident ${incident.reference_id}.`,
+            'incident_closed'
+          ).catch(() => {});
+        }
+
+        for (const m of imcMembers.rows) {
+          await createNotification(
+            m.id,
+            id,
+            'Incident Closed by Management',
+            `Management has approved and dispatched letters for incident ${incident.reference_id}. File is officially closed.`,
+            'incident_closed'
+          ).catch(() => {});
+        }
       }
-    } else {
-      await createNotification(
-        incident.reporter_id,
-        id,
-        'Incident Concluded & Closed',
-        `Management has approved formal directives and officially closed incident ${incident.reference_id}.`,
-        'incident_closed'
-      );
 
-      for (const m of imcMembers.rows) {
-        await createNotification(
-          m.id,
-          id,
-          'Incident Closed by Management',
-          `Management has approved and dispatched letters for incident ${incident.reference_id}. File is officially closed.`,
-          'incident_closed'
-        );
+      await auditLog(req.user.id, hasRemainingTraining ? 'LETTERS_DISPATCHED_TRAINING_ACTIVE' : 'LETTERS_DISPATCHED_AND_CLOSED', id, {
+        letterCount: lettersRes.rows.length,
+        approver: req.user.full_name,
+        nextStatus
+      }, req.ip);
+
+      if (req.io) {
+        req.io.emit('incident_updated', { id, status: nextStatus });
       }
-    }
-
-    await auditLog(req.user.id, hasRemainingTraining ? 'LETTERS_DISPATCHED_TRAINING_ACTIVE' : 'LETTERS_DISPATCHED_AND_CLOSED', id, {
-      letterCount: lettersRes.rows.length,
-      approver: req.user.full_name,
-      nextStatus
-    }, req.ip);
-
-    if (req.io) {
-      req.io.emit('incident_updated', { id, status: nextStatus });
+    } catch (bgErr) {
+      console.warn('[ManagementLetterDecision] Background notifications warning:', bgErr.message);
     }
 
     res.json({
@@ -761,7 +805,9 @@ exports.submitManagementLetterDecision = async (req, res) => {
         : `Approved ${lettersRes.rows.length} letter(s). Dispatched to employee(s) and CC recipients. Incident is officially CLOSED.`
     });
   } catch (error) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
     console.error('[POST /incidents/:id/letters/management-decision] error:', error);
     res.status(500).json({ error: error.message || 'Failed to process management letter decision.' });
   } finally {

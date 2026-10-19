@@ -136,12 +136,8 @@ export default function NewIncidentPage() {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
 
-      if (res.data.potentialDuplicate) {
-        setDuplicateAlert(res.data);
-      } else {
-        toast.success(`Incident ${res.data.incident?.referenceId || res.data.referenceId || res.data.reference_id} submitted!`);
-        navigate(`/incidents/${res.data.incident?.id || res.data.id}`);
-      }
+      toast.success(`Incident ${res.data.incident?.referenceId || res.data.referenceId || res.data.reference_id} submitted!`);
+      navigate(`/incidents/${res.data.incident?.id || res.data.id}`);
     },
     onError: (err) => {
       toast.error(err.response?.data?.error || 'Failed to submit incident');
@@ -830,37 +826,7 @@ export default function NewIncidentPage() {
         </div>
       </div>
 
-      {/* Duplicate alert modal */}
-      <Modal
-        open={!!duplicateAlert}
-        onClose={() => {
-          navigate(`/incidents/${duplicateAlert?.incident?.id}`);
-          setDuplicateAlert(null);
-        }}
-        title="Potential Duplicate Detected"
-        footer={
-          <>
-            <button
-              onClick={() => { navigate(`/incidents/${duplicateAlert?.potentialDuplicate?.id}`); setDuplicateAlert(null); }}
-              className="btn-secondary"
-            >
-              View Existing
-            </button>
-            <button
-              onClick={() => { navigate(`/incidents/${duplicateAlert?.incident?.id}`); setDuplicateAlert(null); }}
-              className="btn-primary"
-            >
-              View My Submission
-            </button>
-          </>
-        }
-      >
-        <Alert
-          type="warning"
-          title="Similar incident detected"
-          message={`A similar incident was recently filed. Your incident ${duplicateAlert?.incident?.referenceId} has been submitted. You can view the existing incident or continue with yours.`}
-        />
-      </Modal>
+
 
       {/* File Preview Modal */}
       <Modal

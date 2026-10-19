@@ -41,6 +41,9 @@ const migrations = [
   '025_trainer_appointment_letter.sql',
   '026_per_employee_outcomes.sql',
   '027_trainer_report_fields.sql',
+  '028_imc_outcome_preservation.sql',
+  '029_incident_events_journal.sql',
+  '030_responsible_employee_training_columns.sql',
 ];
 
 function splitSqlStatements(sql) {
