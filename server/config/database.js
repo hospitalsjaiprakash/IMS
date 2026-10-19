@@ -69,7 +69,54 @@ pool.query(`
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
 
   ALTER TABLE master_employees
-  ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
+  ADD COLUMN IF NOT EXISTS phone VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS office_portal_id VARCHAR(64) UNIQUE,
+  ADD COLUMN IF NOT EXISTS first_name VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS last_name VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS office_location VARCHAR(128),
+  ADD COLUMN IF NOT EXISTS date_of_joining DATE,
+  ADD COLUMN IF NOT EXISTS termination_date DATE,
+  ADD COLUMN IF NOT EXISTS raw_payload JSONB,
+  ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+  CREATE TABLE IF NOT EXISTS department_reviewers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    department_id INTEGER NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    reviewer_role VARCHAR(32) NOT NULL DEFAULT 'HOD',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    assigned_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uq_user_department_reviewer_role UNIQUE (user_id, department_id, reviewer_role)
+  );
+
+  CREATE TABLE IF NOT EXISTS hrms_webhook_events (
+    id SERIAL PRIMARY KEY,
+    event_id VARCHAR(128) UNIQUE NOT NULL,
+    event_type VARCHAR(64) NOT NULL,
+    payload JSONB NOT NULL,
+    signature_verified BOOLEAN NOT NULL DEFAULT false,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    error_message TEXT,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS hrms_sync_logs (
+    id SERIAL PRIMARY KEY,
+    sync_type VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'IN_PROGRESS',
+    delta_cursor VARCHAR(255),
+    records_fetched INTEGER DEFAULT 0,
+    records_inserted INTEGER DEFAULT 0,
+    records_updated INTEGER DEFAULT 0,
+    records_deactivated INTEGER DEFAULT 0,
+    error_message TEXT,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+  );
 
   ALTER TABLE incident_responsible_employees
   ADD COLUMN IF NOT EXISTS training_completed BOOLEAN DEFAULT FALSE,

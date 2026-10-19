@@ -43,6 +43,7 @@ const migrations = [
   '028_imc_outcome_preservation.sql',
   '029_incident_events_journal.sql',
   '030_responsible_employee_training_columns.sql',
+  '031_hrms_integration_and_department_reviewers.sql',
 ];
 
 function splitSqlStatements(sql) {

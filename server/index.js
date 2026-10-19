@@ -47,7 +47,12 @@ app.use(cors({
 }));
 
 app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Uploads directory
@@ -58,6 +63,7 @@ if (!fs.existsSync(uploadDir)) {
 app.use('/uploads', express.static(path.resolve(uploadDir)));
 
 // ─── ROUTES ───────────────────────────────────────
+app.use('/webhooks', require('./routes/webhookRoutes'));
 app.use('/api', require('./routes/index'));
 
 // Root route for Render health checks

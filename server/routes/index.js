@@ -21,6 +21,7 @@ router.use('/notifications', notificationRoutes);
 router.use('/master-employees', masterEmployeesRoutes);
 router.use('/knowledge-base', knowledgeBaseRoutes);
 router.use('/training', trainingRoutes);
+router.use('/webhooks', require('./webhookRoutes'));
 
 // Role workflows (/hod, /imc, /management), employee search/directory, locations & common utilities
 router.use('/', roleWorkflowRoutes);
