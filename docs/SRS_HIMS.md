@@ -36,7 +36,7 @@ Employees can:
 - View assigned training status
 
 #### Department Review
-Department Heads (HODs), Incharges, or Assistant COOs can:
+A senior staff would be assigned a single department or multiple departments who can:
 - Review incidents assigned to their departments
 - Submit departmental feedback
 - Upload supporting evidence
@@ -82,7 +82,8 @@ Management can:
 System Administrators can:
 - Manage users & roles
 - Configure departments
-- Assign HODs, Incharges, or Assistant COOs
+- Assign senior staff (HODs, Incharges, or Assistant COOs) to single or multiple departments
+- Synchronize and manage employee master records from the hospital's central HRMS (OfficePortal)
 - Configure IMC members, Management users, and investigators
 - Configure SLA settings
 - Monitor audit logs, notification delivery, and login history
@@ -142,6 +143,7 @@ The application shall be deployed using:
 | Acronym | Meaning |
 | :--- | :--- |
 | **HIMS** | Hospital Incident Management System |
+| **HRMS** | Human Resource Management System (OfficePortal) |
 | **HOD** | Head of Department |
 | **IMC** | Incident Management Committee |
 | **CAPA** | Corrective and Preventive Action |
@@ -150,15 +152,18 @@ The application shall be deployed using:
 | **JWT** | JSON Web Token |
 | **RBAC** | Role-Based Access Control |
 | **R2** | Cloudflare R2 Object Storage |
+| **OAuth** | Open Authorization (OAuth 2.0 Client Credentials) |
+| **HMAC** | Hash-Based Message Authentication Code (SHA-256 Webhook Verification) |
 
 ### 1.6 References
 - IEEE 29148:2018 & IEEE 830 Standards for Software Requirements Specifications
 - OWASP Top 10 Web Application Security Risks & WCAG 2.1 AA Accessibility Guidelines
 - NABH Quality and Patient Safety Guidelines & Hospital Internal SOPs
 - PERN Stack (PostgreSQL, Express, React 19, Node.js), Redis, BullMQ, Cloudflare R2
+- OfficePortal Employee Public API Guide v1 & Public API Platform Guide v1 (October 2026)
 
 ### 1.7 Document Overview
-This SRS covers 20 structured chapters defining Introduction, Overall Description, Business/Functional Requirements, Workflows, Modules, RBAC, Use Cases, Dashboards, UI/UX, Database, APIs, Frontend/Security/Deployment Architecture, and Testing Strategy.
+This SRS covers structured chapters defining Introduction, Overall Description, Business/Functional Requirements, Workflows, Modules, RBAC, Use Cases, Dashboards, UI/UX, Database, APIs, External HRMS Integration, Frontend/Security/Deployment Architecture, and Testing Strategy.
 
 ---
 
@@ -184,14 +189,16 @@ The proposed solution is a web-based Hospital Incident Management System (HIMS) 
 | **Frontend** | React.js + Vite |
 | **Backend** | Node.js + Express.js |
 | **Database** | PostgreSQL |
-| **ORM** | Prisma / Raw SQL Pool |
-| **Authentication** | JWT + Refresh Token |
-| **Object Storage** | Cloudflare R2 |
+| **ORM / Query Engine** | Raw SQL Pool / Prisma |
+| **Authentication** | JWT + Refresh Token (bcrypt hashed passwords) |
+| **Object Storage** | Cloudflare R2 / S3 Presigned URLs |
+| **External HRMS** | OfficePortal Public Employee API v1 (OAuth 2.0 Client Credentials, REST, Signed Webhooks) |
+| **Local Employee Cache** | PostgreSQL `master_employees` (Materialized directory cache) |
 | **Charts** | Recharts |
-| **PDF Generation** | Puppeteer |
-| **Excel Export** | ExcelJS |
-| **Notification** | Socket.IO + Email + WhatsApp |
-| **Deployment** | Docker |
+| **PDF Generation** | Puppeteer / HTML-PDF Templates |
+| **Excel Export** | XLSX / ExcelJS |
+| **Notification** | Socket.IO + Email (SMTP) + Communication Logs |
+| **Deployment** | Docker / PM2 + Nginx Reverse Proxy |
 
 ### 2.3 System Objectives
 - Digitize the complete incident lifecycle and reduce paperwork.
@@ -201,27 +208,26 @@ The proposed solution is a web-based Hospital Incident Management System (HIMS) 
 - Support NABH hospital quality accreditation.
 
 ### 2.4 Product Perspective
-The Hospital Incident Management System functions as an independent enterprise web application that integrates with hospital employee records. It provides Role-Based Access Control (RBAC), multi-department workflows, SLA monitoring, notification services, analytics dashboards, audit trails, and secure cloud file storage.
+The Hospital Incident Management System functions as an enterprise web application that integrates with the hospital's central HRMS (OfficePortal Public API v1) as the authoritative source of employee directory, organizational departments, and job titles. It replicates employee records into a local PostgreSQL cache (`master_employees`) via cursor-based change feeds and signed webhooks, while maintaining complete internal ownership of Role-Based Access Control (RBAC), multi-department workflows, senior staff department assignments, SLA monitoring, notification services, analytics dashboards, audit trails, and secure cloud file storage.
 
 ### 2.5 Product Functions
-- **Authentication**: Registration, Login, JWT verification, Password Reset, Session Management.
-- **Employee**: Report incident, View incident timeline/status, Withdraw incident, Receive notifications.
-- **HOD / Incharge / Assistant COO**: Review department incidents, Submit feedback, Request department redirects, Upload evidence, Monitor SLAs.
-- **IMC**: Investigate incidents, Assign investigators, Review redirect requests, Escalate priority, Return incident to HOD, Verify training, Generate investigation reports.
-- **Management**: Review investigation findings, Return to IMC if incomplete, Assign responsible employees and mandatory training, Generate final reports, Close incidents, Monitor performance.
-- **System Administrator**: User & Role management, HOD/Incharge/COO mappings, SLA configuration, Notification monitoring, Audit logs & analytics.
+- **Authentication**: Registration (validated against HRMS master directory), Login, JWT verification, Password Reset, Multi-Role Session Switching.
+- **Employee**: Report incident, View incident timeline/status, Withdraw incident, Receive notifications, Complete assigned training.
+- **Department Review (Senior Staff / HOD / Incharge / Assistant COO)**: A senior staff member assigned to oversee a single department or multiple departments: Review department incidents, Submit departmental feedback, Request department redirects, Upload evidence, Recommend CAPA, Monitor SLAs.
+- **IMC**: Investigate incidents, Assign investigators, Review redirect requests, Escalate priority, Return incident to reviewer, Verify training, Generate official investigation reports.
+- **Management**: Review investigation findings, Return to IMC if incomplete, Assign responsible employees and mandatory training, Generate final hospital reports, Close incidents, Monitor departmental performance.
+- **System Administrator**: User & Role management, Senior staff single/multi-department mappings, SLA configuration, Notification monitoring, Audit logs, HRMS synchronization management & quota monitoring.
+- **HRMS Synchronization & Directory Management**: Automated employee master directory ingestion via cursor-based Change Feed, real-time lifecycle updates via signed Webhooks (`employee.created`, `employee.updated`, `employee.terminated`), department & job title ingestion, local employee master caching, status-based access enforcement (`active`, `noticePeriod`, `terminated`).
 
 ### 2.6 User Classes
 | User | Description |
 | :--- | :--- |
-| **Employee** | Reports hospital incidents |
-| **HOD** | Reviews department incidents |
-| **Incharge** | Acts as HOD where applicable |
-| **Assistant COO** | Reviews incidents for assigned departments |
+| **Employee** | Reports hospital incidents and completes mandated training |
+| **Department Reviewer (Senior Staff / HOD / Incharge / Assistant COO)** | Senior staff member assigned to review incidents and submit findings for a single department or multiple departments |
 | **Investigator** | Conducts investigations assigned by IMC |
-| **IMC** | Investigates, approves redirects, verifies training |
-| **Management** | Final review, training assignment, and incident closure |
-| **System Administrator** | System configuration, mappings, and monitoring |
+| **IMC** | Investigates, approves redirects, escalates priority, verifies training |
+| **Management** | Final review, accountability determination, training mandate, and incident closure |
+| **System Administrator** | System configuration, senior staff department mappings, HRMS sync monitoring, and audit oversight |
 
 ### 2.7 Operating Environment
 - **Client Web Browsers**: Google Chrome, Microsoft Edge, Mozilla Firefox, Safari.
@@ -229,8 +235,8 @@ The Hospital Incident Management System functions as an independent enterprise w
 - **Mobile Devices**: Responsive web support for Android and iOS.
 
 ### 2.8 Constraints & Assumptions
-- **Constraints**: Availability of Office Portal API, Internet connectivity, WhatsApp Business API, and Cloudflare R2 object storage.
-- **Assumptions**: Every employee has a unique Employee ID; departments are predefined; roles are assigned by System Administrators; all access is over secure HTTPS.
+- **Constraints**: Availability of OfficePortal Public API v1, OAuth 2.0 Client Credentials (`emp:read` scope), read-only authoritative directory, cursor-based change feed, and signed webhook deliveries (`X-Awarious-Signature`), Cloudflare R2 object storage.
+- **Assumptions**: Every employee has a unique Employee Code (`employeeCode` in OfficePortal) matching their HIMS Employee ID; hospital departmental reviewer mappings and HIMS administrative roles are managed within HIMS; terminated employees are deactivated from active login and assignment but their historical incident records remain permanently immutable.
 
 ---
 
@@ -239,19 +245,21 @@ The Hospital Incident Management System functions as an independent enterprise w
 ### 3.1 Overall Architecture
 ```
                     Users
-                       │
-                       ▼
+                      │
+                      ▼
               React.js Frontend
-                       │
-          REST API (HTTPS + JWT)
-                       │
-                       ▼
-           Express.js Backend Server
-      ┌──────────┬────────────┬────────────┐
-      │          │            │            │
-      ▼          ▼            ▼            ▼
- PostgreSQL   Cloudflare R2  Socket.IO  Email/WhatsApp
-   Database     Storage       Notifications
+                      │
+         REST API (HTTPS + JWT)
+                      │
+                      ▼
+          Express.js Backend Server ◄─── Incoming Signed Webhooks
+     ┌────────┬───────┴───────┬────────┬───────────────┐
+     ▼        ▼               ▼        ▼               ▼
+PostgreSQL Cloudflare R2   Socket.IO Email/WhatsApp OfficePortal HRMS
+Database    Storage     Notifications   Services     Public API v1
+(master_emp,                                        (OAuth 2.0 Token,
+ users,                                              Change Feed,
+ incidents)                                          Depts/Titles)
 ```
 
 ### 3.2 Frontend Architecture
@@ -260,10 +268,18 @@ Organized modularly under `src/`:
 
 ### 3.3 Backend Architecture
 Organized modularly under `server/`:
-`controllers/`, `routes/`, `middleware/`, `services/`, `prisma/` (migrations/db), `validators/`, `sockets/`, `config/`, `utils/`, `app.js`.
+`controllers/`, `routes/`, `middleware/`, `services/`, `migrations/`, `validators/`, `sockets/`, `config/`, `utils/`, `index.js`.
 
 ### 3.4 Cloudflare R2 Integration
 Cloudflare R2 securely stores all incident attachments, HOD evidence, IMC investigation files, training certificates, final reports, and generated PDFs. PostgreSQL stores precise metadata (file name, object key, uploader, MIME type, upload date).
+
+### 3.5 OfficePortal HRMS API Integration Layer
+The system integrates with OfficePortal Public API v1 via a resilient, read-only backend integration layer:
+- **Token Management Service (`accounts.awarious.com/publicapi/connect/token`)**: Handles automated OAuth 2.0 Client Credentials token acquisition and in-memory caching. Reuses the 15-minute token across concurrent requests, renewing proactively 60 seconds prior to expiration to eliminate redundant authentication calls.
+- **Materialized Directory Cache (`master_employees`)**: Maintains an internal PostgreSQL snapshot of all hospital personnel, indexed with trigram fuzzy search (`pg_trgm`). Incident reporting autocomplete, personnel lookups, and investigator assignment forms query this local table (<50ms latency) without exhausting external vendor API rate limits.
+- **Change Feed Reconciliation (`/api/v1/employees/changes`)**: Operates on a scheduled cron cadence (hourly) to pull incremental employee updates, new hires, status transitions, and deletions using persistent cursor checkpoints.
+- **Signed Webhook Receiver (`POST /api/webhooks/officeportal`)**: Ingests real-time push events (`employee.created`, `employee.updated`, `employee.terminated`, `employee.department_changed`). Validates deliveries using raw-body HMAC-SHA256 signatures (`X-Awarious-Signature`), prevents replay attacks with a 5-minute window check, and enforces idempotency through a 30-day event deduplication log.
+- **Department & Designation Synchronization (`/api/v1/departments`, `/api/v1/job-titles`)**: Ingests authoritative department and job title masters to keep hospital organizational units synchronized.
 
 ---
 
@@ -277,10 +293,20 @@ Every user logs in from the standardized login page.
 - **Credentials**: Employee ID (Text, Required) and Password (Password, Required).
 - **Flow**: Open Login Page $\rightarrow$ Enter Employee ID & Password $\rightarrow$ Validate Credentials $\rightarrow$ Generate JWT $\rightarrow$ Load Dashboard Based on Role.
 
-### 4.3 User Registration
-Only System Administrators can create user accounts directly (or via Office Portal API verification).
-- **Captured Attributes**: Employee ID, Employee Name, Email, Mobile Number, Department, Designation, Role(s), Status.
-- **Storage**: Passwords are securely hashed using `bcrypt` (12 rounds).
+### 4.3 User Registration & HRMS Verification
+Staff accounts are provisioned through an automated self-registration flow verified against the authoritative OfficePortal HRMS master directory:
+- **Registration Verification Flow**:
+  1. Staff member navigates to Registration Page and enters their Employee ID (matching `employeeCode` in OfficePortal), Full Name, Work Email, and Password.
+  2. The backend queries the synchronized `master_employees` database table.
+  3. If the Employee ID does not exist in hospital master records, registration is immediately refused with `EMPLOYEE_NOT_FOUND`.
+  4. If found, the submitted name is validated against the official HRMS name record using case-insensitive verification (`NAME_MISMATCH` check).
+  5. An OTP is dispatched to the staff member's email address to verify identity ownership.
+  6. Upon successful OTP verification, the user account is created in the `users` table with bcrypt password hashing (12 rounds). Department, designation, and phone are automatically synchronized from HRMS.
+- **Employment Status Lifecycle Enforcement**:
+  - `active`: Full platform access based on assigned RBAC roles.
+  - `noticePeriod`: Account remains active with full access; a visual badge is displayed in investigator and trainer pickers to warn assigning committees of pending departure.
+  - `terminated` or `inactive`: Account is automatically locked (`is_active = FALSE`). Active JWT tokens are revoked upon next request. The user is excluded from personnel search autocomplete. Historical incident contributions, investigator reports, and audit logs remain permanently intact.
+- **Administrator Provisioning**: System Administrators can also directly provision accounts or update role mappings from the Admin Console.
 
 ### 4.4 Authentication
 - **Access Token**: Valid for 15 minutes; authenticates every protected API request via `Authorization: Bearer <token>` header.
@@ -288,6 +314,7 @@ Only System Administrators can create user accounts directly (or via Office Port
 
 ### 4.5 Authorization & Multi-Role Support
 Enforced via RBAC across 8 distinct classes: `Employee`, `HOD`, `Incharge`, `Assistant COO`, `Investigator`, `IMC`, `Management`, and `System Administrator`.
+- **Senior Staff Multi-Department Review**: A senior staff member (HOD, Incharge, or Assistant COO) can be assigned to oversee a single department or multiple departments simultaneously.
 - **Multi-Role Switching**: If an employee has multiple roles assigned (e.g., Employee + HOD + Investigator), they can switch active dashboards dynamically without having to log out and log back in. Every switch is logged for auditability.
 
 ### 4.6 Password Policy & Forgot Password
@@ -304,13 +331,17 @@ Every login attempt records: Employee ID, Date & Time, Client IP Address, Browse
 ### 4.9 Authentication APIs
 | API Route | Method | Purpose |
 | :--- | :--- | :--- |
-| `/api/auth/login` | POST | User login |
-| `/api/auth/logout` | POST | User logout |
+| `/api/auth/register-otp` | POST | Request OTP for staff registration verification |
+| `/api/auth/register` | POST | Register employee account after OTP verification |
+| `/api/auth/login` | POST | User login with Employee ID & Password |
+| `/api/auth/committee-login` | POST | Emergency shared role credential login (IMC/Management/Admin) |
+| `/api/auth/switch-role` | POST | Switch active role in multi-role profile |
+| `/api/auth/logout` | POST | User logout and session invalidation |
 | `/api/auth/refresh` | POST | Refresh access token |
 | `/api/auth/forgot-password` | POST | Request OTP for password reset |
 | `/api/auth/verify-otp` | POST | Verify password reset OTP |
 | `/api/auth/reset-password` | POST | Set new password |
-| `/api/users/register` | POST | Create user (System Admin only) |
+| `/api/users/register` | POST | Direct account creation (System Admin only) |
 
 ---
 
@@ -365,13 +396,14 @@ Provides a personalized overview of employee reporting activity.
 
 ---
 
-## Chapter 6 – HOD / Incharge / Assistant COO Module
+## Chapter 6 – Department Reviewer Module (Senior Staff / HOD / Incharge / Assistant COO)
 
 ### 6.1 Module Overview & User Roles
-The HOD, Incharge, and Assistant COO Module manages departmental investigation, feedback submission, root cause identification, and redirection workflows within defined Service Level Agreements (SLAs).
-- **HOD (Head of Department)**: Primary reviewer for assigned clinical or administrative departments.
-- **Incharge**: Acts with full departmental HOD authority for departments lacking an official HOD.
-- **Assistant COO**: Oversees multiple mapped departments and exercises review authority when HODs/Incharges are unavailable or have delegated authority.
+The Department Reviewer Module manages departmental investigation, feedback submission, root cause identification, and redirection workflows within defined Service Level Agreements (SLAs).
+- **Single or Multi-Department Assignment**: A senior staff member is formally assigned to review incidents for either a single department (e.g., Chief Medical Officer for Medical Services) or multiple departments simultaneously (e.g., an Assistant COO or Senior Administrator overseeing Facility, Security, and Housekeeping).
+- **HOD (Head of Department)**: Departmental head responsible for clinical or administrative review of their assigned department.
+- **Incharge**: Acts with full departmental review authority for assigned departments.
+- **Assistant COO / Senior Staff**: Exercises oversight and review authority across all assigned or mapped departments, with distinct action logging in the audit trail.
 
 ### 6.2 Departmental Dashboard & Monitoring Cards
 - **Summary Cards**: Total Assigned Incidents, Pending Feedback, Active Incidents, Resolved Incidents, Redirect Requests, Overdue SLA, and Escalated Incidents.
@@ -381,7 +413,7 @@ The HOD, Incharge, and Assistant COO Module manages departmental investigation, 
   - *Notifications Feed*: Real-time alerts for new assignments, SLA reminders (Day 5), SLA breach warnings (Day 7), priority escalations, and IMC redirect adjudications.
 
 ### 6.3 Assigned Incident List & Detail View
-- **List Table & Filters**: Paginated table supporting multi-criteria filtering by timeframe (Today, This Week, This Month), severity, status, priority, and specific mapped department (for Assistant COOs).
+- **List Table & Filters**: Paginated table supporting multi-criteria filtering by timeframe (Today, This Week, This Month), severity, status, priority, and department selector (allowing reviewers managing multiple departments to toggle between specific department queues or view an aggregated cross-department queue).
 - **Incident Detail View**: Full visibility of original employee narrative description, reporter profile, location metadata, supporting R2 attachments, and historical audit timeline.
 
 ### 6.4 Department Feedback Submission & Drafts
@@ -395,8 +427,8 @@ If an assigned incident falls outside the department's responsibility, the revie
 - **IMC Adjudication**: While pending, the incident remains tracked under the requesting department. If IMC approves, the incident re-routes to the correct department and the SLA countdown resets.
 
 ### 6.6 SLA Governance & Multi-Department Oversight
-- **SLA Monitoring**: Default 7-day turnaround timer initiated upon incident assignment. Automated notifications fire on Day 5 (Warning) and Day 7 (Breach alert to HOD & IMC).
-- **Assistant COO & Incharge Oversight**: Assistant COOs automatically inherit operational review access across all assigned departments (e.g., Pharmacy, Maintenance, Housekeeping) with actions recorded distinctly in the audit trail.
+- **SLA Monitoring**: Default 7-day turnaround timer initiated upon incident assignment. Automated notifications fire on Day 5 (Warning) and Day 7 (Breach alert to Reviewer & IMC).
+- **Multi-Department Oversight**: Senior staff assigned to multiple departments automatically inherit operational review access across all assigned queues, with their specific reviewer identity recorded in every feedback audit record.
 
 ### 6.7 Functional Requirements & REST APIs
 | ID | Requirement Description |
@@ -533,38 +565,52 @@ The Management Module represents the ultimate decision-making authority in HIMS.
 ## Chapter 9 – System Administrator Module
 
 ### 9.1 Module Overview & Objectives
-The System Administrator (Super Admin) is responsible for configuring, maintaining, and monitoring HIMS. Unlike operational roles, the Administrator does not participate in investigations or submit incident feedback, and cannot view confidential narrative descriptions or review comments. Instead, the Administrator manages users, roles, department hierarchies, SLAs, notifications, integrations, master data, audit logs, and overall system health.
+The System Administrator (Super Admin) is responsible for configuring, maintaining, and monitoring HIMS. Unlike operational roles, the Administrator does not participate in investigations or submit incident feedback, and cannot view confidential narrative descriptions or review comments. Instead, the Administrator manages users, roles, department hierarchies, senior staff department oversight mappings, external HRMS directory synchronizations, SLAs, notifications, integrations, master data, audit logs, and overall system health.
 
 ### 9.2 Dashboard & Monitoring Cards
-- **Summary Cards**: Total Employees, Active Users, Inactive Users, Total Incidents, Active Incidents, Closed Incidents, SLA Breaches, Notifications Sent Today, Failed Notifications, and Active Investigators.
+- **Summary Cards**: Total Employees, Active Users, Inactive Users, HRMS Sync Status (Healthy/Error, Last Synced, Delta Cursor), Total Incidents, Active Incidents, Closed Incidents, SLA Breaches, Notifications Sent Today, Failed Notifications, and Active Investigators.
 - **Widgets**:
-  - *Incident & User Summaries*: Counts across timeframes and roles.
+  - *Incident & User Summaries*: Counts across timeframes, roles, and employment statuses (`active`, `noticePeriod`, `terminated`).
+  - *HRMS Integration Status*: Status indicator for OfficePortal HRMS Public API v1 connectivity, OAuth 2.0 token validity, rate limit consumption (100 req/min threshold), and pending webhook queue depth.
   - *System Status Monitor*: Health indicators for PostgreSQL, Cloudflare R2, SMTP Email Service, WhatsApp API, Task Scheduler, and Background Job Queue.
 
-### 9.3 User, Role, and Hierarchy Management
-- **User Management**: Create accounts, activate/deactivate/lock/unlock status, reset passwords, update profiles, and view login histories.
-- **Multi-Role Assignment**: Assign one or multiple roles (`Employee`, `HOD`, `Incharge`, `Assistant COO`, `Investigator`, `IMC`, `Management`, `System Administrator`).
-- **Department & COO Mapping**: Map specific HODs, Incharges, and Assistant COOs to departments. Assistant COOs automatically inherit oversight across mapped departments.
+### 9.3 User, Role, Hierarchy & HRMS Directory Management
+- **HRMS Master Directory Synchronization**: Master employee data is ingested from the hospital's central HRMS (OfficePortal Public API v1). System Administrators can trigger manual on-demand synchronizations (full directory or incremental delta change feed) or monitor automated scheduled syncs (every 15 minutes).
+- **Employee Lifecycle Governance**:
+  - `active`: Full HIMS access based on assigned RBAC roles.
+  - `noticePeriod`: Standard access retained; administrative alert flagged for handover of pending incident reviews or investigations.
+  - `terminated`: HIMS login is automatically disabled (`status = 'inactive'`). Historical incident reports, departmental feedback, investigations, and audit logs are strictly preserved in perpetuity without cascading deletions.
+- **Multi-Role Assignment**: Assign one or multiple operational roles (`Employee`, `HOD`, `Incharge`, `Assistant COO`, `Investigator`, `IMC`, `Management`, `System Administrator`).
+- **Senior Staff Single & Multi-Department Oversight Mapping**:
+  - Because hospital organizational hierarchies frequently assign senior clinicians or administrative leaders to oversee multiple units, the Administrator can assign a Senior Staff member (`HOD`, `Incharge`, or `Assistant COO`) to oversee either a **single department** or **multiple departments** simultaneously.
+  - The Admin UI provides an interactive mapping matrix (`user_id` $\leftrightarrow$ `department_ids[]`) allowing granular configuration. When a multi-department reviewer logs in, their dashboard automatically consolidates queues with department filter toggles.
 - **Investigator Management**: Designate or remove specialized hospital investigators and monitor active/completed investigation workloads.
 
-### 9.4 SLA, Notification, and Master Data Configuration
-- **SLA Configuration**: Set default turnaround thresholds (e.g., HOD Feedback = 7 Days, IMC Investigation = 7 Days, Management Review = 5 Days, Training Verification = 7 Days) and configure automated reminder/escalation schedules (Day 3, Day 5, Final Day).
+### 9.4 SLA, Notification, HRMS Quota & Master Data Configuration
+- **SLA Configuration**: Set default turnaround thresholds (e.g., Department Feedback = 7 Days, IMC Investigation = 7 Days, Management Review = 5 Days, Training Verification = 7 Days) and configure automated reminder/escalation schedules (Day 3, Day 5, Final Day).
 - **Notification Management**: Monitor Website, Email, and WhatsApp delivery queues (Pending, Sent, Delivered, Failed, Retrying) with manual retry triggers.
+- **HRMS Integration & Quota Configuration**:
+  - Configure OfficePortal OAuth 2.0 client credentials (`client_id`, `client_secret`), token endpoints, and webhook secret signatures.
+  - Monitor API quota limits: 100 requests/minute per client token/IP and 30 token requests/minute.
+  - Webhook event inspection: View incoming webhook events (`employee.created`, `employee.updated`, `employee.deleted`), signature verification status, and retry failed webhook processing.
 - **Master Data & Integrations**: Manage departments, categories, types, severity/risk levels, locations, buildings, floors, and templates. Configure R2 storage parameters, SMTP, and API keys.
 
 ### 9.5 Advanced Enterprise Features (Recommendations)
-1. **Feature Flags**: Dynamic toggle allowing optional modules (e.g., WhatsApp notifications, Office Portal integration, AI categorization) to be enabled/disabled without server redeployment.
-2. **API & Integration Monitor**: Real-time latency and connectivity dashboard tracking SMTP, WhatsApp, R2, database pool, and job queue health.
-3. **Security Center**: Dedicated threat monitor surfacing failed login spikes, locked accounts, expired passwords, active session counts, and role elevation events.
+1. **Feature Flags**: Dynamic toggle allowing optional modules (e.g., WhatsApp notifications, OfficePortal live webhook sync, AI categorization) to be enabled/disabled without server redeployment.
+2. **HRMS Sync & Webhook Console**: Real-time integration console displaying API latency, delta cursor states, webhook payloads, and one-click delta replay.
+3. **API & Integration Monitor**: Real-time latency and connectivity dashboard tracking SMTP, WhatsApp, R2, database pool, and job queue health.
+4. **Security Center**: Dedicated threat monitor surfacing failed login spikes, locked accounts, expired passwords, active session counts, and role elevation events.
 
 ### 9.6 Functional Requirements & REST APIs
 | ID | Requirement Description |
 | :--- | :--- |
-| **FR-ADM-001** | Manage user credentials, accounts, and profile states. |
+| **FR-ADM-001** | Manage user credentials, accounts, and profile states linked to HRMS directory. |
 | **FR-ADM-002** | Assign single or multiple RBAC roles to employees. |
 | **FR-ADM-003** | Configure workflow SLAs, reminder days, and escalation rules. |
 | **FR-ADM-004 to 006** | Monitor multi-channel notifications, view immutable audit logs, and manage investigators. |
 | **FR-ADM-007 to 010** | Configure department mappings, master data, system health, and integrations. |
+| **FR-ADM-011** | Trigger and monitor external HRMS directory syncs (full and delta) and rate limit quotas. |
+| **FR-ADM-012** | Map senior staff reviewers (HOD / Incharge / Assistant COO) to single or multiple departments. |
 
 #### REST API Endpoints
 | Method | Endpoint | Purpose |
@@ -574,10 +620,15 @@ The System Administrator (Super Admin) is responsible for configuring, maintaini
 | `POST` | `/api/admin/users` | Create new user account |
 | `PATCH` | `/api/admin/users/:id/status` | Activate, deactivate, or lock user account |
 | `POST` | `/api/admin/users/:id/roles` | Update user RBAC roles |
+| `GET` | `/api/admin/department-reviewers` | Retrieve senior staff single/multi-department mappings |
+| `POST` | `/api/admin/department-reviewers` | Assign single or multiple departments to senior staff |
+| `POST` | `/api/master-employees/sync-hrms` | Trigger on-demand HRMS sync (`full` or `delta`) |
+| `GET` | `/api/master-employees/sync-status` | Retrieve HRMS sync status, cursor, and quota consumption |
+| `GET` | `/api/admin/webhooks/logs` | View ingested OfficePortal webhook events and statuses |
 | `GET` | `/api/admin/slas` | Retrieve SLA configurations |
 | `PATCH` | `/api/admin/slas/:id` | Update SLA parameters |
 | `GET` | `/api/admin/audit-logs` | Query system audit logs |
-| `GET` | `/api/admin/system-health` | Check PostgreSQL, Redis, R2, and SMTP health |
+| `GET` | `/api/admin/system-health` | Check PostgreSQL, Redis, R2, HRMS, and SMTP health |
 | `GET` | `/api/admin/master-data` | Retrieve system master data tables |
 
 ---
@@ -698,8 +749,8 @@ Management Closure
 
 ### 11.2 Modular Logical Architecture (16 Modules)
 1. **Authentication**: `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `login_history`, `refresh_tokens`, `password_reset_tokens`, `otp_requests`, `active_sessions`.
-2. **Organization**: `departments`, `designations`, `buildings`, `floors`, `locations`, `hospital_units`.
-3. **Employee**: `employees`, `employee_contacts`, `employee_documents`, `employee_training_history`.
+2. **Organization & Department Reviewers**: `departments`, `designations`, `department_reviewers` (maps senior staff to single/multiple departments), `buildings`, `floors`, `locations`, `hospital_units`.
+3. **Employee & HRMS Master Directory**: `master_employees` (central materialized cache from OfficePortal HRMS Public API v1), `hrms_webhook_events` (raw incoming webhook audit & idempotency queue), `hrms_sync_logs` (delta & full sync run history), `employees`, `employee_contacts`, `employee_documents`, `employee_training_history`.
 4. **Incident**: `incidents`, `incident_categories`, `incident_types`, `incident_status`, `incident_priorities`, `incident_severity`, `incident_departments`, `incident_watchlist`.
 5. **Attachments**: `attachments`, `attachment_versions`, `attachment_download_logs` (stores metadata; binaries reside in Cloudflare R2).
 6. **Department Review**: `hod_feedback`, `hod_feedback_attachments`, `redirect_requests`, `redirect_history`.
@@ -715,14 +766,48 @@ Management Closure
 16. **System Administration**: `system_settings`, `feature_flags`, `api_integrations`, `backup_history`, `scheduled_jobs`.
 
 ### 11.3 Core Entity Specifications & Cloudflare R2 Structure
+- **master_employees Table**: Ingested directly from OfficePortal HRMS Public API v1:
+  - `id` (UUID, Primary Key)
+  - `office_portal_id` (VARCHAR 64, UNIQUE, Not Null) — Vendor's internal unique identifier
+  - `employee_id` (VARCHAR 32, UNIQUE, Not Null, Indexed) — Hospital standard employee code (e.g., `JPH-01042`)
+  - `first_name` (VARCHAR 100, Not Null), `last_name` (VARCHAR 100, Not Null)
+  - `email` (VARCHAR 255, Indexed), `work_phone` (VARCHAR 32)
+  - `status` (VARCHAR 32, Not Null, Indexed) — Strict enum: `active` | `noticePeriod` | `terminated`
+  - `department_name` (VARCHAR 128), `designation_name` (VARCHAR 128), `office_location` (VARCHAR 128)
+  - `date_of_joining` (DATE), `termination_date` (DATE, Nullable)
+  - `raw_payload` (JSONB) — Full vendor payload preserved for schema-agnostic extensibility
+  - `synced_at` (TIMESTAMP WITH TIME ZONE, Default `NOW()`)
+- **department_reviewers Table**: Configured by System Administrator to map senior staff across single or multiple departments:
+  - `id` (UUID, Primary Key)
+  - `user_id` (UUID, Foreign Key $\rightarrow$ `users.id`, Indexed)
+  - `department_id` (UUID, Foreign Key $\rightarrow$ `departments.id`, Indexed)
+  - `reviewer_role` (VARCHAR 32) — Enum: `HOD` | `Incharge` | `Assistant COO`
+  - `is_active` (BOOLEAN, Default `true`)
+  - `assigned_by` (UUID, Foreign Key $\rightarrow$ `users.id`)
+  - `created_at` (TIMESTAMP), `updated_at` (TIMESTAMP)
+  - *Unique Constraint*: `UNIQUE(user_id, department_id, reviewer_role)`
+- **hrms_webhook_events Table**: Idempotent audit log for incoming OfficePortal webhooks:
+  - `id` (UUID, Primary Key)
+  - `event_id` (VARCHAR 128, UNIQUE, Not Null) — Extracted from webhook payload to enforce idempotency
+  - `event_type` (VARCHAR 64, Not Null) — `employee.created` | `employee.updated` | `employee.deleted`
+  - `payload` (JSONB, Not Null) — Full incoming raw webhook payload
+  - `signature_verified` (BOOLEAN, Not Null)
+  - `status` (VARCHAR 32, Default `'PENDING'`) — `PENDING` | `PROCESSED` | `FAILED`
+  - `error_message` (TEXT, Nullable)
+  - `received_at` (TIMESTAMP WITH TIME ZONE, Default `NOW()`)
 - **incidents Table**: `id` (UUID), `reference_number` (VARCHAR), `title` (VARCHAR), `description` (TEXT), `reporter_id` (UUID), `severity_id` (UUID), `priority_id` (UUID), `status_id` (UUID), `occurrence_date` (DATE), `occurrence_time` (TIME), `location_id` (UUID), `risk_score` (INTEGER), `created_at` (TIMESTAMP).
 - **attachments Table**: `id`, `incident_id`, `uploaded_by`, `original_name`, `object_key`, `bucket`, `mime_type`, `file_size`, `checksum`, `uploaded_at`.
 - **Cloudflare R2 Object Storage Tree**: Structured chronologically and functionally: `hospital-ims/incident-attachments/YYYY/MM/INCIDENT-ID/filename.ext`, `hod-feedback/`, `imc-investigation/`, `training-certificates/`, and `reports/`.
 
-### 11.4 Indexing, Soft Deletes, and Transactions
-- **Index Strategy**: Single indexes on `employee_id`, `reference_number`, `status_id`, `department_id`, `severity_id`, `priority_id`, `created_at`. Composite indexes on `(department_id, status_id)`, `(status_id, priority_id)`, and `(reference_number, status_id)`.
-- **Soft Deletes**: Physical deletions are strictly prohibited across incidents, feedback, investigations, reports, and audit logs to guarantee regulatory NABH compliance.
-- **ACID Transactions**: Mandatory transaction wrappers for multi-table writes (incident creation, redirect approval, investigation submission, training assignment, closure).
+### 11.4 Indexing, Soft Deletes, and Non-Cascading Lifecycle Preservation
+- **Index Strategy**:
+  - Single indexes: `master_employees.employee_id`, `master_employees.office_portal_id`, `master_employees.status`, `master_employees.email`, `incidents.reference_number`, `incidents.status_id`, `incidents.department_id`, `incidents.created_at`.
+  - Composite indexes: `(department_id, status_id)`, `(status_id, priority_id)`, `(reference_number, status_id)`, `department_reviewers(user_id, is_active)`, `department_reviewers(department_id, is_active)`.
+- **Non-Cascading Soft Deletes & Employee Termination Preservation**:
+  - Physical deletions are strictly prohibited across incidents, feedback, investigations, reports, and audit logs to guarantee regulatory NABH compliance.
+  - When an employee is marked `terminated` in OfficePortal HRMS, HIMS updates `master_employees.status = 'terminated'` and locks `users.status = 'inactive'`.
+  - **Zero Cascading Deletions**: Foreign keys referencing the employee (`incidents.reporter_id`, `hod_feedback.reviewer_id`, `investigation_findings.investigator_id`, `trainings.attendee_id`) remain permanently valid and intact. This ensures that past medical audits, clinical incident histories, and RCA/CAPA accountability trails remain 100% auditable forever.
+- **ACID Transactions**: Mandatory transaction wrappers for multi-table writes (incident creation, redirect approval, investigation submission, training assignment, closure, and HRMS batch sync commits).
 
 ---
 
@@ -737,18 +822,27 @@ Management Closure
   - *Error*: `{ "success": false, "message": "...", "errors": [{ "field": "...", "message": "..." }], "timestamp": "ISO-8601" }`
 
 ### 12.2 Comprehensive REST Endpoint Specifications
-- **Authentication**: `POST /auth/login`, `/logout`, `/refresh-token`, `/forgot-password`, `/verify-otp`, `/reset-password`, `GET /auth/me`, `/sessions`, `DELETE /auth/sessions/:id`.
-- **Employee**: `GET /employee/dashboard`, `/incidents`, `/incidents/:id`, `/incidents/:id/timeline`, `POST /employee/incidents`, `/incidents/draft`, `/incidents/:id/attachments`, `PUT /employee/incidents/draft/:id`.
-- **HOD / Department**: `GET /hod/dashboard`, `/incidents`, `/incidents/:id`, `POST /hod/incidents/:id/feedback`, `/redirect`, `/attachments`, `PUT /hod/incidents/:id/draft`.
+- **Authentication**: `POST /auth/login`, `/logout`, `/refresh-token`, `/forgot-password`, `/verify-otp`, `/reset-password`, `GET /auth/me`, `/sessions`, `DELETE /auth/sessions/:id`. (Validates login against `master_employees` status).
+- **Employee & Directory**: `GET /employee/dashboard`, `/incidents`, `/incidents/:id`, `/incidents/:id/timeline`, `POST /employee/incidents`, `/incidents/draft`, `/incidents/:id/attachments`, `PUT /employee/incidents/draft/:id`, `GET /employee/search` (Autocomplete employee directory search for incident reporting and training nomination).
+- **Department Reviewer (Senior Staff / HOD / Incharge / COO)**:
+  - `GET /hod/dashboard?departmentId=...` (Dashboard metrics scoped to specific department or consolidated across all assigned departments)
+  - `GET /hod/incidents?departmentId=...` (Incident queue filtered by assigned department)
+  - `GET /hod/assigned-departments` (Returns array of departments assigned to current reviewer)
+  - `POST /hod/incidents/:id/feedback`, `/redirect`, `/attachments`, `PUT /hod/incidents/:id/draft`
 - **IMC Investigation**: `GET /imc/dashboard`, `/incidents`, `POST /imc/incidents/:id/assign-investigator`, `/investigation`, `/priority`, `/redirect/:id/approve`, `/reject`, `/training/:id/verify`.
 - **Investigator**: `GET /investigator/dashboard`, `/incidents`, `POST /investigator/incidents/:id/findings`, `/attachments`.
 - **Management Governance**: `GET /management/dashboard`, `POST /management/incidents/:id/approve`, `/return`, `/training`, `/report`, `/close`.
-- **System Administrator**: Full CRUD across `/admin/users`, `/roles`, `/departments`, `/sla`, `/audit`, `/notifications`.
+- **External HRMS Master Integration & Webhooks**:
+  - `POST /webhooks/officeportal` — Ingests real-time employee lifecycle events (`employee.created`, `employee.updated`, `employee.deleted`). Enforces raw-body HMAC-SHA256 signature verification (`X-Awarious-Signature`), returns `200 OK` within 2s, and dispatches background queue processing.
+  - `POST /master-employees/sync-hrms` — Admin endpoint to trigger manual full or delta sync against OfficePortal Public API v1.
+  - `GET /master-employees/sync-status` — Query last sync timestamp, delta token, rate limit quota metrics, and sync health.
+  - `GET /departments/designations` — Hierarchical department and designation master lists synchronized from HRMS.
+- **System Administrator**: Full CRUD across `/admin/users`, `/roles`, `/departments`, `/admin/department-reviewers` (Assign single/multiple departments to senior staff), `/admin/webhooks/logs`, `/sla`, `/audit`, `/notifications`.
 - **Reports & Analytics**: `GET /reports/monthly`, `/yearly`, `/departments`, `/employees`, `/training`, `GET /analytics/dashboard`, `/departments`, `/system`.
 - **Cloudflare R2 Object Storage**: `POST /storage/upload`, `GET /storage/download/:id`, `/storage/:id`, `DELETE /storage/:id`.
 
 ### 12.3 Real-Time WebSocket Architecture (Socket.IO)
-- **Server Events**: Emitted in real-time on `incident_created`, `incident_updated`, `incident_closed`, `notification_created`, `sla_breached`, `training_assigned`, `training_completed`.
+- **Server Events**: Emitted in real-time on `incident_created`, `incident_updated`, `incident_closed`, `notification_created`, `sla_breached`, `training_assigned`, `training_completed`, `hrms_sync_completed`.
 - **Client Events**: Handled via `join_room`, `leave_room`, and `mark_notification_read`.
 
 ### 12.4 Security, Versioning & Enterprise Best Practices
@@ -756,7 +850,8 @@ Management Closure
 - **Enterprise Recommendations**:
   1. *OpenAPI / Swagger Docs*: Auto-generating interactive Swagger UI from Express routes.
   2. *Idempotency Keys*: Supporting `Idempotency-Key` headers on critical mutations (`POST /incidents`, `/close`, `/training`) to prevent duplicate execution on network retries.
-  4. *Clean Feature-First Architecture*: Structuring codebases by domain (`server/modules/auth`, `employee`, `incident`, `hod`, `imc`, `management`, `admin`) rather than monolithic technical layers.
+  3. *Raw-Body Verification Middleware*: Preserving unparsed raw request body buffers for cryptographically verifying external vendor webhooks.
+  4. *Clean Feature-First Architecture*: Structuring codebases by domain (`server/modules/auth`, `employee`, `incident`, `hod`, `imc`, `management`, `admin`, `hrms`) rather than monolithic technical layers.
 
 ---
 
@@ -872,8 +967,17 @@ Prisma ORM + PostgreSQL + Redis + Cloudflare R2
 - **Input Sanitization**: Strict schema validation using Zod on every API request. Prisma ORM parameterized queries eliminate SQL injection vectors. Content Security Policy (CSP) and escaping prevent XSS.
 - **Immutable Audit Logging**: Append-only audit logs recording every login, logout, password change, permission modification, and incident review decision.
 - **Secrets & Rate Limiting**: Strict environment variable injection (`JWT_SECRET`, `DATABASE_URL`). Role-specific rate limits (e.g., Login limited to 5 attempts per 15 minutes).
+### 15.6 HRMS Integration Security & Webhook Defense
+- **OAuth 2.0 Credential Protection**: OfficePortal `client_id` and `client_secret` reside exclusively in server-side environment variables and are never transmitted to client bundles or logged in telemetry.
+- **In-Memory Token Caching & Quota Shielding**: To adhere to OfficePortal's 30 token requests/minute quota limit, the 900-second (15-minute) Bearer token is cached in Redis/Node memory and automatically renewed proactively at the 12-minute mark (720 seconds) using a mutex lock to eliminate race conditions.
+- **Raw-Body HMAC-SHA256 Webhook Verification**:
+  - The webhook endpoint (`/api/webhooks/officeportal`) preserves the raw, unparsed request buffer via Express raw body middleware.
+  - Verification extracts `t` (timestamp) and `v1` (signature) from the `X-Awarious-Signature` header.
+  - The expected signature is computed as `HMAC-SHA256(secret, "${t}.${rawBody}")` and compared against `v1` using constant-time string comparison (`crypto.timingSafeEqual`) to prevent timing attacks.
+- **Replay Attack & Drift Mitigation**: Requests with timestamp drift exceeding 300 seconds (5 minutes) relative to server UTC time are rejected immediately (`401 Unauthorized`).
+- **Idempotency & Event Deduplication**: Ingested `event_id` values are stored with a unique constraint in `hrms_webhook_events`. Duplicate deliveries return `200 OK` immediately but bypass queue dispatching to prevent duplicate database writes.
 
-### 15.6 Advanced Enterprise Security Recommendations
+### 15.7 Advanced Enterprise Security Recommendations
 1. **Fine-Grained Permissions**: Introducing granular permission tokens (`incident:create`, `incident:view:own`, `report:generate`) layered above RBAC roles.
 2. **Security Event Dashboard**: Dedicated threat monitoring view surfacing account lockouts, suspicious API bursts, and permission elevation alerts.
 3. **Data Loss Prevention (DLP)**: PDF watermarks on generated hospital reports and strict rate limiting on bulk data exports.
@@ -906,7 +1010,10 @@ PostgreSQL 16 Engine        Redis Caching & Queue Pool      Cloudflare R2 Object
 - **Nginx Routing Strategy**: Routes `/` to frontend assets, `/api` to Express REST servers, `/socket.io` to WebSocket instances, and executes dynamic Gzip/Brotli compression.
 
 ### 16.3 Background Job Processing (BullMQ & Redis)
-- **Asynchronous Worker Tasks**: Dedicated BullMQ job queues running on Redis offload heavy computation: Multi-channel notifications (SMTP Email & WhatsApp API), SLA automated reminders, daily analytical aggregations, PDF hospital investigation report generation, and automated database backup verifications.
+- **Asynchronous Worker Tasks**: Dedicated BullMQ job queues running on Redis offload heavy computation:
+  - *HRMS Synchronization Workers*: Periodic incremental delta syncs (running every 15 minutes against `/api/v1/employees/changes`), full sync reconciliation jobs, and asynchronous webhook payload processors.
+  - *Notification Workers*: Multi-channel dispatches (SMTP Email & WhatsApp API) with exponential backoff retries.
+  - *Governance & Analytics Workers*: Daily SLA automated escalation checks, monthly analytical aggregations, PDF hospital investigation report generation, and automated database backup integrity checks.
 
 ### 16.4 CI/CD Pipeline & Blue-Green Deployment
 - **GitHub Actions Pipeline**: Automated sequence on developer commit: `ESLint Check` $\rightarrow$ `TypeScript Type Validation` $\rightarrow$ `Unit & Integration Tests` $\rightarrow$ `Frontend Vite Build` $\rightarrow$ `Backend Build` $\rightarrow$ `Docker Multi-Stage Image Generation` $\rightarrow$ Automated Staging/Production Deployment.
@@ -914,7 +1021,7 @@ PostgreSQL 16 Engine        Redis Caching & Queue Pool      Cloudflare R2 Object
 
 ### 16.5 Disaster Recovery, Sizing & Health Endpoints
 - **Server Hardware Allocation**: Medium/Large Hospital production benchmark: 8 to 16 vCPUs, 16 to 32 GB RAM, and 250 to 500+ GB NVMe SSD storage.
-- **Health Probes**: Kubernetes/Docker probes exposed at `/health`, `/ready`, and `/live` verifying live database connectivity, Redis pool availability, and R2 object storage reachability.
+- **Health Probes**: Kubernetes/Docker probes exposed at `/health`, `/ready`, and `/live` verifying live database connectivity, Redis pool availability, HRMS API reachability, and R2 object storage reachability.
 
 ### 16.6 Enterprise Deployment Recommendations
 1. **Multi-Environment Isolation**: Maintaining complete physical separation between Development, Testing, Staging, and Production environments.
@@ -933,11 +1040,18 @@ Requirements $\rightarrow$ Unit Testing $\rightarrow$ Integration Testing $\righ
 
 ### 17.2 Scope & Recommended Test Automation Tooling
 - **Unit & Component Testing**: Backend unit testing via Vitest / Jest covering controllers, services, validation schemas, auth logic, and notification triggers. Frontend testing via Vitest + React Testing Library targeting components, custom hooks, and Zustand state stores.
-- **Integration & REST API Testing**: Cross-module verification verifying seamless data flow across `Employee $\rightarrow$ HOD $\rightarrow$ IMC $\rightarrow$ Investigator $\rightarrow$ Management $\rightarrow$ Training $\rightarrow$ Closure`. API endpoint testing via Postman, Newman, or Bruno verifying Zod schemas, filtering, pagination, and multi-part file uploads.
+- **Integration & REST API Testing**: Cross-module verification verifying seamless data flow across `Employee $\rightarrow$ Senior Staff Review $\rightarrow$ IMC $\rightarrow$ Investigator $\rightarrow$ Management $\rightarrow$ Training $\rightarrow$ Closure`. API endpoint testing via Postman, Newman, or Bruno verifying Zod schemas, filtering, pagination, and multi-part file uploads.
+- **HRMS Integration Test Suite**: Dedicated automated suites mocking OfficePortal Public API v1:
+  - OAuth 2.0 token acquisition and in-memory cache renewal tests.
+  - Full employee sync and cursor-based delta pagination tests.
+  - Webhook HMAC-SHA256 signature verification tests (valid signature passes, tampered payload rejected).
+  - Webhook timestamp drift replay rejection tests ($> 300$ seconds).
+  - Webhook idempotency tests (duplicate `event_id` acknowledged but processed once).
+  - Employee termination non-cascading preservation tests (ensuring terminated employees preserve past incident reports, feedback, and audit trails).
 - **End-to-End UI Testing**: Playwright or Cypress automating navigation workflows, responsive layouts, accessibility compliance, and dynamic dark/light hospital themes.
 
 ### 17.3 Security, Performance & Storage Testing Scenarios
-- **Security Scenarios**: Automated scanning via OWASP ZAP and `npm audit` verifying JWT expiration, RBAC authorization boundaries, file extension restrictions, SQL injection immunity, and XSS sanitization.
+- **Security Scenarios**: Automated scanning via OWASP ZAP and `npm audit` verifying JWT expiration, RBAC authorization boundaries, file extension restrictions, SQL injection immunity, XSS sanitization, and webhook signature integrity.
 - **Performance Benchmarks (k6 / JMeter)**: Simulating 500 concurrent user logins, 100 simultaneous incident reports, 500 simultaneous analytical dashboard loads, and 50 concurrent PDF report generations at a sustained throughput of 500 notifications/minute.
 - **Database & Cloudflare R2 Testing**: Verifying PostgreSQL foreign key constraints, cascade rules, soft-delete behavior (`deleted_at`), and time-limited signed URL expirations in Cloudflare R2.
 
