@@ -285,15 +285,39 @@ exports.bulkAddEmployees = async (req, res) => {
 };
 
 const { syncEmployeesFromHrms, getHrmsSyncStatus } = require('../services/hrmsSyncService');
+const officePortalService = require('../services/officePortalService');
 
-// POST on-demand sync from Google Sheets HRMS API
+// POST on-demand sync from HRMS (OfficePortal or Google Sheet fallback)
 exports.syncFromHrms = async (req, res) => {
   try {
-    const result = await syncEmployeesFromHrms();
-    await auditLog(req.user.id, 'HRMS_SYNC_PERFORMED', null, result, req.ip);
+    const config = await officePortalService.getConfig();
+    const isOfficePortal = Boolean(config.clientId && config.clientSecret);
+
+    let result;
+    if (isOfficePortal) {
+      const syncType = req.body?.type === 'delta' ? 'delta' : 'full';
+      if (syncType === 'delta') {
+        result = await officePortalService.syncDeltaChanges();
+      } else {
+        result = await officePortalService.syncFullDirectory();
+      }
+      await auditLog(req.user.id, 'OFFICEPORTAL_SYNC_PERFORMED', null, result, req.ip);
+      return res.json({
+        success: true,
+        source: 'OfficePortal HRMS Public API v1',
+        syncType,
+        message: `Successfully synchronized ${result.totalFetched} employees from OfficePortal HRMS.`,
+        data: result
+      });
+    }
+
+    // Fallback to legacy Google Sheet if OfficePortal credentials are not yet configured
+    result = await syncEmployeesFromHrms();
+    await auditLog(req.user.id, 'HRMS_SHEET_SYNC_PERFORMED', null, result, req.ip);
 
     res.json({
       success: true,
+      source: 'Google Sheets (Legacy Fallback)',
       message: `Successfully synchronized ${result.totalFetched} employees from HRMS Google Sheet.`,
       data: result
     });
@@ -305,11 +329,45 @@ exports.syncFromHrms = async (req, res) => {
   }
 };
 
-// GET sync status
+// GET sync status and logs
 exports.getSyncStatus = async (req, res) => {
   try {
-    const status = await getHrmsSyncStatus();
-    res.json({ success: true, data: status });
+    const config = await officePortalService.getConfig();
+    const isOfficePortal = Boolean(config.clientId && config.clientSecret);
+
+    // Fetch recent OfficePortal sync logs
+    const syncLogsRes = await query(`
+      SELECT id, sync_type, status, delta_cursor, records_fetched, records_inserted,
+             records_updated, records_deactivated, error_message, started_at, completed_at
+      FROM hrms_sync_logs
+      ORDER BY started_at DESC
+      LIMIT 10
+    `).catch(() => ({ rows: [] }));
+
+    // Fetch webhook stats
+    const webhookStatsRes = await query(`
+      SELECT 
+        COUNT(*) as total_events,
+        COUNT(CASE WHEN status = 'PROCESSED' THEN 1 END) as processed_events,
+        COUNT(CASE WHEN status = 'FAILED' THEN 1 END) as failed_events,
+        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_events
+      FROM hrms_webhook_events
+    `).catch(() => ({ rows: [{ total_events: 0, processed_events: 0, failed_events: 0, pending_events: 0 }] }));
+
+    // Fallback sheet status
+    const sheetStatus = await getHrmsSyncStatus().catch(() => ({ lastSync: null }));
+
+    res.json({
+      success: true,
+      data: {
+        isOfficePortalConfigured: isOfficePortal,
+        officePortalBaseUrl: config.baseUrl,
+        lastOfficePortalSync: syncLogsRes.rows[0] || null,
+        recentSyncLogs: syncLogsRes.rows,
+        webhookStats: webhookStatsRes.rows[0],
+        legacySheetSync: sheetStatus
+      }
+    });
   } catch (error) {
     console.error('[GET /master-employees/sync-status] error:', error);
     res.status(500).json({ error: 'Failed to retrieve HRMS sync status.' });

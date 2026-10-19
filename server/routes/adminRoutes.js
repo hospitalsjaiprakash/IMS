@@ -51,11 +51,17 @@ router.post('/users/:id/toggle-status', authenticate, authorize('system_admin'),
 router.get('/management-members', authenticate, authorize('system_admin'), adminController.getManagementMembers);
 router.delete('/management-members/:id', authenticate, authorize('system_admin'), adminController.removeManagementRole);
 
-// Department Mapping & Management
+// Department Mapping & Reviewers
 router.post('/departments', authenticate, authorize('system_admin'), adminController.createDepartment);
 router.delete('/departments/:id', authenticate, authorize('system_admin'), adminController.deleteDepartment);
 router.post('/map-department-leader', authenticate, authorize('system_admin'), adminController.mapDepartmentLeader);
 router.post('/remove-department-leader', authenticate, authorize('system_admin'), adminController.removeDepartmentLeader);
+router.get('/department-reviewers', authenticate, authorize('system_admin'), adminController.getDepartmentReviewers);
+router.post('/department-reviewers', authenticate, authorize('system_admin'), adminController.assignDepartmentReviewer);
+router.delete('/department-reviewers/:id', authenticate, authorize('system_admin'), adminController.removeDepartmentReviewer);
+
+// HRMS Webhook Logs
+router.get('/webhooks/logs', authenticate, authorize('system_admin'), adminController.getWebhookLogs);
 
 // System Health & Master Data
 router.get('/system-admins', authenticate, authorize('system_admin'), adminController.getSystemAdmins);

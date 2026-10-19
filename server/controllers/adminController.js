@@ -1104,3 +1104,180 @@ exports.downloadBroadcastAttachment = async (req, res) => {
   }
 };
 
+// =============================================
+// SENIOR STAFF MULTI-DEPARTMENT REVIEWERS
+// =============================================
+exports.getDepartmentReviewers = async (req, res) => {
+  try {
+    const reviewersQuery = `
+      SELECT 
+        dr.id,
+        dr.user_id,
+        dr.department_id,
+        dr.reviewer_role,
+        dr.is_active,
+        dr.created_at,
+        u.employee_id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.designation,
+        d.name as department_name
+      FROM department_reviewers dr
+      JOIN users u ON dr.user_id = u.id
+      JOIN departments d ON dr.department_id = d.id
+      WHERE dr.is_active = true
+      ORDER BY u.full_name ASC, d.name ASC
+    `;
+    const result = await query(reviewersQuery);
+
+    // Group by user for clean UI presentation
+    const grouped = {};
+    for (const row of result.rows) {
+      if (!grouped[row.user_id]) {
+        grouped[row.user_id] = {
+          userId: row.user_id,
+          employeeId: row.employee_id,
+          fullName: row.full_name,
+          email: row.email,
+          phone: row.phone,
+          designation: row.designation,
+          reviewerRole: row.reviewer_role,
+          departments: []
+        };
+      }
+      grouped[row.user_id].departments.push({
+        id: row.id,
+        departmentId: row.department_id,
+        departmentName: row.department_name,
+        reviewerRole: row.reviewer_role,
+        createdAt: row.created_at
+      });
+    }
+
+    res.json({
+      success: true,
+      reviewers: Object.values(grouped),
+      rawAssignments: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching department reviewers:', error);
+    res.status(500).json({ error: 'Failed to retrieve department reviewers.' });
+  }
+};
+
+exports.assignDepartmentReviewer = async (req, res) => {
+  try {
+    const { employeeId, departmentIds, reviewerRole = 'HOD' } = req.body;
+    if (!employeeId || !departmentIds || !Array.isArray(departmentIds) || departmentIds.length === 0) {
+      return res.status(400).json({ error: 'Employee ID and at least one department ID are required.' });
+    }
+
+    const user = await getOrCreateUserFromMaster(employeeId, 'employee');
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found in hospital directory.' });
+    }
+
+    // Role promotion: if user is currently basic employee, elevate role to reviewer
+    if (user.role === 'employee') {
+      const activeRole = reviewerRole === 'Assistant COO' ? 'asst_coo' : 'hod';
+      await query(`UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`, [activeRole, user.id]);
+    }
+
+    const assigned = [];
+    for (const deptId of departmentIds) {
+      const insRes = await query(`
+        INSERT INTO department_reviewers (user_id, department_id, reviewer_role, is_active, assigned_by, updated_at)
+        VALUES ($1, $2, $3, true, $4, NOW())
+        ON CONFLICT (user_id, department_id, reviewer_role) 
+        DO UPDATE SET is_active = true, updated_at = NOW()
+        RETURNING id, department_id
+      `, [user.id, deptId, reviewerRole, req.user.id]);
+
+      // Backwards compatibility sync for primary department
+      await query(`
+        UPDATE departments 
+        SET assigned_user_id = COALESCE(assigned_user_id, $1),
+            hod_user_id = COALESCE(hod_user_id, $1)
+        WHERE id = $2
+      `, [user.id, deptId]).catch(() => {});
+
+      assigned.push(insRes.rows[0]);
+    }
+
+    await auditLog(req.user.id, 'DEPARTMENT_REVIEWER_MAPPED', null, {
+      userId: user.id,
+      employeeId: user.employee_id,
+      fullName: user.full_name,
+      departmentIds,
+      reviewerRole
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: `Successfully mapped ${user.full_name} (${user.employee_id}) as ${reviewerRole} across ${assigned.length} department(s).`,
+      assigned
+    });
+  } catch (error) {
+    console.error('Error assigning department reviewer:', error);
+    res.status(500).json({ error: 'Failed to assign department reviewer.' });
+  }
+};
+
+exports.removeDepartmentReviewer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { departmentId, userId } = req.query;
+
+    if (id && id !== 'by-dept') {
+      await query(`DELETE FROM department_reviewers WHERE id = $1`, [id]);
+    } else if (userId && departmentId) {
+      await query(`DELETE FROM department_reviewers WHERE user_id = $1 AND department_id = $2`, [userId, departmentId]);
+    } else {
+      return res.status(400).json({ error: 'Mapping ID or both userId and departmentId required.' });
+    }
+
+    await auditLog(req.user.id, 'DEPARTMENT_REVIEWER_REMOVED', null, { id, userId, departmentId }, req.ip);
+
+    res.json({ success: true, message: 'Department reviewer mapping removed.' });
+  } catch (error) {
+    console.error('Error removing department reviewer:', error);
+    res.status(500).json({ error: 'Failed to remove department reviewer mapping.' });
+  }
+};
+
+// =============================================
+// HRMS WEBHOOK INGESTION LOGS
+// =============================================
+exports.getWebhookLogs = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit || '50', 10);
+    const offset = parseInt(req.query.offset || '0', 10);
+
+    const result = await query(`
+      SELECT id, event_id, event_type, signature_verified, status, error_message, processed_at, received_at,
+             payload->'events'->0->>'occurredAt' as occurred_at,
+             payload->'events'->0->'data'->>'employeeCode' as employee_code,
+             payload->'events'->0->'data'->>'fullName' as full_name
+      FROM hrms_webhook_events
+      ORDER BY received_at DESC
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+
+    const countRes = await query(`SELECT COUNT(*) as total FROM hrms_webhook_events`);
+    const total = parseInt(countRes.rows[0]?.total || '0', 10);
+
+    res.json({
+      success: true,
+      logs: result.rows,
+      total,
+      limit,
+      offset
+    });
+  } catch (error) {
+    console.error('Error fetching webhook logs:', error);
+    res.status(500).json({ error: 'Failed to retrieve webhook logs.' });
+  }
+};
+
+
