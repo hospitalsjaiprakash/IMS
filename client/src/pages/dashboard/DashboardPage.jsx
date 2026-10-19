@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { incidentsApi, trainersApi } from '../../api';
+import { incidentsApi, trainersApi, teamsApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import { StatCard, EmptyState, Modal, Tabs, SkeletonCard, InsightSummary, StatusBadge, SLABadge } from '../../components/ui';
 import { GlassTooltip } from '../../components/ui/GlassTooltip';
@@ -9,7 +9,7 @@ import { motion } from 'framer-motion';
 import {
   FileText, AlertTriangle, CheckCircle, Clock, TrendingUp,
   FilePlus, ClipboardList, BarChart3, Eye, Inbox, UserCheck, Timer, XOctagon, LayoutDashboard,
-  Activity, Paperclip, Flame, ShieldAlert, ChevronRight, GraduationCap
+  Activity, Paperclip, Flame, ShieldAlert, ChevronRight, GraduationCap, Layers, Building
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -27,6 +27,13 @@ export default function DashboardPage() {
   const tabParam = searchParams.get('tab');
   const [selectedInc, setSelectedInc] = useState(null);
   const [activeView, setActiveView] = useState(user?.role === 'hod' ? 'hod' : 'personal');
+  const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('all');
+
+  const { data: assignedDepartments = [] } = useQuery({
+    queryKey: ['my-assigned-departments'],
+    queryFn: () => teamsApi.getAssignedDepartments().then(r => r.data?.departments || []),
+    enabled: ['hod', 'asst_coo', 'coo', 'employee'].includes(user?.role),
+  });
 
   // Always call hooks before any conditional rendering
   const { data: stats, isLoading } = useQuery({
@@ -181,6 +188,25 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          {user?.role === 'hod' && assignedDepartments.length > 1 && activeView === 'hod' && (
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+              <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 whitespace-nowrap">
+                <Layers size={14} className="text-teal-600" />
+                <span>Review Dept:</span>
+              </span>
+              <select
+                value={selectedDepartmentFilter}
+                onChange={(e) => setSelectedDepartmentFilter(e.target.value)}
+                className="text-xs font-bold text-slate-800 bg-transparent border-none focus:ring-0 cursor-pointer pr-4 py-0.5"
+              >
+                <option value="all">All Departments ({assignedDepartments.length})</option>
+                {assignedDepartments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name} ({d.review_role || 'Reviewer'})</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {user?.role === 'hod' && (
             <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto shadow-inner border border-slate-200">
               <button
@@ -206,6 +232,49 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Multi-Department Reviewer Authorization Banner */}
+      {user?.role === 'hod' && activeView === 'hod' && assignedDepartments.length > 1 && (
+        <div className="bg-gradient-to-r from-teal-50/90 to-cyan-50/90 border border-teal-200/80 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs text-teal-950 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
+              <Layers size={18} />
+            </div>
+            <div>
+              <div className="font-black text-sm text-teal-900">Multi-Department Reviewer Authorization</div>
+              <div className="text-teal-700 mt-0.5">
+                You are authorized to review and submit feedback across <strong>{assignedDepartments.length} hospital departments</strong>.
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-teal-800 mr-1">Filter View:</span>
+            <button
+              onClick={() => setSelectedDepartmentFilter('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                selectedDepartmentFilter === 'all'
+                  ? 'bg-teal-700 text-white border-teal-700 shadow-xs'
+                  : 'bg-white/80 text-teal-800 border-teal-200/80 hover:bg-white'
+              }`}
+            >
+              All ({assignedDepartments.length})
+            </button>
+            {assignedDepartments.map(dept => (
+              <button
+                key={dept.id}
+                onClick={() => setSelectedDepartmentFilter(String(dept.id))}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                  selectedDepartmentFilter === String(dept.id)
+                    ? 'bg-teal-700 text-white border-teal-700 shadow-xs'
+                    : 'bg-white/80 text-teal-800 border-teal-200/80 hover:bg-white'
+                }`}
+              >
+                {dept.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* OVERVIEW SECTION */}
       <div className="space-y-6">

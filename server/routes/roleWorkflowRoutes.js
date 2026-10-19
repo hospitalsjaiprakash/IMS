@@ -8,6 +8,7 @@ const { setUploadStage, uploadIncidentAttachments } = require('../middleware/upl
 
 // ─── HOD ALIASES ─────────────────────────────────────
 router.get('/hod/dashboard', authenticate, authorize('hod'), incidentsController.getDashboardStats);
+router.get('/hod/assigned-departments', authenticate, incidentsController.getAssignedDepartments);
 router.get('/hod/team', authenticate, authorize('hod'), incidentsController.getHodTeam);
 router.get('/hod/incidents', authenticate, authorize('hod'), incidentsController.getIncidents);
 router.get('/hod/incidents/export', authenticate, authorize('hod'), incidentsController.exportIncidents);

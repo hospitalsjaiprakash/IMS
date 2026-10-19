@@ -78,6 +78,7 @@ export const pingServer = () =>
 // ── Teams ─────────────────────────────────────────
 export const teamsApi = {
   getHodTeam: () => api.get('/hod/team'),
+  getAssignedDepartments: () => api.get('/hod/assigned-departments'),
 };
 
 // ── Incidents ─────────────────────────────────────
@@ -161,6 +162,10 @@ export const adminApi = {
   removeManagement: (id) => api.delete(`/admin/management-members/${id}`),
   mapDepartmentLeader: (data) => api.post('/admin/map-department-leader', data),
   removeDepartmentLeader: (data) => api.post('/admin/remove-department-leader', data),
+  getDepartmentReviewers: (params) => api.get('/admin/department-reviewers', { params }),
+  assignDepartmentReviewer: (data) => api.post('/admin/department-reviewers', data),
+  removeDepartmentReviewer: (id, params) => api.delete(`/admin/department-reviewers/${id}`, { params }),
+  getWebhookLogs: (params) => api.get('/admin/webhooks/logs', { params }),
   createDepartment: (data) => api.post('/admin/departments', data),
   deleteDepartment: (id) => api.delete(`/admin/departments/${id}`),
   getSystemAdmins: () => api.get('/admin/system-admins'),
@@ -181,7 +186,7 @@ export const masterEmployeesApi = {
   list: (params) => api.get('/master-employees', { params }),
   add: (data) => api.post('/master-employees', data),
   bulkAdd: (employees) => api.post('/master-employees/bulk', { employees }),
-  syncHrms: () => api.post('/master-employees/sync-hrms'),
+  syncHrms: (type = 'full') => api.post('/master-employees/sync-hrms', { type }),
   getSyncStatus: () => api.get('/master-employees/sync-status'),
 };
 

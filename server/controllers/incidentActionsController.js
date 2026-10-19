@@ -140,7 +140,14 @@ exports.requestRedirect = async (req, res) => {
     }
 
     // Get assigned department for user
-    const deptRes = await client.query('SELECT name FROM departments WHERE assigned_user_id = $1 OR (assigned_user_id IS NULL AND hod_user_id = $1) OR LOWER(name) = LOWER($2)', [req.user.id, (req.user.department || '').trim()]);
+    const deptRes = await client.query(`
+      SELECT d.name FROM departments d
+      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
+      WHERE d.assigned_user_id = $1 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1)
+         OR dr.id IS NOT NULL
+         OR (LOWER(d.name) = LOWER($2) AND $2 != '')
+      LIMIT 1
+    `, [req.user.id, (req.user.department || '').trim()]);
     const deptName = deptRes.rows[0]?.name || req.user.department || 'Unknown';
 
     await client.query(
@@ -452,11 +459,16 @@ exports.verifyEmployeeTraining = async (req, res) => {
     const emp = empCheck.rows[0];
 
     // Verify HOD access
-    if (req.user.role === 'hod') {
-      const deptRes = await client.query('SELECT * FROM departments WHERE id = $1', [emp.department_id]);
+    // Verify HOD / reviewer access
+    if (req.user.role === 'hod' || req.user.role === 'employee') {
+      const deptRes = await client.query(`
+        SELECT d.*, dr.id as reviewer_mapping_id FROM departments d
+        LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true
+        WHERE d.id = $1
+      `, [emp.department_id, req.user.id]);
       if (deptRes.rows.length) {
         const d = deptRes.rows[0];
-        if (d.assigned_user_id !== req.user.id && d.hod_user_id !== req.user.id) {
+        if (d.assigned_user_id !== req.user.id && d.hod_user_id !== req.user.id && !d.reviewer_mapping_id) {
            await client.query('ROLLBACK');
            return res.status(403).json({ error: 'You are not the designated feedback staff for this employee’s department.' });
         }

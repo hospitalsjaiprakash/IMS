@@ -101,14 +101,18 @@ exports.submitHodFeedback = async (req, res) => {
 
     // Get department(s) where current user is the assigned feedback staff
     const deptResult = await client.query(
-      'SELECT id, name FROM departments WHERE assigned_user_id = $1 OR (assigned_user_id IS NULL AND hod_user_id = $1)',
+      `SELECT DISTINCT d.id, d.name FROM departments d
+       LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
+       WHERE d.assigned_user_id = $1 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1) OR dr.id IS NOT NULL`,
       [req.user.id]
     );
 
     const userDeptIds = deptResult.rows.map(d => d.id);
     let deptId = null;
 
-    if (userDeptIds.length > 0) {
+    if (req.body.department_id && userDeptIds.includes(parseInt(req.body.department_id, 10))) {
+      deptId = parseInt(req.body.department_id, 10);
+    } else if (userDeptIds.length > 0) {
       // Check if any of HOD's departments is targeted by this incident
       const targetCheck = await client.query(
         'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = ANY($2)',
@@ -177,6 +181,7 @@ exports.submitHodFeedback = async (req, res) => {
             AND (
               f.department_id = d.id 
               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
+              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
             )
         )
     `, [id]);
@@ -361,6 +366,7 @@ exports.submitImcFeedback = async (req, res) => {
             AND (
               f.department_id = d.id 
               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
+              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
             )
         )
     `, [id]);
@@ -1540,6 +1546,7 @@ exports.assignInvestigator = async (req, res) => {
             AND (
               f.department_id = d.id 
               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
+              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
             )
         )
     `, [id]);

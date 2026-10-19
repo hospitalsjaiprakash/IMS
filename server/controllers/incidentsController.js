@@ -239,8 +239,9 @@ exports.createIncident = async (req, res) => {
     // Notify assigned department feedback staff (in-app + email)
     const hodResult = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-       JOIN departments d ON (d.assigned_user_id = u.id OR (d.assigned_user_id IS NULL AND d.hod_user_id = u.id))
-       WHERE d.id = ANY($1)`,
+       LEFT JOIN departments d ON (d.assigned_user_id = u.id OR (d.assigned_user_id IS NULL AND d.hod_user_id = u.id))
+       LEFT JOIN department_reviewers dr ON (dr.user_id = u.id AND dr.is_active = true)
+       WHERE (d.id = ANY($1) OR dr.department_id = ANY($1)) AND u.is_active = true`,
       [departmentIds]
     );
     for (const hod of hodResult.rows) {
@@ -322,6 +323,7 @@ exports.getIncidents = async (req, res) => {
           JOIN departments d ON d.id = id2.department_id
           WHERE id2.incident_id = i.id AND (
             d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
+            OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true)
           )
         )
       )`;
@@ -333,6 +335,7 @@ exports.getIncidents = async (req, res) => {
         JOIN departments d ON d.id = id2.department_id
         WHERE id2.incident_id = i.id AND (
           d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
+          OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true)
         )
       )`;
       params.push(userId);
@@ -350,6 +353,7 @@ exports.getIncidents = async (req, res) => {
         WHERE ire.incident_id = i.id AND (
           d.assigned_user_id = $${paramIdx} OR
           d.hod_user_id = $${paramIdx} OR
+          EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true) OR
           (LOWER(d.name) = LOWER($${paramIdx + 1}))
         )
       )`;
@@ -365,6 +369,7 @@ exports.getIncidents = async (req, res) => {
           WHERE tm.id = $${paramIdx} AND (
             d.assigned_user_id = $${paramIdx+1} OR
             d.hod_user_id = $${paramIdx+1} OR
+            EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx+1} AND dr.is_active = true) OR
             LOWER(tm.department) = LOWER($${paramIdx+2})
           )
         )`;
@@ -377,6 +382,7 @@ exports.getIncidents = async (req, res) => {
           WHERE id2.incident_id = i.id AND (
             d.assigned_user_id = $${paramIdx} OR
             d.hod_user_id = $${paramIdx} OR
+            EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true) OR
             (LOWER(d.name) = LOWER($${paramIdx + 1}))
           )
         ) OR i.redirect_requested_by_user_id = $${paramIdx})`;
@@ -670,6 +676,7 @@ exports.getIncident = async (req, res) => {
              JOIN departments d ON d.id = id2.department_id
              WHERE id2.incident_id = i.id AND (
                d.assigned_user_id = $2 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $2)
+               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true)
              )
            )
          )`,
@@ -694,6 +701,7 @@ exports.getIncident = async (req, res) => {
                OR f.author_id = d.hod_user_id 
                OR f.author_id = d.incharge_user_id 
                OR f.author_id = d.asst_coo_user_id
+               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
                OR LOWER(u.department) = LOWER(d.name)
              )
          ) AS has_feedback
@@ -722,9 +730,16 @@ exports.getIncident = async (req, res) => {
     // Check if current user is assigned to a department that has already submitted feedback
     let userHodDeptSubmitted = false;
     const userDept = (req.user.department || '').trim().toLowerCase();
+    const reviewerDeptsRes = await query(
+      `SELECT department_id FROM department_reviewers WHERE user_id = $1 AND is_active = true`,
+      [userId]
+    );
+    const reviewerDeptIds = new Set(reviewerDeptsRes.rows.map(r => r.department_id));
+
     const myDept = depts.rows.find(d => 
       d.assigned_user_id === userId ||
       d.hod_user_id === userId || 
+      reviewerDeptIds.has(d.id) ||
       (d.name && userDept && d.name.toLowerCase() === userDept)
     );
     if (myDept) {
@@ -838,6 +853,7 @@ exports.getIncident = async (req, res) => {
        JOIN departments d ON d.id = id2.department_id
        WHERE id2.incident_id = $1 AND (
          d.assigned_user_id = $2 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $2)
+         OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true)
        )`,
        [incident.id, userId]
     );
@@ -972,9 +988,11 @@ exports.getDashboardStats = async (req, res) => {
         SELECT 1 FROM incident_departments id2
         JOIN departments d ON d.id = id2.department_id
         WHERE id2.incident_id = i.id AND (
+          d.assigned_user_id = $1 OR
           d.hod_user_id = $1 OR
           d.incharge_user_id = $1 OR
           d.asst_coo_user_id = $1 OR
+          EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true) OR
           LOWER(d.name) = LOWER($2)
         )
       )`;
@@ -1048,9 +1066,11 @@ exports.getDashboardStats = async (req, res) => {
               SELECT 1 FROM incident_departments id2
               JOIN departments d ON d.id = id2.department_id
               WHERE id2.incident_id = i.id AND (
+                d.assigned_user_id = $1 OR
                 d.hod_user_id = $1 OR
                 d.incharge_user_id = $1 OR
                 d.asst_coo_user_id = $1 OR
+                EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true) OR
                 (LOWER(d.name) = LOWER($2))
               )
             )
@@ -1150,22 +1170,29 @@ exports.getHodTeam = async (req, res) => {
   try {
     const { id: userId, department } = req.user;
     
-    let deptName = department;
-    const deptCheck = await query('SELECT name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1', [userId]);
+    let deptNames = [];
+    const deptCheck = await query(`
+      SELECT DISTINCT d.name FROM departments d
+      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
+      WHERE d.hod_user_id = $1 OR d.assigned_user_id = $1 OR d.incharge_user_id = $1 OR dr.id IS NOT NULL
+    `, [userId]);
+
     if (deptCheck.rows.length > 0) {
-      deptName = deptCheck.rows[0].name;
+      deptNames = deptCheck.rows.map(r => r.name);
+    } else if (department) {
+      deptNames = [department];
     }
 
-    if (!deptName) {
+    if (deptNames.length === 0) {
       return res.status(400).json({ error: 'No department found for this user.' });
     }
 
     const result = await query(
       `SELECT id, employee_id, full_name, email, phone, department, designation, role 
        FROM users 
-       WHERE LOWER(department) = LOWER($1) AND is_active = true
-       ORDER BY full_name`,
-      [deptName]
+       WHERE LOWER(department) = ANY($1) AND is_active = true
+       ORDER BY department, full_name`,
+      [deptNames.map(d => d.toLowerCase())]
     );
 
     res.json(result.rows);
@@ -1174,3 +1201,40 @@ exports.getHodTeam = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch team members.' });
   }
 };
+
+// =============================================
+// GET ASSIGNED DEPARTMENTS FOR REVIEWER / HOD
+// =============================================
+exports.getAssignedDepartments = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userDept = (req.user.department || '').trim();
+
+    const result = await query(`
+      SELECT DISTINCT d.id, d.name,
+             CASE 
+               WHEN dr.reviewer_role IS NOT NULL THEN dr.reviewer_role
+               WHEN d.assigned_user_id = $1 THEN 'Assigned Feedback Staff'
+               WHEN d.hod_user_id = $1 THEN 'HOD'
+               ELSE 'Department Member'
+             END as review_role,
+             COALESCE(dr.is_active, true) as is_active
+      FROM departments d
+      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
+      WHERE dr.user_id = $1
+         OR d.assigned_user_id = $1
+         OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1)
+         OR (LOWER(d.name) = LOWER($2) AND $2 != '')
+      ORDER BY d.name ASC
+    `, [userId, userDept]);
+
+    res.json({
+      success: true,
+      departments: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching assigned departments:', error);
+    res.status(500).json({ error: 'Failed to fetch assigned departments' });
+  }
+};
+
