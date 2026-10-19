@@ -112,6 +112,14 @@ exports.requestRegistrationOtp = async (req, res) => {
     // If user exists in DB (pre-seeded from office portal), validate name match
     if (existing.rows.length > 0) {
       const dbUser = existing.rows[0];
+      const masterCheck = await query('SELECT status FROM master_employees WHERE employee_id = $1', [employeeId.trim()]).catch(() => ({ rows: [] }));
+      if (masterCheck.rows[0]?.status === 'terminated') {
+        return res.status(403).json({
+          error: 'Registration is not permitted. This employee record is marked as terminated.',
+          code: 'EMPLOYEE_TERMINATED'
+        });
+      }
+
       const nameMatch = dbUser.full_name.toLowerCase().includes(fullName.trim().toLowerCase()) ||
                         fullName.trim().toLowerCase().includes(dbUser.full_name.toLowerCase());
       if (!nameMatch) {
@@ -125,11 +133,17 @@ exports.requestRegistrationOtp = async (req, res) => {
       let portalData = null;
       try {
         const masterRes = await query(
-          'SELECT employee_id, name FROM master_employees WHERE employee_id = $1',
+          'SELECT employee_id, name, status FROM master_employees WHERE employee_id = $1',
           [employeeId.trim()]
         );
         if (masterRes.rows.length > 0) {
           portalData = masterRes.rows[0];
+          if (portalData.status === 'terminated') {
+            return res.status(403).json({
+              error: 'Registration is not permitted. This employee record is marked as terminated.',
+              code: 'EMPLOYEE_TERMINATED'
+            });
+          }
         }
       } catch (err) {
         console.error('Error fetching from master_employees:', err);
@@ -365,6 +379,15 @@ exports.login = async (req, res) => {
       return res.status(401).json({
         error: 'Account deactivated. Please contact Digital Communications department.',
         code: 'ACCOUNT_DEACTIVATED'
+      });
+    }
+
+    // Lifecycle check: block login if employee status is marked as terminated in master records
+    const masterCheck = await query('SELECT status FROM master_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
+    if (masterCheck.rows[0]?.status === 'terminated') {
+      return res.status(403).json({
+        error: 'Access denied. Your employment status is recorded as terminated.',
+        code: 'EMPLOYEE_TERMINATED'
       });
     }
 
