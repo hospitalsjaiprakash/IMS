@@ -184,8 +184,6 @@ export const attachmentsApi = {
 // ── Master Employees & HRMS Sync ───────────────────
 export const masterEmployeesApi = {
   list: (params) => api.get('/master-employees', { params }),
-  add: (data) => api.post('/master-employees', data),
-  bulkAdd: (employees) => api.post('/master-employees/bulk', { employees }),
   syncHrms: (type = 'full') => api.post('/master-employees/sync-hrms', { type }),
   getSyncStatus: () => api.get('/master-employees/sync-status'),
 };

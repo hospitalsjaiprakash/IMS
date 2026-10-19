@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, metaApi, masterEmployeesApi } from '../../api';
 import api from '../../api';
@@ -6,13 +6,11 @@ import { Spinner, Modal, Alert, Pagination } from '../../components/ui';
 import {
   Search, Plus, ShieldCheck, UserMinus, AlertTriangle, ShieldX,
   Users, Award, Building2, CheckCircle2, Edit3, ShieldAlert,
-  UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, Upload, Copy, FileUp, ArrowLeft,
-  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw, Trash2, UserX,
-  Layers, Radio, CheckSquare, Square, Activity, Code, Database, Eye
+  UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, ArrowLeft,
+  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw, Trash2, UserX
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import * as XLSX from 'xlsx';
 import { Link } from 'react-router-dom';
 import { getStatusClass, getStatusLabel, formatDate, formatDateTime } from '../../utils/helpers';
 
@@ -59,18 +57,6 @@ export default function AdminUsersPage() {
   const [selectedProfileUser, setSelectedProfileUser] = useState(null);
   const [profileViewTab, setProfileViewTab] = useState('personal'); // 'personal' | 'department'
 
-  // Multi-Dept Reviewer States
-  const [showAssignReviewerModal, setShowAssignReviewerModal] = useState(false);
-  const [reviewerForm, setReviewerForm] = useState({ employeeId: '', reviewerRole: 'Senior Staff Reviewer', departmentIds: [] });
-  const [reviewerStaffSearch, setReviewerStaffSearch] = useState('');
-  const [reviewerDeptSearch, setReviewerDeptSearch] = useState('');
-  const [deptReviewerToRemove, setDeptReviewerToRemove] = useState(null);
-  const [showRemoveReviewerModal, setShowRemoveReviewerModal] = useState(false);
-
-  // HRMS & Webhook States
-  const [webhookPage, setWebhookPage] = useState(1);
-  const [selectedWebhookPayload, setSelectedWebhookPayload] = useState(null);
-
   // Queries
   const { data: usersData, isLoading: isLoadingUsers } = useQuery({
     queryKey: ['admin-users', search, roleFilter, page],
@@ -82,12 +68,6 @@ export default function AdminUsersPage() {
     queryKey: ['master-employees'],
     queryFn: () => api.get('/master-employees', { params: { all: 'true' } }).then(r => r.data?.data || (Array.isArray(r.data) ? r.data : [])),
   });
-
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef(null);
-  const [addForm, setAddForm] = useState({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
 
   const { data: departments = [], isLoading: isLoadingDepts } = useQuery({
     queryKey: ['departments'],
@@ -108,129 +88,14 @@ export default function AdminUsersPage() {
     queryKey: ['management-members'],
     queryFn: () => adminApi.getManagementMembers().then(r => r.data),
   });
+
   const { data: userProfileData, isLoading: isLoadingProfile } = useQuery({
     queryKey: ['user-profile', selectedProfileUser?.id],
     queryFn: () => adminApi.getUserProfile(selectedProfileUser.id).then(r => r.data),
     enabled: !!selectedProfileUser?.id,
   });
 
-  // Reviewers Query
-  const { data: departmentReviewers = [], isLoading: isLoadingReviewers } = useQuery({
-    queryKey: ['department-reviewers'],
-    queryFn: () => adminApi.getDepartmentReviewers().then(r => r.data?.reviewers || []),
-    enabled: activeCard === 'reviewers',
-  });
-
-  // HRMS Sync Status Query
-  const { data: hrmsSyncData, isLoading: isLoadingSyncStatus, refetch: refetchSyncStatus } = useQuery({
-    queryKey: ['hrms-sync-status'],
-    queryFn: () => masterEmployeesApi.getSyncStatus().then(r => r.data?.data || {}),
-    enabled: activeCard === 'hrms',
-  });
-
-  // HRMS Webhook Logs Query
-  const { data: webhookLogsData, isLoading: isLoadingWebhookLogs } = useQuery({
-    queryKey: ['hrms-webhook-logs', webhookPage],
-    queryFn: () => adminApi.getWebhookLogs({ limit: 15, offset: (webhookPage - 1) * 15 }).then(r => r.data),
-    enabled: activeCard === 'hrms',
-  });
-
-  // Reviewer & HRMS Mutations
-  const assignReviewerMutation = useMutation({
-    mutationFn: (data) => adminApi.assignDepartmentReviewer(data),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['department-reviewers'] });
-      qc.invalidateQueries({ queryKey: ['departments'] });
-      toast.success(res.data?.message || 'Reviewer mapped successfully');
-      setShowAssignReviewerModal(false);
-      setReviewerForm({ employeeId: '', reviewerRole: 'Senior Staff Reviewer', departmentIds: [] });
-      setReviewerStaffSearch('');
-      setReviewerDeptSearch('');
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.error || 'Failed to assign reviewer');
-    }
-  });
-
-  const removeReviewerMutation = useMutation({
-    mutationFn: ({ id, userId, departmentId }) => adminApi.removeDepartmentReviewer(id, { userId, departmentId }),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['department-reviewers'] });
-      qc.invalidateQueries({ queryKey: ['departments'] });
-      toast.success(res.data?.message || 'Reviewer mapping removed');
-      setShowRemoveReviewerModal(false);
-      setDeptReviewerToRemove(null);
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.error || 'Failed to remove reviewer mapping');
-    }
-  });
-
-  const syncFullMutation = useMutation({
-    mutationFn: () => masterEmployeesApi.syncHrms('full'),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['master-employees'] });
-      qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
-      qc.invalidateQueries({ queryKey: ['hrms-webhook-logs'] });
-      toast.success(res.data?.message || 'Full directory sync completed successfully');
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.error || 'HRMS full sync failed');
-    }
-  });
-
-  const syncDeltaMutation = useMutation({
-    mutationFn: () => masterEmployeesApi.syncHrms('delta'),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['master-employees'] });
-      qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
-      qc.invalidateQueries({ queryKey: ['hrms-webhook-logs'] });
-      toast.success(res.data?.message || 'Delta sync completed successfully');
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.error || 'HRMS delta sync failed');
-    }
-  });
-
-  const groupedReviewers = useMemo(() => {
-    const map = new Map();
-    (departmentReviewers || []).forEach(r => {
-      if (!map.has(r.user_id)) {
-        map.set(r.user_id, {
-          userId: r.user_id,
-          employeeId: r.employee_id,
-          fullName: r.full_name,
-          designation: r.designation,
-          email: r.email,
-          phone: r.phone,
-          reviewerRole: r.reviewer_role,
-          departments: []
-        });
-      }
-      map.get(r.user_id).departments.push({
-        mappingId: r.id,
-        departmentId: r.department_id,
-        departmentName: r.department_name,
-        assignedAt: r.assigned_at,
-        isActive: r.is_active
-      });
-    });
-    return Array.from(map.values());
-  }, [departmentReviewers]);
-
-  const filteredReviewers = useMemo(() => {
-    if (!tabSearch) return groupedReviewers;
-    const q = tabSearch.toLowerCase();
-    return groupedReviewers.filter(r => 
-      r.fullName?.toLowerCase().includes(q) ||
-      r.employeeId?.toLowerCase().includes(q) ||
-      r.designation?.toLowerCase().includes(q) ||
-      r.reviewerRole?.toLowerCase().includes(q) ||
-      r.departments.some(d => d.departmentName?.toLowerCase().includes(q))
-    );
-  }, [groupedReviewers, tabSearch]);
-
-  // Mutations
+  // Role Assignment Mutation
   const assignMutation = useMutation({
     mutationFn: (data) => adminApi.assignRole(data),
     onSuccess: () => {
@@ -246,112 +111,23 @@ export default function AdminUsersPage() {
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to update user role'),
   });
 
-  const addMutation = useMutation({
-    mutationFn: (data) => api.post('/master-employees', data),
-    onSuccess: () => {
-      toast.success('Employee added to Directory');
-      qc.invalidateQueries({ queryKey: ['master-employees'] });
-      setIsAddModalOpen(false);
-      setAddForm({ employeeId: '', name: '', department: '', designation: '', phone: '', email: '' });
-    },
-    onError: (err) => toast.error(err.response?.data?.error || 'Failed to add employee')
-  });
-
-  const bulkAddMutation = useMutation({
-    mutationFn: (employees) => api.post('/master-employees/bulk', { employees }),
-    onSuccess: (res) => {
-      const msgs = [];
-      if (res.data.alreadyExists && res.data.alreadyExists.length > 0) {
-        msgs.push(`Skipped existing: ${res.data.alreadyExists.join(', ')}`);
-      }
-      if (res.data.invalidData && res.data.invalidData.length > 0) {
-        msgs.push(`Skipped invalid formats: ${res.data.invalidData.join(', ')}`);
-      }
-      
-      if (msgs.length > 0) {
-        toast.error(`Upload complete with skips.\n${msgs.join('\n')}`, { duration: 8000 });
-      } else {
-        toast.success(res.data.message || 'Bulk upload successful');
-      }
-      qc.invalidateQueries({ queryKey: ['master-employees'] });
-    },
-    onError: (err) => toast.error(err.response?.data?.error || 'Failed to process upload')
-  });
-
   const { data: syncStatusData } = useQuery({
     queryKey: ['hrms-sync-status'],
-    queryFn: () => masterEmployeesApi.getSyncStatus().then(r => r.data.data),
+    queryFn: () => masterEmployeesApi.getSyncStatus().then(r => r.data?.data || {}),
   });
 
   const syncHrmsMutation = useMutation({
     mutationFn: () => masterEmployeesApi.syncHrms(),
     onSuccess: (res) => {
-      toast.success(res.data.message || 'HRMS Google Sheet synchronized successfully!');
+      toast.success(res.data?.message || 'HRMS directory synchronized successfully!');
       qc.invalidateQueries({ queryKey: ['master-employees'] });
       qc.invalidateQueries({ queryKey: ['admin-users'] });
       qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
     },
     onError: (err) => {
-      toast.error(err.response?.data?.error || 'Failed to synchronize with HRMS sheet');
+      toast.error(err.response?.data?.error || 'Failed to synchronize with HRMS API');
     }
   });
-
-  const handleFileUpload = (e) => {
-
-    e.preventDefault();
-    const file = e.target?.files?.[0] || e.dataTransfer?.files?.[0];
-    if (!file) return;
-
-    const validExts = ['csv', 'xlsx', 'xls'];
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (!validExts.includes(ext)) {
-      toast.error('Only CSV or Excel files are allowed.');
-      e.target.value = null;
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const bstr = evt.target.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws);
-        
-        if (data.length === 0) {
-          toast.error("Excel sheet is empty.");
-          return;
-        }
-
-        const requiredHeaders = ['employee name', 'employee id', 'designation', 'department', 'mobile number', 'email'];
-        const actualHeaders = Object.keys(data[0]).map(k => k.toLowerCase().trim());
-        
-        const hasAll = requiredHeaders.every(h => actualHeaders.includes(h));
-        if (!hasAll) {
-          toast.error("This excel sheet is not complete show read the congiguartion first then upload exact data");
-          return;
-        }
-
-        const mappedEmployees = data.map(row => {
-          const getVal = (key) => row[Object.keys(row).find(k => k.toLowerCase().trim() === key)] || '';
-          return {
-            employeeId: getVal('employee id'),
-            name: getVal('employee name'),
-            department: getVal('department'),
-            designation: getVal('designation'),
-            phone: getVal('mobile number'),
-            email: getVal('email')
-          };
-        }).filter(e => e.employeeId && e.name);
-
-        if (mappedEmployees.length === 0) return toast.error("Could not parse employees. Data might be empty.");
-        bulkAddMutation.mutate(mappedEmployees);
-        setShowBulkUploadModal(false);
-      } catch (err) { toast.error('Error parsing Excel file'); }
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = null;
-  };
 
   const removeMutation = useMutation({
     mutationFn: (target) => {
@@ -699,13 +475,6 @@ export default function AdminUsersPage() {
         {/* Action Buttons */}
         {activeCard === 'employee' && (
           <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
-            <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
-            <button onClick={() => setShowBulkUploadModal(true)} disabled={bulkAddMutation.isPending} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
-              {bulkAddMutation.isPending ? <Spinner size={14} /> : <Upload size={14} />} Bulk Upload
-            </button>
-            <button onClick={() => setIsAddModalOpen(true)} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2">
-              <Plus size={14} /> Add Employee
-            </button>
             <button
               onClick={() => syncHrmsMutation.mutate()}
               disabled={syncHrmsMutation.isPending}
@@ -2134,121 +1903,6 @@ export default function AdminUsersPage() {
             </div>
           )}
         </div>
-      </Modal>
-
-      {/* Bulk Upload Instructions Modal */}
-      <Modal open={showBulkUploadModal} onClose={() => setShowBulkUploadModal(false)} title="Bulk Upload Employees">
-        <div className="space-y-4">
-          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-black text-blue-900 flex items-center gap-2">
-                <Upload size={16} /> Data Formatting Guide
-              </h3>
-              <button 
-                onClick={() => {
-                  navigator.clipboard.writeText("Employee Name\tEmployee ID\tDesignation\tDepartment\tMobile Number\tEmail");
-                  toast.success("Headers copied to clipboard!");
-                }}
-                className="text-xs flex items-center gap-1.5 font-bold bg-white text-blue-600 px-2.5 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-all shadow-sm"
-              >
-                <Copy size={14} /> Copy Headers
-              </button>
-            </div>
-            <p className="text-xs text-blue-800 mb-3 leading-relaxed">
-              Please ensure your CSV or Excel file contains the exact headers listed below (case-insensitive).
-            </p>
-            <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-blue-900">
-              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Employee Name
-              </div>
-              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Employee ID
-              </div>
-              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Designation
-              </div>
-              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Department
-              </div>
-              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Mobile Number
-              </div>
-              <div className="bg-white/60 p-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Email
-              </div>
-            </div>
-          </div>
-          
-          <div 
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-            onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
-            onDrop={(e) => { 
-              e.preventDefault(); 
-              setIsDragging(false); 
-              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                handleFileUpload(e);
-              }
-            }}
-            onClick={() => fileInputRef.current.click()}
-            className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all ${
-              isDragging ? 'border-blue-500 bg-blue-50 scale-[0.98]' : 'border-slate-300 hover:border-blue-400 bg-slate-50 hover:bg-slate-100/50'
-            }`}
-          >
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-colors ${isDragging ? 'bg-blue-200 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
-              <FileUp size={24} />
-            </div>
-            <p className="text-sm font-bold text-slate-700 mb-1">
-              {isDragging ? 'Drop your Excel file here' : 'Click or drag file to this area to upload'}
-            </p>
-            <p className="text-xs text-slate-500">Supports .csv and .xlsx files</p>
-          </div>
-
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowBulkUploadModal(false)} className="px-4 py-2 rounded-lg font-bold text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all">Cancel</button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Add Single Employee Modal */}
-      <Modal open={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Add Staff Member to Master DB">
-        <form onSubmit={(e) => { e.preventDefault(); addMutation.mutate(addForm); }} className="space-y-4 pt-2">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label text-xs font-bold text-slate-700 mb-1 block">Employee ID <span className="text-red-500">*</span></label>
-              <input type="text" pattern="[0-9]{5}" title="Exactly 5 digits" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" required value={addForm.employeeId} onChange={e => setAddForm({...addForm, employeeId: e.target.value})} />
-            </div>
-            <div>
-              <label className="label text-xs font-bold text-slate-700 mb-1 block">Full Name <span className="text-red-500">*</span></label>
-              <input type="text" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" required value={addForm.name} onChange={e => setAddForm({...addForm, name: e.target.value})} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label text-xs font-bold text-slate-700 mb-1 block">Department</label>
-              <input type="text" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.department} onChange={e => setAddForm({...addForm, department: e.target.value})} />
-            </div>
-            <div>
-              <label className="label text-xs font-bold text-slate-700 mb-1 block">Designation</label>
-              <input type="text" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.designation} onChange={e => setAddForm({...addForm, designation: e.target.value})} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label text-xs font-bold text-slate-700 mb-1 block">Email</label>
-              <input type="email" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.email} onChange={e => setAddForm({...addForm, email: e.target.value})} />
-            </div>
-            <div>
-              <label className="label text-xs font-bold text-slate-700 mb-1 block">Mobile Number</label>
-              <input type="text" pattern="[0-9]{10}" title="Exactly 10 digits" className="input bg-slate-50 border-slate-200 rounded-lg text-sm p-2.5 w-full" value={addForm.phone} onChange={e => setAddForm({...addForm, phone: e.target.value})} />
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-            <button type="button" className="px-4 py-2 rounded-lg font-bold text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
-            <button type="submit" className="px-4 py-2 rounded-lg font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white transition-all flex items-center justify-center gap-2" disabled={addMutation.isPending}>
-              {addMutation.isPending ? <Spinner size={14} /> : 'Save Employee'}
-            </button>
-          </div>
-        </form>
       </Modal>
 
         </>

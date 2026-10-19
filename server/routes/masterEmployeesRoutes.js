@@ -6,11 +6,21 @@ const masterEmployeesController = require('../controllers/masterEmployeesControl
 // GET all master employees (accessible to directory users)
 router.get('/', authenticate, authorize('system_admin', 'imc', 'head_management'), masterEmployeesController.getAllEmployees);
 
-// POST add single employee (admin only)
-router.post('/', authenticate, authorize('system_admin'), masterEmployeesController.addEmployee);
+// Manual employee creation and bulk upload are disabled:
+// OfficePortal HRMS is the Single Source of Truth for all employee records.
+router.post('/', authenticate, authorize('system_admin'), (req, res) => {
+  res.status(405).json({
+    error: 'Manual employee creation is disabled. Employee records are synchronized directly from OfficePortal HRMS.',
+    code: 'HRMS_MANAGED_READ_ONLY'
+  });
+});
 
-// POST bulk add employees (admin only)
-router.post('/bulk', authenticate, authorize('system_admin'), masterEmployeesController.bulkAddEmployees);
+router.post('/bulk', authenticate, authorize('system_admin'), (req, res) => {
+  res.status(405).json({
+    error: 'Bulk employee upload is disabled. Employee records are synchronized directly from OfficePortal HRMS.',
+    code: 'HRMS_MANAGED_READ_ONLY'
+  });
+});
 
 // POST sync from HRMS Google Sheets API (admin only)
 router.post('/sync-hrms', authenticate, authorize('system_admin'), masterEmployeesController.syncFromHrms);
