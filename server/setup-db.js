@@ -6,7 +6,7 @@
  * Step 2: Runs all migrations as ims_app_user
  */
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').resolve(__dirname, '.env'), override: true });
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');

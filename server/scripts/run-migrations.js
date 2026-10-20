@@ -8,7 +8,7 @@
  *   node scripts/run-migrations.js
  */
 
-require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env'), override: true });
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
@@ -18,21 +18,29 @@ const poolConfig = {
   connectionTimeoutMillis: 10000,
 };
 
-if (process.env.DATABASE_URL) {
+// Priority: If DB_HOST & DB_USER are explicitly defined in .env, use them.
+// Otherwise fallback to DATABASE_URL (for services like Render / Supabase)
+if (process.env.DB_HOST && process.env.DB_USER) {
+  poolConfig.host = process.env.DB_HOST;
+  poolConfig.port = parseInt(process.env.DB_PORT || '5432', 10);
+  poolConfig.database = process.env.DB_NAME || 'jaiprakash_ims';
+  poolConfig.user = process.env.DB_USER;
+  poolConfig.password = process.env.DB_PASSWORD;
+
+  if (process.env.DB_HOST.includes('supabase.co')) {
+    poolConfig.ssl = { rejectUnauthorized: false };
+  }
+} else if (process.env.DATABASE_URL) {
   poolConfig.connectionString = process.env.DATABASE_URL;
   if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL.includes('localhost') && !process.env.DATABASE_URL.includes('127.0.0.1')) {
     poolConfig.ssl = { rejectUnauthorized: false };
   }
 } else {
-  poolConfig.host = process.env.DB_HOST || 'localhost';
+  poolConfig.host = process.env.DB_HOST || '127.0.0.1';
   poolConfig.port = parseInt(process.env.DB_PORT || '5432', 10);
   poolConfig.database = process.env.DB_NAME || 'jaiprakash_ims';
   poolConfig.user = process.env.DB_USER || 'ims_app_user';
   poolConfig.password = process.env.DB_PASSWORD;
-
-  if (process.env.DB_HOST && process.env.DB_HOST.includes('supabase.co')) {
-    poolConfig.ssl = { rejectUnauthorized: false };
-  }
 }
 
 const pool = new Pool(poolConfig);
@@ -165,6 +173,11 @@ async function main() {
     console.error(`Migrations directory not found at: ${migrationsDir}`);
     process.exit(1);
   }
+
+  const connTarget = poolConfig.connectionString 
+    ? '(using connection string)' 
+    : `host: ${poolConfig.host}:${poolConfig.port}, user: ${poolConfig.user}, db: ${poolConfig.database}`;
+  console.log(`Connecting to database ${connTarget}...\n`);
 
   const client = await pool.connect();
   try {

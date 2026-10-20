@@ -1,5 +1,6 @@
+const path = require('path');
 const { Pool, types } = require('pg');
-require('dotenv').config();
+require('dotenv').config({ path: path.resolve(__dirname, '../.env'), override: true });
 
 // Fix pg driver treating "timestamp without time zone" as local time
 // OID 1114 is for timestamp without time zone. We append 'Z' to force UTC parsing.
@@ -13,22 +14,30 @@ const poolConfig = {
   connectionTimeoutMillis: 10000,
 };
 
-if (process.env.DATABASE_URL) {
+// Priority: If DB_HOST & DB_USER are explicitly defined in .env, use them.
+// Otherwise fallback to DATABASE_URL (for services like Render / Supabase)
+if (process.env.DB_HOST && process.env.DB_USER) {
+  poolConfig.host = process.env.DB_HOST;
+  poolConfig.port = parseInt(process.env.DB_PORT || '5432', 10);
+  poolConfig.database = process.env.DB_NAME || 'jaiprakash_ims';
+  poolConfig.user = process.env.DB_USER;
+  poolConfig.password = process.env.DB_PASSWORD;
+
+  if (process.env.DB_HOST.includes('supabase.co')) {
+    poolConfig.ssl = { rejectUnauthorized: false };
+  }
+} else if (process.env.DATABASE_URL) {
   poolConfig.connectionString = process.env.DATABASE_URL;
-  // Supabase and Render require SSL for remote connections
-  if (process.env.NODE_ENV === 'production') {
+  // Remote connections requiring SSL
+  if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL.includes('localhost') && !process.env.DATABASE_URL.includes('127.0.0.1')) {
     poolConfig.ssl = { rejectUnauthorized: false };
   }
 } else {
-  poolConfig.host = process.env.DB_HOST;
-  poolConfig.port = process.env.DB_PORT;
-  poolConfig.database = process.env.DB_NAME;
-  poolConfig.user = process.env.DB_USER;
+  poolConfig.host = '127.0.0.1';
+  poolConfig.port = 5432;
+  poolConfig.database = 'jaiprakash_ims';
+  poolConfig.user = 'ims_app_user';
   poolConfig.password = process.env.DB_PASSWORD;
-  
-  if (process.env.DB_HOST && process.env.DB_HOST.includes('supabase.co')) {
-    poolConfig.ssl = { rejectUnauthorized: false };
-  }
 }
 
 const pool = new Pool(poolConfig);
