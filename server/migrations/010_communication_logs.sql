@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS communication_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     recipient_contact VARCHAR(255) NOT NULL,
     type VARCHAR(50) NOT NULL CHECK (type IN ('EMAIL', 'WHATSAPP', 'IN_APP_NOTIFICATION')),
@@ -10,6 +10,6 @@ CREATE TABLE IF NOT EXISTS communication_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_communication_logs_user_id ON communication_logs(user_id);
-CREATE INDEX idx_communication_logs_created_at ON communication_logs(created_at DESC);
-CREATE INDEX idx_communication_logs_type ON communication_logs(type);
+CREATE INDEX IF NOT EXISTS idx_communication_logs_user_id ON communication_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_communication_logs_created_at ON communication_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_communication_logs_type ON communication_logs(type);

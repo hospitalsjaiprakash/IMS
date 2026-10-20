@@ -2,8 +2,9 @@
 -- JPHRC IMS - Migration 006: Password Auth
 -- =============================================
 
--- Add password_hash column to users for employee self-registration
+-- Add password_hash and is_system_admin columns to users
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_system_admin BOOLEAN DEFAULT FALSE;
 
 -- Insert / update NIRMAL NAIK as system_admin with hashed password "1admin"
 -- bcrypt hash of "1admin" with 12 rounds

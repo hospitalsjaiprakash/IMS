@@ -4,7 +4,7 @@
 
 -- 1. Create incident_events table
 CREATE TABLE IF NOT EXISTS incident_events (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   seq BIGSERIAL UNIQUE,
   incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
   event_type VARCHAR(100) NOT NULL,
@@ -46,7 +46,7 @@ ALTER TABLE incident_trainers ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT
 
 -- 5. Disciplinary & advisory letter revision history
 CREATE TABLE IF NOT EXISTS incident_letter_versions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   letter_id UUID NOT NULL REFERENCES incident_letters(id) ON DELETE CASCADE,
   incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
   version_no INT NOT NULL DEFAULT 1,
