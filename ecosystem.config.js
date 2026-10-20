@@ -1,9 +1,11 @@
+const path = require('path');
+
 module.exports = {
   apps: [
     {
       name: 'jphrc-ims-api',
       script: './server/index.js',
-      cwd: '/var/www/jphrc-ims',
+      cwd: __dirname,
       instances: 2,
       exec_mode: 'cluster',
       env: {
@@ -15,8 +17,8 @@ module.exports = {
       },
       watch: false,
       max_memory_restart: '500M',
-      error_file: '/var/log/pm2/jphrc-ims-error.log',
-      out_file: '/var/log/pm2/jphrc-ims-out.log',
+      error_file: path.resolve(__dirname, 'logs/pm2-error.log'),
+      out_file: path.resolve(__dirname, 'logs/pm2-out.log'),
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       restart_delay: 4000,
       max_restarts: 10,

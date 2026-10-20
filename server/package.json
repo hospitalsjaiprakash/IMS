@@ -8,7 +8,8 @@
     "dev": "nodemon index.js",
     "setup-db": "node setup-db.js",
     "seed": "node scripts/seed-mock-data.js",
-    "migrate": "psql $DATABASE_URL -f migrations/001_schema.sql"
+    "migrate": "node scripts/run-migrations.js",
+    "backup:db": "node scripts/backup-db.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",

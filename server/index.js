@@ -13,13 +13,26 @@ const fs = require('fs');
 const { Server } = require('socket.io');
 const http = require('http');
 const AppError = require('./utils/AppError');
-require('./services/cronService'); // Initialize cron jobs
+// Only run cron on instance 0 in PM2 cluster to prevent duplicate execution
+if (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0') {
+  require('./services/cronService'); // Initialize cron jobs
+}
+
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  'https://ims.jaiprakashhospitals.com',
+  'https://jpims.vercel.app',
+  process.env.CLIENT_URL
+].filter(Boolean);
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', 'https://jpims.vercel.app', process.env.CLIENT_URL].filter(Boolean),
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true
   }
@@ -41,7 +54,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', 'https://jpims.vercel.app', process.env.CLIENT_URL].filter(Boolean),
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
@@ -63,22 +76,36 @@ if (!fs.existsSync(uploadDir)) {
 app.use('/uploads', express.static(path.resolve(uploadDir)));
 
 // ─── ROUTES ───────────────────────────────────────
+// Health check handler (verifies DB connection)
+const healthHandler = async (req, res) => {
+  let dbStatus = 'connected';
+  try {
+    const { pool } = require('./config/database');
+    await pool.query('SELECT 1');
+  } catch (err) {
+    dbStatus = `disconnected: ${err.message}`;
+  }
+
+  const isHealthy = dbStatus === 'connected';
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'ok' : 'degraded',
+    service: 'JPHRC IMS API',
+    database: dbStatus,
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    instance: process.env.NODE_APP_INSTANCE || '0'
+  });
+};
+
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
+
 app.use('/webhooks', require('./routes/webhookRoutes'));
 app.use('/api', require('./routes/index'));
 
-// Root route for Render health checks
+// Root route for API ping
 app.get('/', (req, res) => {
   res.status(200).send('IMS API is running!');
-});
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'JPHRC IMS API',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0'
-  });
 });
 
 // Keep-alive ping endpoint (called by client on load to wake up the server)

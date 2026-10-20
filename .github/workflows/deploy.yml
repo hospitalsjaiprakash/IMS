@@ -1,0 +1,64 @@
+name: Deploy to Production VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  test-and-validate:
+    name: Build & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Validate Server Syntax
+        run: |
+          cd server
+          npm ci --prefer-offline || npm install
+          node --check index.js
+
+      - name: Validate Client Build
+        env:
+          VITE_API_URL: https://ims.jaiprakashhospitals.com/api
+        run: |
+          cd client
+          npm ci --prefer-offline || npm install
+          npm run build
+
+  deploy:
+    name: Deploy to VPS
+    needs: test-and-validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          command_timeout: 10m
+          script: |
+            if [ -f "/home/ims/app/deploy.sh" ]; then
+              bash /home/ims/app/deploy.sh
+            else
+              bash /home/ims/deploy.sh
+            fi

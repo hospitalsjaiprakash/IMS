@@ -1,0 +1,29 @@
+# JPHRC IMS - Client Production Apache Configuration
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Proxy Socket.io WebSocket connections
+  RewriteCond %{HTTP:Upgrade} websocket [NC]
+  RewriteCond %{HTTP:Connection} upgrade [NC]
+  RewriteRule ^socket\.io/(.*) ws://127.0.0.1:5000/socket.io/$1 [P,L]
+
+  # Proxy Socket.io HTTP long-polling
+  RewriteRule ^socket\.io/(.*) http://127.0.0.1:5000/socket.io/$1 [P,L]
+
+  # Proxy API requests to Node.js backend
+  RewriteRule ^api/(.*) http://127.0.0.1:5000/api/$1 [P,L]
+
+  # Serve existing files and directories directly
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Fallback all other frontend routes to index.html (React SPA)
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set X-Content-Type-Options "nosniff"
+</IfModule>
