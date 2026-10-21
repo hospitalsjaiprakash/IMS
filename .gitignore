@@ -6,3 +6,5 @@ dist/
 build/
 /docs/*
 !/docs/SRS_HIMS.md
+logs/
+

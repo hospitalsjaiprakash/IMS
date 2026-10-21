@@ -13,8 +13,8 @@ const fs = require('fs');
 const { Server } = require('socket.io');
 const http = require('http');
 const AppError = require('./utils/AppError');
-// Only run cron on instance 0 in PM2 cluster to prevent duplicate execution
-if (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0') {
+// Only run cron on instance 0 in PM2 cluster to prevent duplicate execution (skip in test environment)
+if (process.env.NODE_ENV !== 'test' && (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0')) {
   require('./services/cronService'); // Initialize cron jobs
 }
 
@@ -43,9 +43,10 @@ app.use((req, res, next) => {
   req.io = io;
   next();
 });
-const PORT = process.env.PORT || 5000;
+const PORT = parseInt(process.env.PORT || '5000', 10);
+const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
 
-// Trust the reverse proxy (Render, Vercel, etc) so rate limiters use the real client IP
+// Trust the reverse proxy (Render, Vercel, Apache, etc) so rate limiters use the real client IP
 app.set('trust proxy', 1);
 
 // ─── MIDDLEWARE ───────────────────────────────────
@@ -119,6 +120,17 @@ app.all('*', (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  // Handle Multer upload errors
+  if (err.name === 'MulterError') {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ status: 'error', error: 'File size exceeds maximum allowed limit of 2MB per file.' });
+    }
+    return res.status(400).json({ status: 'error', error: err.message });
+  }
+  if (err.statusCode === 400 || (err.message && (err.message.includes('not allowed') || err.message.includes('not permitted')))) {
+    return res.status(400).json({ status: 'error', error: err.message });
+  }
+
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
@@ -157,34 +169,36 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  // ─── Self-ping to prevent Render free-tier cold starts ───
-  // Render shuts down free services after 15 min of inactivity.
-  // We ping ourselves every 14 min to stay warm.
-  if (process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL) {
-    const selfUrl = (process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL).replace(/\/$/, '');
-    const pingInterval = 14 * 60 * 1000; // 14 minutes
-    setInterval(async () => {
-      try {
-        const http = require('https');
-        http.get(`${selfUrl}/ping`, (res) => {
-          console.log(`[keep-alive] Self-ping OK (status ${res.statusCode})`);
-        }).on('error', (err) => {
-          console.warn('[keep-alive] Self-ping failed:', err.message);
-        });
-      } catch (e) {
-        // Silently ignore ping errors
-      }
-    }, pingInterval);
-    console.log(`[keep-alive] Self-ping enabled every 14 min → ${selfUrl}/ping`);
-  }
-  console.log(`
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    // ─── Self-ping to prevent Render free-tier cold starts ───
+    // Render shuts down free services after 15 min of inactivity.
+    // We ping ourselves every 14 min to stay warm.
+    if (process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL) {
+      const selfUrl = (process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL).replace(/\/$/, '');
+      const pingInterval = 14 * 60 * 1000; // 14 minutes
+      setInterval(async () => {
+        try {
+          const http = require('https');
+          http.get(`${selfUrl}/ping`, (res) => {
+            console.log(`[keep-alive] Self-ping OK (status ${res.statusCode})`);
+          }).on('error', (err) => {
+            console.warn('[keep-alive] Self-ping failed:', err.message);
+          });
+        } catch (e) {
+          // Silently ignore ping errors
+        }
+      }, pingInterval);
+      console.log(`[keep-alive] Self-ping enabled every 14 min → ${selfUrl}/ping`);
+    }
+    console.log(`
   ╔══════════════════════════════════════════════════╗
   ║   JPHRC Incident Management System - API         ║
-  ║   Running on http://localhost:${PORT}               ║
+  ║   Running on http://${HOST}:${PORT}               ║
   ║   Environment: ${(process.env.NODE_ENV || 'development').padEnd(32)}║
   ╚══════════════════════════════════════════════════╝
-  `);
-});
+    `);
+  });
+}
 
 module.exports = { app, server, io };

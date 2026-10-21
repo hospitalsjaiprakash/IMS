@@ -9,7 +9,8 @@
     "setup-db": "node setup-db.js",
     "seed": "node scripts/seed-mock-data.js",
     "migrate": "node scripts/run-migrations.js",
-    "backup:db": "node scripts/backup-db.js"
+    "backup:db": "node scripts/backup-db.js",
+    "test": "NODE_ENV=test node --test --test-force-exit tests/**/*.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",
@@ -35,6 +36,7 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "supertest": "^7.3.1"
   }
 }

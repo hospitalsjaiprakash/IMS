@@ -48,6 +48,29 @@ async function buildS3Key(req, file, stage) {
   return `pending/${folder}/${safeFilename}`;
 }
 
+// Allowed file types: only images and PDF
+const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf']);
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+
+const fileFilter = (req, file, cb) => {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    const err = new Error(`File type "${ext || 'unknown'}" is not allowed. Only images (JPG, PNG, WEBP) and PDF files are permitted.`);
+    err.statusCode = 400;
+    return cb(err, false);
+  }
+  if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    const err = new Error(`File MIME type "${file.mimetype}" is not permitted. Only images and PDF files are allowed.`);
+    err.statusCode = 400;
+    return cb(err, false);
+  }
+  cb(null, true);
+};
+
+const limits = {
+  fileSize: 2 * 1024 * 1024, // 2MB max per file
+};
+
 let upload;
 
 if (s3Client && process.env.S3_BUCKET_NAME) {
@@ -67,7 +90,9 @@ if (s3Client && process.env.S3_BUCKET_NAME) {
           cb(err);
         }
       }
-    })
+    }),
+    fileFilter,
+    limits
   });
 } else {
   const storage = multer.diskStorage({
@@ -76,10 +101,15 @@ if (s3Client && process.env.S3_BUCKET_NAME) {
     },
     filename: function (req, file, cb) {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, uniqueSuffix + '-' + file.originalname);
+      const safeFilename = path.basename(file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+      cb(null, `${uniqueSuffix}-${safeFilename}`);
     }
   });
-  upload = multer({ storage: storage });
+  upload = multer({
+    storage: storage,
+    fileFilter,
+    limits
+  });
 }
 
 /**

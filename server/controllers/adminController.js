@@ -600,7 +600,7 @@ exports.updateRoleCredentials = async (req, res) => {
     const userRes = await query('SELECT employee_id FROM users WHERE id = $1', [req.user.id]);
     const employeeId = userRes.rows[0].employee_id;
 
-    const isValid = verifyOtp(employeeId, 'admin_password_change', otp);
+    const isValid = await verifyOtp(employeeId, 'admin_password_change', otp);
     if (!isValid) return res.status(400).json({ error: 'Invalid or expired OTP.' });
 
     const bcrypt = require('bcryptjs');

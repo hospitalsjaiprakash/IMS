@@ -18,27 +18,34 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
           cache-dependency-path: |
             server/package-lock.json
             client/package-lock.json
 
-      - name: Validate Server Syntax
+      - name: Validate Server Syntax & Upload Security Tests
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-test-secret-key-that-is-at-least-64-characters-long-for-validations-12345
         run: |
           cd server
           npm ci --prefer-offline || npm install
           node --check index.js
+          node --check utils/otpService.js
+          node --check middleware/upload.js
+          node --test --test-force-exit tests/upload.test.js
 
-      - name: Validate Client Build
+      - name: Validate Client Lint & Build
         env:
           VITE_API_URL: https://ims.jaiprakashhospitals.com/api
         run: |
           cd client
           npm ci --prefer-offline || npm install
+          npm run lint
           npm run build
 
   deploy:

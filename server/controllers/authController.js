@@ -196,7 +196,7 @@ exports.register = async (req, res) => {
     }
 
     // Verify OTP first
-    const isValid = verifyOtp(employeeId.trim(), 'registration', otp.trim());
+    const isValid = await verifyOtp(employeeId.trim(), 'registration', otp.trim());
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid or expired OTP.' });
     }
@@ -761,7 +761,7 @@ exports.resetPassword = async (req, res) => {
     }
 
     const genericEmpId = roleToGenericUser[targetRole];
-    const isValid = verifyOtp(genericEmpId, 'password_reset', otp);
+    const isValid = await verifyOtp(genericEmpId, 'password_reset', otp);
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
@@ -835,7 +835,7 @@ exports.resetEmployeePassword = async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
     }
 
-    const isValid = verifyOtp(employeeId.trim(), 'employee_password_reset', otp.trim());
+    const isValid = await verifyOtp(employeeId.trim(), 'employee_password_reset', otp.trim());
     if (!isValid) return res.status(400).json({ error: 'Invalid or expired OTP.' });
 
     const hash = await bcrypt.hash(newPassword, 12);
