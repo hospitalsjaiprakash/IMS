@@ -73,10 +73,10 @@ if [ -d "/home/ims/public_html" ] && [ "$APP_DIR/client/dist" != "/home/ims/publ
   # Cleanly prune old hashed bundle assets while safeguarding OVIPanel / system files
   mkdir -p /home/ims/public_html/assets
   rsync -av --delete "$APP_DIR/client/dist/assets/" /home/ims/public_html/assets/
-  # Copy root static assets
-  cp "$APP_DIR/client/dist/index.html" /home/ims/public_html/
-  cp "$APP_DIR/client/dist/"*.svg /home/ims/public_html/ 2>/dev/null || true
-  cp "$APP_DIR/client/dist/.htaccess" /home/ims/public_html/ 2>/dev/null || true
+  # Copy root static assets without interactive prompt
+  /bin/cp -f "$APP_DIR/client/dist/index.html" /home/ims/public_html/
+  /bin/cp -f "$APP_DIR/client/dist/"*.svg /home/ims/public_html/ 2>/dev/null || true
+  /bin/cp -f "$APP_DIR/client/dist/.htaccess" /home/ims/public_html/ 2>/dev/null || true
   chown -R ims:ims /home/ims/public_html/assets /home/ims/public_html/index.html 2>/dev/null || true
 fi
 
