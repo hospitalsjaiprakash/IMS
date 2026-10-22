@@ -87,6 +87,12 @@ export default function App() {
             error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
           }}
         />
+        {import.meta.env.VITE_APP_ENV === 'staging' && (
+          <div className="bg-amber-500 text-slate-900 text-xs font-bold py-1.5 px-4 text-center tracking-wide flex items-center justify-center gap-2 shadow-sm sticky top-0 z-50">
+            <span>🧪 STAGING / TEST ENVIRONMENT</span>
+            <span className="text-amber-950 font-normal">| Data entered here is completely isolated and will NOT affect Production</span>
+          </div>
+        )}
         <ErrorBoundary>
           <Routes>
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />

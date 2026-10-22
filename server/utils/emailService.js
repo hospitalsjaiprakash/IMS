@@ -321,6 +321,19 @@ const sendEmail = async (to, templateData, options = {}) => {
     }
   }
 
+  if (process.env.EMAIL_SAFE_MODE === 'mock' || process.env.EMAIL_LOG_ONLY === 'true') {
+    console.log(`[STAGING EMAIL TRAP] Suppressed outgoing email to: ${to}, Subject: "${templateData.subject}"`);
+    try {
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
+         VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
+        [userRes.rows[0]?.id || null, to, `[STAGING TRAP] ${templateData.subject}`]
+      );
+    } catch (_) {}
+    return true;
+  }
+
   if (
     !process.env.SMTP_USER ||
     !process.env.SMTP_PASS ||

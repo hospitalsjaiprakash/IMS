@@ -52,13 +52,15 @@ exports.sendOtp = async (employeeId, email, action) => {
     };
 
     if (
+      process.env.EMAIL_SAFE_MODE === 'mock' ||
+      process.env.EMAIL_LOG_ONLY === 'true' ||
       !process.env.SMTP_USER ||
       !process.env.SMTP_PASS ||
       process.env.SMTP_USER === 'your-gmail@gmail.com' ||
       process.env.SMTP_PASS === 'xxxx-xxxx-xxxx-xxxx'
     ) {
       console.log('\n=============================================');
-      console.log(`[DEVELOPMENT ONLY] OTP GENERATED FOR ${email}`);
+      console.log(`[STAGING/DEV OTP] OTP GENERATED FOR ${email}`);
       console.log(`Employee ID: ${cleanEmpId}`);
       console.log(`Action: ${cleanAction}`);
       console.log(`OTP Code: ${otp}`);
