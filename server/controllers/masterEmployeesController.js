@@ -10,6 +10,7 @@ exports.getAllEmployees = async (req, res) => {
       search = '', 
       department = '', 
       is_registered, 
+      status,
       sort_by = 'name', 
       sort_order = 'asc',
       all
@@ -42,6 +43,13 @@ exports.getAllEmployees = async (req, res) => {
       paramIndex++;
     }
 
+    // Employment status filter (active, noticePeriod, terminated)
+    if (status && status.trim() && status !== 'all') {
+      conditions.push(`m.status = $${paramIndex}`);
+      params.push(status.trim());
+      paramIndex++;
+    }
+
     // Registered status filter
     if (is_registered !== undefined && is_registered !== '' && is_registered !== 'all') {
       if (is_registered === 'true' || is_registered === true) {
@@ -59,6 +67,7 @@ exports.getAllEmployees = async (req, res) => {
       employee_id: 'm.employee_id',
       department: 'm.department',
       designation: 'm.designation',
+      status: 'm.status',
       is_registered: 'is_registered'
     };
     const sortColumn = allowedSortFields[sort_by] || 'm.name';
@@ -72,6 +81,11 @@ exports.getAllEmployees = async (req, res) => {
         m.name as full_name, 
         m.department, 
         m.designation, 
+        m.office_location,
+        COALESCE(m.status, 'active') as status,
+        m.date_of_joining,
+        m.termination_date,
+        m.notice_period_end_date,
         m.role as master_role,
         m.phone as phone,
         CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered,
