@@ -482,10 +482,44 @@ export default function NewIncidentPage() {
                   <input
                     type="file"
                     multiple
+                    accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     onChange={(e) => {
                       if (e.target.files?.length) {
-                        set('attachments', [...form.attachments, ...Array.from(e.target.files)]);
+                        const newFiles = Array.from(e.target.files);
+                        const ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
+                        const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+                        const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+                        const MAX_COUNT = 5;
+
+                        const validFiles = [];
+                        for (const file of newFiles) {
+                          if (form.attachments.length + validFiles.length >= MAX_COUNT) {
+                            toast.error(`Maximum ${MAX_COUNT} attachments permitted per incident.`);
+                            break;
+                          }
+
+                          const ext = '.' + file.name.split('.').pop().toLowerCase();
+                          const isAllowedExt = ALLOWED_EXT.includes(ext);
+                          const isAllowedMime = !file.type || ALLOWED_MIME.includes(file.type);
+
+                          if (!isAllowedExt || !isAllowedMime) {
+                            toast.error(`"${file.name}" is not an allowed file type. Only JPG, PNG, WebP, and PDF are permitted.`);
+                            continue;
+                          }
+
+                          if (file.size > MAX_SIZE) {
+                            const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+                            toast.error(`"${file.name}" exceeds the 2MB size limit (${sizeMb} MB).`);
+                            continue;
+                          }
+
+                          validFiles.push(file);
+                        }
+
+                        if (validFiles.length > 0) {
+                          set('attachments', [...form.attachments, ...validFiles]);
+                        }
                       }
                       e.target.value = null; // Reset input so same file can be selected again
                     }}
@@ -495,7 +529,7 @@ export default function NewIncidentPage() {
                       <Upload size={18} className="text-blue-600" />
                     </div>
                     <p className="text-sm font-medium text-slate-700">Click or drag files here</p>
-                    <p className="text-xs text-slate-500 mt-1 text-center">Max file size: 10MB per file</p>
+                    <p className="text-xs text-slate-500 mt-1 text-center">Max file size: 2MB per file (JPG, PNG, WebP, PDF) • Max 5 files</p>
                   </div>
                 </div>
               </div>

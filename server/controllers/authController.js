@@ -366,6 +366,19 @@ exports.login = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      // Check if employee exists in HRMS master records
+      const masterCheck = await query(
+        'SELECT status, termination_date FROM master_employees WHERE employee_id = $1',
+        [employeeId.trim()]
+      ).catch(() => ({ rows: [] }));
+
+      if (masterCheck.rows[0]?.status === 'terminated') {
+        return res.status(403).json({
+          error: 'Access denied. Your employment status is recorded as terminated.',
+          code: 'EMPLOYEE_TERMINATED'
+        });
+      }
+
       return res.status(401).json({
         error: 'Invalid Employee ID or password.',
         code: 'INVALID_CREDENTIALS'
