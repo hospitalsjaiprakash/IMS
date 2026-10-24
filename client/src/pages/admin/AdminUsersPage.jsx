@@ -23,6 +23,7 @@ export default function AdminUsersPage() {
   const [tabSearch, setTabSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
 
   // Debounce search input for immediate responsive feedback
@@ -276,7 +277,22 @@ export default function AdminUsersPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-2xl font-bold text-slate-800 truncate">{selectedProfileUser.full_name}</h3>
-                <div className="text-sm font-mono text-slate-500 mb-4 inline-block bg-slate-100 px-2 py-0.5 rounded">{selectedProfileUser.employee_id}</div>
+                <div className="flex items-center gap-2 mb-4 flex-wrap">
+                  <span className="text-sm font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{selectedProfileUser.employee_id}</span>
+                  {selectedProfileUser.status === 'terminated' ? (
+                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                      ⛔ Terminated {selectedProfileUser.termination_date ? `(${formatDate(selectedProfileUser.termination_date)})` : ''}
+                    </span>
+                  ) : selectedProfileUser.status === 'noticePeriod' ? (
+                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      ⚠️ Notice Period {selectedProfileUser.notice_period_end_date ? `(Relieving: ${formatDate(selectedProfileUser.notice_period_end_date)})` : ''}
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      ✓ Active Staff
+                    </span>
+                  )}
+                </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                   <div className="flex items-center gap-2 text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-100 truncate">
@@ -543,6 +559,11 @@ export default function AdminUsersPage() {
             }
           }
 
+          if (statusFilter && statusFilter !== 'all') {
+            const hrmsStatus = u.status || 'active';
+            if (hrmsStatus !== statusFilter) return false;
+          }
+
           if (selectedDeptFilter && selectedDeptFilter !== 'all') {
             if ((u.department || '').toLowerCase() !== selectedDeptFilter.toLowerCase()) return false;
           }
@@ -607,6 +628,18 @@ export default function AdminUsersPage() {
                     </div>
                     <div className="relative">
                       <select
+                        value={statusFilter}
+                        onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+                        className="select w-36 bg-white font-semibold text-xs py-2.5 rounded-xl border-slate-200"
+                      >
+                        <option value="all">All Statuses</option>
+                        <option value="active">Active Staff</option>
+                        <option value="noticePeriod">Notice Period</option>
+                        <option value="terminated">Terminated</option>
+                      </select>
+                    </div>
+                    <div className="relative">
+                      <select
                         value={roleFilter}
                         onChange={e => { setRoleFilter(e.target.value); setPage(1); }}
                         className="select w-40 bg-white font-semibold text-xs py-2.5 rounded-xl border-slate-200"
@@ -614,13 +647,14 @@ export default function AdminUsersPage() {
                         {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                       </select>
                     </div>
-                    {(search || roleFilter || selectedDeptFilter !== 'all') && (
+                    {(search || roleFilter || selectedDeptFilter !== 'all' || statusFilter !== 'all') && (
                       <button
                         type="button"
                         onClick={() => {
                           setSearch('');
                           setRoleFilter('');
                           setSelectedDeptFilter('all');
+                          setStatusFilter('all');
                           setPage(1);
                         }}
                         className="text-xs text-blue-600 hover:text-blue-800 font-bold px-2 py-1 underline"
@@ -703,51 +737,81 @@ export default function AdminUsersPage() {
                                   )}
                                 </td>
                                 <td className="py-4">
-                                  {!u.is_registered ? (
-                                    <span className="text-xs text-slate-400 font-medium">Unregistered</span>
-                                  ) : u.is_active ? (
-                                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
-                                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Active
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600">
-                                      <span className="w-2 h-2 rounded-full bg-rose-500" /> Deactivated
-                                    </span>
-                                  )}
+                                  <div className="flex flex-col gap-1 items-start">
+                                    {u.status === 'terminated' ? (
+                                      <span
+                                        title={u.termination_date ? `Terminated on ${formatDate(u.termination_date)}` : 'Terminated in HRMS'}
+                                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200 shadow-2xs"
+                                      >
+                                        ⛔ Terminated
+                                      </span>
+                                    ) : u.status === 'noticePeriod' ? (
+                                      <span
+                                        title={u.notice_period_end_date ? `Notice Period ends: ${formatDate(u.notice_period_end_date)}` : 'Staff is on Notice Period'}
+                                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200 shadow-2xs"
+                                      >
+                                        ⚠️ Notice Period
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        ✓ Active Staff
+                                      </span>
+                                    )}
+
+                                    {!u.is_registered ? (
+                                      <span className="text-[10px] text-slate-400 font-medium">No IMS Account</span>
+                                    ) : u.is_active ? (
+                                      <span className="text-[10px] font-semibold text-emerald-600 flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Portal Active
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-semibold text-rose-600 flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Portal Deactivated
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="pr-6 py-4 text-right">
-                                  <button
-                                    disabled={!u.is_registered}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setAssignForm({ employeeId: u.employee_id, targetRole: u.role !== 'employee' ? u.role : 'imc', departmentId: '' });
-                                      setShowAssignModal(true);
-                                    }}
-                                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : 'bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700'}`}
-                                  >
-                                    <Edit3 size={13} /> Configure
-                                  </button>
-                                  <button
-                                    disabled={!u.is_registered}
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        await adminApi.toggleUserStatus(u.id);
-                                        toast.success(`User account ${u.is_active ? 'deactivated' : 'activated'} successfully.`);
-                                        qc.invalidateQueries({ queryKey: ['admin-users'] });
-                                        qc.invalidateQueries({ queryKey: ['master-employees'] });
-                                      } catch (error) {
-                                        toast.error(error.response?.data?.error || 'Failed to change user status');
-                                      }
-                                    }}
-                                    className={`ml-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : u.is_active
-                                        ? 'bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200'
-                                        : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white border border-emerald-200'
-                                      }`}
-                                  >
-                                    {u.is_active ? <ShieldX size={13} /> : <ShieldCheck size={13} />}
-                                    {u.is_active ? 'Deactivate' : 'Activate'}
-                                  </button>
+                                  {u.status === 'terminated' ? (
+                                    <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 inline-block">
+                                      Terminated in HRMS
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <button
+                                        disabled={!u.is_registered}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setAssignForm({ employeeId: u.employee_id, targetRole: u.role !== 'employee' ? u.role : 'imc', departmentId: '' });
+                                          setShowAssignModal(true);
+                                        }}
+                                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : 'bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700'}`}
+                                      >
+                                        <Edit3 size={13} /> Configure
+                                      </button>
+                                      <button
+                                        disabled={!u.is_registered}
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          try {
+                                            await adminApi.toggleUserStatus(u.id);
+                                            toast.success(`User account ${u.is_active ? 'deactivated' : 'activated'} successfully.`);
+                                            qc.invalidateQueries({ queryKey: ['admin-users'] });
+                                            qc.invalidateQueries({ queryKey: ['master-employees'] });
+                                          } catch (error) {
+                                            toast.error(error.response?.data?.error || 'Failed to change user status');
+                                          }
+                                        }}
+                                        className={`ml-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : u.is_active
+                                            ? 'bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200'
+                                            : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white border border-emerald-200'
+                                          }`}
+                                      >
+                                        {u.is_active ? <ShieldX size={13} /> : <ShieldCheck size={13} />}
+                                        {u.is_active ? 'Deactivate' : 'Activate'}
+                                      </button>
+                                    </>
+                                  )}
                                 </td>
                               </tr>
                             );
