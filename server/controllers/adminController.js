@@ -873,7 +873,10 @@ exports.searchEmployeeProfile = async (req, res) => {
       return res.status(400).json({ error: 'Search query is required' });
     }
 
-    // Search both master_employees and users to include all hospital personnel
+    const includeTerminated = req.query.include_terminated === 'true';
+    const statusCondition = includeTerminated ? '' : "AND COALESCE(m.status, 'active') != 'terminated'";
+
+    // Search both master_employees and users using pg_trgm and indexes
     const userResult = await query(
       `SELECT DISTINCT ON (COALESCE(u.employee_id, m.employee_id))
          COALESCE(u.id::text, m.id::text) as id,
@@ -884,14 +887,20 @@ exports.searchEmployeeProfile = async (req, res) => {
          COALESCE(u.department, m.department) as department,
          COALESCE(u.designation, m.designation) as designation,
          COALESCE(u.role, m.role, 'employee') as role,
+         COALESCE(m.status, 'active') as status,
+         m.office_location,
+         m.notice_period_end_date,
          COALESCE(u.is_imc_member, false) as is_imc_member,
          COALESCE(u.is_imc_lead, false) as is_imc_lead,
          CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered
        FROM master_employees m
        FULL OUTER JOIN users u ON u.employee_id = m.employee_id
-       WHERE COALESCE(u.employee_id, m.employee_id) ILIKE $1 
-          OR COALESCE(u.full_name, m.name) ILIKE $2
-          OR COALESCE(u.department, m.department) ILIKE $3
+       WHERE (
+         COALESCE(u.employee_id, m.employee_id) ILIKE $1 
+         OR COALESCE(u.full_name, m.name) ILIKE $2
+         OR COALESCE(u.department, m.department) ILIKE $3
+       )
+       ${statusCondition}
        ORDER BY COALESCE(u.employee_id, m.employee_id), COALESCE(u.full_name, m.name) ASC
        LIMIT 20`,
       [`%${term}%`, `%${term}%`, `%${term}%`]

@@ -2,12 +2,16 @@
  * OfficePortal HRMS Public API v1 Integration Service
  * 
  * Features:
- * - OAuth 2.0 client credentials token management with proactive in-memory caching
- * - Cryptographic HMAC-SHA256 signature verification for incoming webhooks
- * - Replay drift defense (300 seconds tolerance)
- * - Full directory synchronization (GET /api/v1/employees)
- * - Cursor-based incremental delta synchronization (GET /api/v1/employees/changes)
- * - Non-cascading lifecycle synchronization (active, noticePeriod, terminated)
+ * - OAuth 2.0 client credentials token management with proactive in-memory caching (14-min renewal)
+ * - Mutex concurrency lock to prevent thundering-herd token calls
+ * - Cryptographic HMAC-SHA256 signature verification for incoming webhooks (X-Awarious-Signature)
+ * - Replay drift defense (300 seconds / 5-minute tolerance)
+ * - In-memory master data caching (Departments and Designations with 60-min TTL)
+ * - Last-Write-Wins conflict resolution on vendor_updated_at
+ * - Full directory synchronization (GET /employee/api/v1/employees)
+ * - Cursor-based incremental delta synchronization (GET /employee/api/v1/employees/changes)
+ * - Quota header extraction and persistence into system_config
+ * - Non-cascading lifecycle synchronization (active, noticePeriod with banner, terminated account lockout)
  */
 
 const axios = require('axios');
@@ -19,10 +23,16 @@ const DEFAULT_AUTH_URL = 'https://accounts.awarious.com/publicapi/connect/token'
 const DEFAULT_BASE_URL = 'https://publicapi.officeportal.io/employee';
 const TOLERANCE_SECONDS = 300; // 5 minutes
 
-// In-Memory Token Cache
+// In-Memory Token Cache (L1 Cache)
 let cachedToken = null;
 let tokenExpiresAt = 0; // Unix timestamp in seconds
 let tokenLockPromise = null;
+
+// In-Memory Master Data Caches (L1 Cache)
+let cachedDepartments = null;
+let departmentsExpiresAt = 0;
+let cachedJobTitles = null;
+let jobTitlesExpiresAt = 0;
 
 /**
  * Get configured OfficePortal settings from environment or database system_config
@@ -99,8 +109,10 @@ function isValidSignature(header, rawBody, keys, nowSeconds = Date.now() / 1000)
     for (const signature of signatures) {
       if (signature.length === expected.length && timingSafeEqual(signature, expected)) {
         valid = true;
+        break;
       }
     }
+    if (valid) break;
   }
 
   return valid;
@@ -162,7 +174,79 @@ async function getAccessToken(forceRefresh = false) {
 }
 
 /**
- * Upsert a single employee record from OfficePortal payload into master_employees
+ * Extract Quota headers and update system_config
+ */
+async function updateQuotaMetadata(headers) {
+  if (!headers) return;
+  const dailyRemaining = headers['x-quota-requests-dailyremaining'];
+  const monthlyRemaining = headers['x-quota-requests-monthlyremaining'];
+  const dailyReset = headers['x-quota-requests-dailyreset'];
+
+  if (dailyRemaining !== undefined || monthlyRemaining !== undefined) {
+    try {
+      if (dailyRemaining !== undefined) {
+        await query(`INSERT INTO system_config (key, value, updated_at) VALUES ('officeportal_daily_requests_remaining', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(dailyRemaining)]);
+      }
+      if (monthlyRemaining !== undefined) {
+        await query(`INSERT INTO system_config (key, value, updated_at) VALUES ('officeportal_monthly_requests_remaining', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(monthlyRemaining)]);
+      }
+      if (dailyReset) {
+        await query(`INSERT INTO system_config (key, value, updated_at) VALUES ('officeportal_daily_reset_time', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [String(dailyReset)]);
+      }
+    } catch (e) {
+      // Non-blocking telemetry
+    }
+  }
+}
+
+/**
+ * Fetch hospital departments master list with 60-minute in-memory caching
+ */
+async function getDepartmentsMaster(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedDepartments && now < departmentsExpiresAt) {
+    return cachedDepartments;
+  }
+
+  const token = await getAccessToken();
+  const config = await getConfig();
+  const url = `${config.baseUrl}/api/v1/departments`;
+
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    timeout: 30000
+  });
+
+  cachedDepartments = res.data || [];
+  departmentsExpiresAt = now + (60 * 60 * 1000); // 1 hour
+  return cachedDepartments;
+}
+
+/**
+ * Fetch hospital designations master list with 60-minute in-memory caching
+ */
+async function getJobTitlesMaster(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedJobTitles && now < jobTitlesExpiresAt) {
+    return cachedJobTitles;
+  }
+
+  const token = await getAccessToken();
+  const config = await getConfig();
+  const url = `${config.baseUrl}/api/v1/job-titles`;
+
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    timeout: 30000
+  });
+
+  cachedJobTitles = res.data || [];
+  jobTitlesExpiresAt = now + (60 * 60 * 1000); // 1 hour
+  return cachedJobTitles;
+}
+
+/**
+ * Upsert a single employee record into master_employees with Last-Write-Wins protection
  */
 async function upsertMasterEmployee(client, emp) {
   const portalId = emp.employeeId || null;
@@ -180,6 +264,9 @@ async function upsertMasterEmployee(client, emp) {
     : 'active';
   const dateOfJoining = emp.dateOfJoining ? new Date(emp.dateOfJoining) : null;
   const terminationDate = emp.terminationDate ? new Date(emp.terminationDate) : null;
+  const noticeStartDate = emp.noticePeriodStartDate ? new Date(emp.noticePeriodStartDate) : null;
+  const noticeEndDate = emp.noticePeriodEndDate ? new Date(emp.noticePeriodEndDate) : null;
+  const vendorUpdatedAt = emp.updatedAt ? new Date(emp.updatedAt) : new Date();
 
   if (!empCode) {
     return { skipped: true, reason: 'Missing employee code' };
@@ -189,11 +276,13 @@ async function upsertMasterEmployee(client, emp) {
     INSERT INTO master_employees (
       office_portal_id, employee_id, name, first_name, last_name,
       email, phone, department, designation, office_location,
-      status, date_of_joining, termination_date, raw_payload, synced_at, updated_at
+      status, date_of_joining, termination_date, notice_period_start_date, notice_period_end_date,
+      vendor_updated_at, raw_payload, synced_at, updated_at
     ) VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10,
-      $11, $12, $13, $14, NOW(), NOW()
+      $11, $12, $13, $14, $15,
+      $16, $17, NOW(), NOW()
     )
     ON CONFLICT (employee_id) DO UPDATE SET
       office_portal_id = COALESCE(EXCLUDED.office_portal_id, master_employees.office_portal_id),
@@ -208,24 +297,38 @@ async function upsertMasterEmployee(client, emp) {
       status = EXCLUDED.status,
       date_of_joining = COALESCE(EXCLUDED.date_of_joining, master_employees.date_of_joining),
       termination_date = EXCLUDED.termination_date,
+      notice_period_start_date = EXCLUDED.notice_period_start_date,
+      notice_period_end_date = EXCLUDED.notice_period_end_date,
+      vendor_updated_at = EXCLUDED.vendor_updated_at,
       raw_payload = EXCLUDED.raw_payload,
       synced_at = NOW(),
       updated_at = NOW()
+    WHERE EXCLUDED.vendor_updated_at >= master_employees.vendor_updated_at 
+       OR master_employees.vendor_updated_at IS NULL
     RETURNING id, (xmax = 0) AS is_inserted
   `, [
     portalId, empCode, fullName, firstName, lastName,
     email, phone, department, designation, location,
-    status, dateOfJoining, terminationDate, JSON.stringify(emp)
+    status, dateOfJoining, terminationDate, noticeStartDate, noticeEndDate,
+    vendorUpdatedAt, JSON.stringify(emp)
   ]);
 
   const isInserted = res.rows[0]?.is_inserted;
 
-  // Lifecycle check: if employee is terminated, deactivate their users table account
+  // Account Lifecycle Sync:
+  // If terminated, immediately lock out user account to reject active JWT sessions
   if (status === 'terminated') {
     await client.query(`
       UPDATE users 
       SET is_active = false, updated_at = NOW() 
       WHERE employee_id = $1
+    `, [empCode]).catch(() => {});
+  } else if (status === 'active') {
+    // If reactivated from terminated, reactivate registered account
+    await client.query(`
+      UPDATE users 
+      SET is_active = true, updated_at = NOW() 
+      WHERE employee_id = $1 AND is_active = false
     `, [empCode]).catch(() => {});
   }
 
@@ -264,6 +367,8 @@ async function syncFullDirectory() {
         },
         timeout: 60000
       });
+
+      await updateQuotaMetadata(res.headers);
 
       const data = res.data?.data || (Array.isArray(res.data) ? res.data : []);
       if (data.length === 0) break;
@@ -358,6 +463,8 @@ async function syncDeltaChanges() {
         timeout: 60000
       });
 
+      await updateQuotaMetadata(res.headers);
+
       const changes = res.data?.data || res.data?.changes || [];
       if (changes.length === 0) break;
 
@@ -380,7 +487,7 @@ async function syncDeltaChanges() {
             await client.query(`
               UPDATE users 
               SET is_active = false, updated_at = NOW() 
-              WHERE employee_id = (SELECT employee_id FROM master_employees WHERE office_portal_id = $1 OR employee_id = $1)
+              WHERE employee_id = (SELECT employee_id FROM master_employees WHERE office_portal_id = $1 OR employee_id = $1 LIMIT 1)
             `, [empId]).catch(() => {});
 
             totalDeactivated++;
@@ -514,6 +621,8 @@ async function handleWebhookDelivery(headerSignature, rawBody, parsedPayload) {
 module.exports = {
   isValidSignature,
   getAccessToken,
+  getDepartmentsMaster,
+  getJobTitlesMaster,
   upsertMasterEmployee,
   syncFullDirectory,
   syncDeltaChanges,

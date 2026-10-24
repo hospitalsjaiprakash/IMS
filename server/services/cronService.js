@@ -193,11 +193,34 @@ async function checkAndAutoEscalate21Days() {
   }
 }
 
-// Start cron job (Runs every day at 8:00 AM)
+/**
+ * Scheduled HRMS delta reconciliation cron (runs every hour at minute 0)
+ */
+async function scheduleHrmsDeltaSync() {
+  try {
+    const { syncDeltaChanges, getConfig } = require('./officePortalService');
+    const config = await getConfig();
+    if (config.clientId && config.clientSecret) {
+      console.log('[CRON] Executing hourly HRMS delta change feed sync...');
+      const result = await syncDeltaChanges();
+      console.log(`[CRON] HRMS delta sync completed: fetched ${result.totalFetched}, inserted ${result.totalInserted}, updated ${result.totalUpdated}, deactivated ${result.totalDeactivated}`);
+    }
+  } catch (err) {
+    console.error('[CRON] Error during hourly HRMS delta sync:', err.message);
+  }
+}
+
+// Start daily escalations cron job (Runs every day at 8:00 AM)
 cron.schedule('0 8 * * *', () => {
   processHodEscalations();
   checkAndAutoEscalate21Days();
 });
 
-module.exports = { processHodEscalations, checkAndAutoEscalate21Days };
+// Hourly Change Feed delta sync at minute 0 of every hour
+cron.schedule('0 * * * *', () => {
+  scheduleHrmsDeltaSync();
+});
+
+module.exports = { processHodEscalations, checkAndAutoEscalate21Days, scheduleHrmsDeltaSync };
+
 

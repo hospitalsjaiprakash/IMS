@@ -1,14 +1,8 @@
 const multer = require('multer');
 const multerS3 = require('multer-s3');
 const path = require('path');
-const fs = require('fs');
-const { s3Client } = require('../config/s3');
+const { s3Client, isR2Configured } = require('../config/s3');
 const { query } = require('../config/database');
-
-const uploadDir = path.resolve(process.env.UPLOAD_DIR || 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
 
 // Maps DB stage names to human-readable R2 folder names
 const stageFolderMap = {
@@ -40,7 +34,7 @@ async function buildS3Key(req, file, stage) {
         return `${refId}/${folder}/${safeFilename}`;
       }
     } catch (e) {
-      console.error('[S3 Key] Failed to fetch reference_id:', e.message);
+      console.error('[R2 Key] Failed to fetch reference_id:', e.message);
     }
   }
 
@@ -68,12 +62,13 @@ const fileFilter = (req, file, cb) => {
 };
 
 const limits = {
-  fileSize: 2 * 1024 * 1024, // 2MB max per file
+  fileSize: parseInt(process.env.MAX_FILE_SIZE_MB || '2', 10) * 1024 * 1024,
 };
 
 let upload;
 
-if (s3Client && process.env.S3_BUCKET_NAME) {
+if (isR2Configured() && s3Client && process.env.S3_BUCKET_NAME) {
+  // STRICT CLOUDFLARE R2 DRIVER (Zero Local Disk Storage)
   upload = multer({
     storage: multerS3({
       s3: s3Client,
@@ -95,21 +90,13 @@ if (s3Client && process.env.S3_BUCKET_NAME) {
     limits
   });
 } else {
-  const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, uploadDir);
-    },
-    filename: function (req, file, cb) {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const safeFilename = path.basename(file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
-      cb(null, `${uniqueSuffix}-${safeFilename}`);
-    }
-  });
-  upload = multer({
-    storage: storage,
-    fileFilter,
-    limits
-  });
+  // If R2 is not configured, strictly prohibit local disk upload fallback as per hospital directive
+  upload = {
+    array: () => (req, res, next) => next(new Error('Cloudflare R2 storage is not configured. Server upload folder is disabled.')),
+    single: () => (req, res, next) => next(new Error('Cloudflare R2 storage is not configured. Server upload folder is disabled.')),
+    fields: () => (req, res, next) => next(new Error('Cloudflare R2 storage is not configured. Server upload folder is disabled.')),
+  };
+  console.warn('⚠️ [STORAGE] Cloudflare R2 is not configured. Local disk fallback is disabled.');
 }
 
 /**
@@ -123,7 +110,6 @@ const setUploadStage = (stage) => (req, _, next) => {
 
 module.exports = {
   upload,
-  uploadDir,
   setUploadStage,
   uploadIncidentAttachments: upload.array('attachments', 10),
   uploadSingle: (fieldName) => upload.single(fieldName),
