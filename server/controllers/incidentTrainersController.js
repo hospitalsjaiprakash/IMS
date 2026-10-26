@@ -5,6 +5,9 @@ const { sendEmail } = require('../utils/emailService');
 const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeService');
 const { buildTrainerAppointmentLetterData, formatDate } = require('../utils/letterTemplates');
 const { recordEvent, linkAttachmentsToEvent, getNextRoundNo } = require('../utils/incidentEvents');
+const { generateLetterPdf } = require('../services/pdfService');
+const { buildEmailDispatchNoticeHtml } = require('../templates/letterHtmlTemplate');
+const { isR2Configured, uploadToR2 } = require('../config/s3');
 
 // =============================================
 // GET PERSONAL TRAINER ASSIGNMENTS
@@ -311,42 +314,55 @@ exports.assignTrainer = async (req, res) => {
     );
 
     const incidentUrl = getIncidentUrl(id);
-    const trainerEmailHtml = `
-      <div style="max-width: 680px; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #ffffff; color: #1e293b;">
-        <div style="background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); color: #ffffff; padding: 24px; text-align: center;">
-          <h1 style="margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 0.5px;">JAIPRAKASH HOSPITALS & RESEARCH CENTRE</h1>
-          <p style="margin: 4px 0 0; font-size: 12px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px;">Incident Management Committee — Quality & Patient Safety</p>
-        </div>
-        <div style="padding: 28px; line-height: 1.6;">
-          <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #f1f5f9; padding-bottom: 12px; margin-bottom: 20px;">
-            <div><strong>Ref No:</strong> ${letterData.referenceNumber}</div>
-            <div style="text-align: right;"><strong>Date:</strong> ${formatDate(letterData.letterDate)}</div>
-          </div>
-          <div style="margin-bottom: 16px;">
-            <div><strong>To:</strong></div>
-            <div style="font-size: 15px; font-weight: 600; color: #1e3a8a;">${trainerUser.full_name}</div>
-            <div style="font-size: 13px; color: #64748b;">${trainerUser.designation || 'Designated Trainer'} — ${trainerUser.department || 'Hospital Operations'}</div>
-          </div>
-          <div style="font-weight: 700; margin-bottom: 16px; color: #0f172a;">Subject: ${letterData.subject}</div>
-          <p>${letterData.salutation}</p>
-          <div style="white-space: pre-wrap; font-size: 13.5px; color: #334155; margin-bottom: 24px;">${letterData.bodyText}</div>
-          <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 16px; margin-bottom: 20px; text-align: center;">
-            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 8px;">VERIFIED APPOINTMENT RECORD</div>
-            <img src="${qrCodeUrl}" alt="Verification QR Code" style="width: 110px; height: 110px; border: 1px solid #e2e8f0; padding: 4px; border-radius: 6px; background: #ffffff;" />
-            <div style="font-size: 11px; color: #64748b; margin-top: 6px;">Scan to view verified incident file in JPHRC IMS</div>
-          </div>
-          <div style="text-align: center; margin-top: 24px;">
-            <a href="${incidentUrl}" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-size: 13px; font-weight: 600;">Access Training Record on IMS</a>
-          </div>
-        </div>
-      </div>
-    `;
+
+    // Generate frozen authentic hospital letterhead PDF for Trainer Appointment
+    let pdfBuffer = null;
+    try {
+      pdfBuffer = await generateLetterPdf({
+        letter: appointmentLetter,
+        incident,
+        approvers: {
+          draftedByName: req.user.full_name || 'Incident Management Committee Lead',
+          approvedByName: 'Executive Management Authority'
+        },
+        qrCodeDataUrl: qrCodeUrl,
+        isDraft: false
+      });
+
+      if (isR2Configured() && pdfBuffer) {
+        const s3Key = `${incident.reference_id}/letters/${letterData.referenceNumber}.pdf`;
+        await uploadToR2(s3Key, pdfBuffer, 'application/pdf', {
+          incidentId: id,
+          letterId: appointmentLetter.id,
+          referenceNumber: letterData.referenceNumber
+        });
+        await query('UPDATE incident_letters SET pdf_storage_path = $1 WHERE id = $2', [s3Key, appointmentLetter.id]);
+        appointmentLetter.pdf_storage_path = s3Key;
+      }
+    } catch (pdfErr) {
+      console.error('[Trainer Appointment] Warning generating PDF:', pdfErr.message);
+    }
+
+    const trainerEmailHtml = buildEmailDispatchNoticeHtml({
+      letter: appointmentLetter,
+      incident,
+      portalUrl: incidentUrl
+    });
+
+    const emailAttachments = pdfBuffer ? [
+      {
+        filename: `${letterData.referenceNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf'
+      }
+    ] : [];
 
     if (trainerUser.email) {
       sendEmail(trainerUser.email, {
         subject: `${letterData.subject} - Ref: ${letterData.referenceNumber}`,
-        text: `${letterData.subject}\n\nRef: ${letterData.referenceNumber}\nDate: ${formatDate(letterData.letterDate)}\n\nTo:\n${trainerUser.full_name} (${trainerUser.employee_id || ''})\n${trainerUser.department || ''} - ${trainerUser.designation || ''}\n\n${letterData.bodyText}\n\nVerify incident at: ${incidentUrl}`,
-        html: trainerEmailHtml
+        text: `${letterData.subject}\n\nRef: ${letterData.referenceNumber}\nDate: ${formatDate(letterData.letterDate)}\n\nTo:\n${trainerUser.full_name} (${trainerUser.employee_id || ''})\n${trainerUser.department || ''} - ${trainerUser.designation || ''}\n\n${letterData.bodyText}\n\nOfficial signed letter is attached.\nVerify incident at: ${incidentUrl}`,
+        html: trainerEmailHtml,
+        attachments: emailAttachments
       }).catch(err => console.error('[Trainer Email] failed:', err));
     }
 
@@ -355,8 +371,9 @@ exports.assignTrainer = async (req, res) => {
       if (cc.email) {
         sendEmail(cc.email, {
           subject: `[CC] ${letterData.subject} - Ref: ${letterData.referenceNumber}`,
-          text: `[CARBON COPY]\n\n${letterData.subject}\n\nRef: ${letterData.referenceNumber}\n\n${letterData.bodyText}\n\nIncident URL: ${incidentUrl}`,
-          html: trainerEmailHtml
+          text: `[CARBON COPY]\n\n${letterData.subject}\n\nRef: ${letterData.referenceNumber}\n\n${letterData.bodyText}\n\nOfficial signed letter is attached.\nIncident URL: ${incidentUrl}`,
+          html: trainerEmailHtml,
+          attachments: emailAttachments
         }).catch(err => console.error('[Trainer CC Email] failed:', err));
       }
     }

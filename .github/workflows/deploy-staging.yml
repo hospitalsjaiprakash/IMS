@@ -1,0 +1,68 @@
+name: Deploy to Staging VPS
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  test-and-validate:
+    name: Build & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Validate Server Syntax & Upload Security Tests
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-test-secret-key-that-is-at-least-64-characters-long-for-validations-12345
+        run: |
+          cd server
+          npm ci --prefer-offline || npm install
+          node --check index.js
+          node --check utils/otpService.js
+          node --check middleware/upload.js
+          node --test --test-force-exit tests/upload.test.js
+
+      - name: Validate Client Lint & Build
+        env:
+          VITE_API_URL: /api
+          VITE_APP_ENV: staging
+        run: |
+          cd client
+          npm ci --prefer-offline || npm install
+          npm run lint
+          npm run build
+
+  deploy:
+    name: Deploy to Staging VPS
+    needs: test-and-validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    steps:
+      - name: Trigger Remote Staging Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          command_timeout: 10m
+          script: |
+            bash /home/ims/staging/app/deploy-staging.sh

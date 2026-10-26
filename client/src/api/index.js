@@ -196,6 +196,12 @@ export const lettersApi = {
   deleteDraft: (incidentId, letterId) => api.delete(`/incidents/${incidentId}/letters/${letterId}`),
   submitToManagement: (incidentId) => api.post(`/incidents/${incidentId}/letters/submit-to-management`),
   managementDecision: (incidentId, data) => api.post(`/incidents/${incidentId}/letters/management-decision`, data),
+  getPdfUrl: (incidentId, letterId) => {
+    const token = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ims_token') : null;
+    const base = `${API_BASE_URL}/incidents/${incidentId}/letters/${letterId}/pdf`;
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  },
+  downloadPdf: (incidentId, letterId) => api.get(`/incidents/${incidentId}/letters/${letterId}/pdf`, { responseType: 'blob' }),
 };
 
 // ── Trainers ──────────────────────────────────────

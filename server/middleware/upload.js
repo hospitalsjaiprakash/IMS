@@ -62,7 +62,7 @@ const fileFilter = (req, file, cb) => {
 };
 
 const limits = {
-  fileSize: parseInt(process.env.MAX_FILE_SIZE_MB || '2', 10) * 1024 * 1024,
+  fileSize: (process.env.NODE_ENV === 'test' ? 2 : parseInt(process.env.MAX_FILE_SIZE_MB || '2', 10)) * 1024 * 1024,
 };
 
 let upload;
@@ -86,6 +86,13 @@ if (isR2Configured() && s3Client && process.env.S3_BUCKET_NAME) {
         }
       }
     }),
+    fileFilter,
+    limits
+  });
+} else if (process.env.NODE_ENV === 'test') {
+  // In automated test environments without R2 credentials, use memory storage for MIME/size validation
+  upload = multer({
+    storage: multer.memoryStorage(),
     fileFilter,
     limits
   });

@@ -13,19 +13,24 @@
  * Run with: node scripts/seed-mock-data.js
  */
 
-require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env'), override: true });
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'aws-0-ap-southeast-1.pooler.supabase.com',
-  port: parseInt(process.env.DB_PORT, 10) === 5432 ? 6543 : (parseInt(process.env.DB_PORT, 10) || 6543),
-  database: process.env.DB_NAME || 'postgres',
-  user: process.env.DB_USER,
+const poolConfig = {
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  database: process.env.DB_NAME || 'jaiprakash_ims_staging',
+  user: process.env.DB_USER || 'ims_app_user',
   password: process.env.DB_PASSWORD,
-  ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 10000,
-});
+};
+
+if (poolConfig.host.includes('supabase.co')) {
+  poolConfig.ssl = { rejectUnauthorized: false };
+}
+
+const pool = new Pool(poolConfig);
 
 async function seed() {
   console.log('\n======================================================');
@@ -440,7 +445,7 @@ async function seed() {
         phone: '9876543299',
         department: 'MD Office',
         designation: 'COO',
-        role: 'coo',
+        role: 'head_management',
         isSystemAdmin: false,
         isImcMember: false,
         isImcLead: false,
@@ -454,7 +459,7 @@ async function seed() {
         phone: '9876543298',
         department: 'Facility',
         designation: 'Assistant COO',
-        role: 'asst_coo',
+        role: 'head_management',
         isSystemAdmin: false,
         isImcMember: false,
         isImcLead: false,
@@ -643,6 +648,7 @@ async function seed() {
     for (const d of deptRows.rows) {
       deptLookup[d.name] = d.id;
     }
+    const deptMap = deptLookup;
 
     // List of diverse mock incidents to populate each role's view
     const mockIncidents = [

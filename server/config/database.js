@@ -1,6 +1,10 @@
 const path = require('path');
 const { Pool, types } = require('pg');
+const isTestEnv = process.env.NODE_ENV === 'test';
 require('dotenv').config({ path: path.resolve(__dirname, '../.env'), override: true });
+if (isTestEnv) {
+  process.env.NODE_ENV = 'test';
+}
 
 // Fix pg driver treating "timestamp without time zone" as local time
 // OID 1114 is for timestamp without time zone. We append 'Z' to force UTC parsing.
