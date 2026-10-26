@@ -1,8 +1,20 @@
 const { query } = require('../config/database');
 const { sendEmail, templates } = require('./emailService');
 
+// Notification Tiering Policy: Only major action-required milestones trigger outgoing emails.
+// Routine queue movements and intermediate transitions remain In-App (Socket.IO + notifications table).
+const EMAIL_ELIGIBLE_TEMPLATES = new Set([
+  'newIncidentHod',        // Action required for HOD
+  'hodSlaReminder',        // Critical SLA deadline warning
+  'incidentToManagement',  // Decision required by Executive Management
+  'priorityEscalated',     // Urgent severity escalation
+  'incidentResolved',      // Final resolution closure directive
+  'trainingRequired',      // Mandatory training order
+  'hodFeedbackReminder'    // Direct reminder from leadership
+]);
+
 /**
- * Create an in-app notification and optionally send an email.
+ * Create an in-app notification and conditionally dispatch an email for major milestones.
  * @param {string} userId - recipient user UUID
  * @param {string|null} incidentId - incident UUID (may be null)
  * @param {string} title - notification title
@@ -44,8 +56,13 @@ const createNotification = async (
       console.warn('[Socket] Failed to emit notification:', socketErr.message);
     }
 
-    // 2. Send email if template + payload available
+    // 2. Dispatch email ONLY if template is eligible under Notification Tiering Policy
     if (emailTemplateKey && emailPayload && templates[emailTemplateKey]) {
+      if (!EMAIL_ELIGIBLE_TEMPLATES.has(emailTemplateKey)) {
+        // Routine operational transition: retained strictly as In-App notification
+        return;
+      }
+
       const userResult = await query('SELECT email, full_name FROM users WHERE id = $1', [userId]);
       const user = userResult.rows[0];
       if (user?.email) {
@@ -55,7 +72,7 @@ const createNotification = async (
           { ...user, ...emailPayload.user },
           ...(emailPayload.extra || [])
         );
-        // Fire and forget — do not await to avoid slowing down request
+        // Dispatch asynchronously with backoff retries — non-blocking for HTTP response
         sendEmail(user.email, templateData).catch(e =>
           console.warn('[Email] Non-critical send failure:', e.message)
         );

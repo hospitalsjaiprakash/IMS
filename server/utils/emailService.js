@@ -285,11 +285,38 @@ const templates = {
 
 };
 
-// ─── Send Email Helper ────────────────────────────────────────────────────────
+// ─── Email Validation Helper ───────────────────────────────────────────────────
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+const isValidEmail = (email) => {
+  if (!email || typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  return trimmed.length <= 254 && EMAIL_REGEX.test(trimmed);
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ─── Send Email Helper with Exponential Backoff Retries ────────────────────────
 const sendEmail = async (to, templateData, options = {}) => {
   if (!to || !templateData) return false;
 
-  // Authentication processes (signup, welcome email, password reset, OTP, credentials) are always permitted.
+  const cleanRecipient = String(to).trim();
+
+  // 1. Strict RFC Syntax Validation
+  if (!isValidEmail(cleanRecipient)) {
+    console.warn(`[Email Validation Failed] Invalid email address rejected: "${to}" for subject: "${templateData.subject}"`);
+    try {
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [cleanRecipient]);
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, error_message)
+         VALUES ($1, $2, 'EMAIL', $3, 'FAILED', $4)`,
+        [userRes.rows[0]?.id || null, cleanRecipient, templateData.subject || 'No Subject', 'Invalid email format rejected by RFC validator']
+      );
+    } catch (_) {}
+    return false;
+  }
+
+  // 2. Authentication processes (signup, welcome email, password reset, OTP, credentials) are always permitted.
   const isAuth = Boolean(
     options.isAuth ||
     templateData.isAuth ||
@@ -300,18 +327,19 @@ const sendEmail = async (to, templateData, options = {}) => {
     templateData.subject?.toLowerCase().includes('verification')
   );
 
+  // 3. System Configuration Check
   if (!isAuth) {
     try {
       const cfgRes = await query("SELECT value FROM system_config WHERE key = 'email_notifications_enabled'");
       const enabled = cfgRes.rows.length === 0 || cfgRes.rows[0].value === 'true';
       if (!enabled) {
-        console.log(`[Email Skipped] General email notifications are disabled in system settings. Skipped sending "${templateData.subject}" to ${to}`);
+        console.log(`[Email Skipped] General email notifications are disabled in system settings. Skipped sending "${templateData.subject}" to ${cleanRecipient}`);
         try {
-          const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+          const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [cleanRecipient]);
           await query(
             `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, error_message)
              VALUES ($1, $2, 'EMAIL', $3, 'FAILED', $4)`,
-            [userRes.rows[0]?.id || null, to, templateData.subject, 'Email notifications disabled in System Settings']
+            [userRes.rows[0]?.id || null, cleanRecipient, templateData.subject, 'Email notifications disabled in System Settings']
           );
         } catch (_) {}
         return true;
@@ -321,19 +349,23 @@ const sendEmail = async (to, templateData, options = {}) => {
     }
   }
 
-  if (process.env.EMAIL_SAFE_MODE === 'mock' || process.env.EMAIL_LOG_ONLY === 'true') {
-    console.log(`[STAGING EMAIL TRAP] Suppressed outgoing email to: ${to}, Subject: "${templateData.subject}"`);
+  // 4. Staging / Mock Email Trap (Safeguard)
+  // Suppresses outgoing emails to protect real staff in staging/dev, but permits authorized testing to hospitalsjaiprakash@gmail.com
+  const isAuthorizedTestRecipient = cleanRecipient.toLowerCase() === 'hospitalsjaiprakash@gmail.com' || cleanRecipient.toLowerCase() === process.env.TEST_EMAIL_WHITELIST?.toLowerCase();
+  if ((process.env.EMAIL_SAFE_MODE === 'mock' || process.env.EMAIL_LOG_ONLY === 'true') && !isAuthorizedTestRecipient && !options.forceRealSend) {
+    console.log(`[STAGING EMAIL TRAP] Suppressed outgoing email to: ${cleanRecipient}, Subject: "${templateData.subject}"`);
     try {
-      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [cleanRecipient]);
       await query(
         `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
          VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
-        [userRes.rows[0]?.id || null, to, `[STAGING TRAP] ${templateData.subject}`]
+        [userRes.rows[0]?.id || null, cleanRecipient, `[STAGING TRAP] ${templateData.subject}`]
       );
     } catch (_) {}
     return true;
   }
 
+  // 5. Development preview when SMTP credentials are placeholders
   if (
     !process.env.SMTP_USER ||
     !process.env.SMTP_PASS ||
@@ -341,17 +373,17 @@ const sendEmail = async (to, templateData, options = {}) => {
     process.env.SMTP_PASS === 'xxxx-xxxx-xxxx-xxxx'
   ) {
     console.log(`\n=================== [DEV EMAIL PREVIEW] ===================`);
-    console.log(`To: ${to}`);
+    console.log(`To: ${cleanRecipient}`);
     console.log(`Subject: ${templateData.subject}`);
     console.log(`Note: SMTP not configured with real credentials in .env. Email simulated.`);
     console.log(`===========================================================\n`);
 
     try {
-      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
+      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [cleanRecipient]);
       await query(
         `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
          VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
-        [userRes.rows[0]?.id || null, to, templateData.subject]
+        [userRes.rows[0]?.id || null, cleanRecipient, templateData.subject]
       );
     } catch (dbErr) {
       console.warn('[Email Log Error]', dbErr.message);
@@ -360,52 +392,87 @@ const sendEmail = async (to, templateData, options = {}) => {
     return true;
   }
 
+  // 6. Build Mail Options with Full Header and Attachment Support
+  const mailOptions = {
+    from: process.env.FROM_EMAIL || `"JPHRC IMS" <${process.env.SMTP_USER}>`,
+    replyTo: process.env.REPLY_TO_EMAIL || process.env.FROM_EMAIL || `"JPHRC IMS" <${process.env.SMTP_USER}>`,
+    to: cleanRecipient,
+    subject: templateData.subject,
+    html: templateData.html,
+    text: templateData.text || undefined,
+    attachments: templateData.attachments || options.attachments || undefined,
+    headers: {
+      'X-Entity-Ref-ID': templateData.referenceId || Date.now().toString(),
+      'X-Mailer': 'JPHRC-IMS-Mailer/1.0',
+    },
+  };
+
+  // 7. Resilient Dispatch with Exponential Backoff Retry (Up to 3 Attempts)
+  const MAX_RETRIES = 3;
+  const RETRY_DELAYS_MS = [0, 2000, 5000]; // immediate, 2s, 5s
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 1) {
+        const delay = RETRY_DELAYS_MS[attempt - 1] || 3000;
+        console.log(`[SMTP Retry] Retrying email to: ${cleanRecipient} (Attempt ${attempt}/${MAX_RETRIES} after ${delay}ms delay)...`);
+        await sleep(delay);
+      }
+
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`[Email SENT] To: ${cleanRecipient} | Subject: "${templateData.subject}" | ID: ${info.messageId}`);
+
+      try {
+        const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [cleanRecipient]);
+        await query(
+          `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
+           VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
+          [userRes.rows[0]?.id || null, cleanRecipient, templateData.subject]
+        );
+      } catch (dbErr) {
+        console.warn('[Email Log Error]', dbErr.message);
+      }
+
+      return true;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[SMTP Attempt ${attempt}/${MAX_RETRIES} Failed] To: ${cleanRecipient} | Error: ${err.message}`);
+
+      // If error indicates bad recipient or permanent reject (5xx), do not retry
+      if (err.responseCode && err.responseCode >= 500 && err.responseCode < 600) {
+        console.warn(`[SMTP Permanent 5xx Rejection] Non-retryable error for ${cleanRecipient}: ${err.message}`);
+        break;
+      }
+    }
+  }
+
+  // 8. If all retries fail, log failure in communication_logs
+  console.error(`[Email FINAL FAILURE] To: ${cleanRecipient} | Final Error: ${lastError?.message}`);
   try {
-    const info = await transporter.sendMail({
-      from: process.env.FROM_EMAIL || `"JPHRC IMS" <${process.env.SMTP_USER}>`,
-      to,
-      subject: templateData.subject,
-      html: templateData.html,
-    });
-    console.log(`[Email SENT] To: ${to} | Subject: ${templateData.subject} | ID: ${info.messageId}`);
-
-    try {
-      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
-      await query(
-        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status)
-         VALUES ($1, $2, 'EMAIL', $3, 'SENT')`,
-        [userRes.rows[0]?.id || null, to, templateData.subject]
-      );
-    } catch (dbErr) {
-      console.warn('[Email Log Error]', dbErr.message);
-    }
-
-    return true;
-  } catch (err) {
-    console.error(`[Email FAILED] To: ${to} | Error: ${err.message}`);
-
-    try {
-      const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [to]);
-      await query(
-        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, error_message)
-         VALUES ($1, $2, 'EMAIL', $3, 'FAILED', $4)`,
-        [userRes.rows[0]?.id || null, to, templateData.subject, err.message]
-      );
-    } catch (dbErr) {
-      console.warn('[Email Log Error]', dbErr.message);
-    }
-
-    return false;
+    const userRes = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [cleanRecipient]);
+    await query(
+      `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, status, error_message)
+       VALUES ($1, $2, 'EMAIL', $3, 'FAILED', $4)`,
+      [userRes.rows[0]?.id || null, cleanRecipient, templateData.subject, lastError?.message || 'SMTP delivery failure']
+    );
+  } catch (dbErr) {
+    console.warn('[Email Log Error]', dbErr.message);
   }
+
+  return false;
 };
 
 // ─── Bulk send helper ─────────────────────────────────────────────────────────
-const sendBulkEmail = async (recipients, templateFn) => {
+const sendBulkEmail = async (recipients, templateFn, options = {}) => {
+  if (!Array.isArray(recipients) || recipients.length === 0) return;
   const results = await Promise.allSettled(
-    recipients.map(r => sendEmail(r.email, templateFn(r)))
+    recipients.map(r => sendEmail(r.email, templateFn(r), options))
   );
-  const failed = results.filter(r => r.status === 'rejected').length;
-  if (failed > 0) console.warn(`[Email] ${failed}/${recipients.length} emails failed.`);
+  const failed = results.filter(r => r.status === 'rejected' || r.value === false).length;
+  if (failed > 0) {
+    console.warn(`[Email Bulk] ${failed}/${recipients.length} emails failed delivery.`);
+  }
 };
 
-module.exports = { sendEmail, sendBulkEmail, templates };
+module.exports = { sendEmail, sendBulkEmail, templates, isValidEmail };

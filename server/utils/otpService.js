@@ -35,6 +35,7 @@ exports.sendOtp = async (employeeId, email, action) => {
 
     const mailOptions = {
       from: process.env.FROM_EMAIL || 'JPHRC IMS <digitalmarketing@jaiprakashhospitals.com>',
+      replyTo: process.env.REPLY_TO_EMAIL || process.env.FROM_EMAIL || 'JPHRC IMS <digitalmarketing@jaiprakashhospitals.com>',
       to: email,
       subject: 'JPHRC IMS - Your Security OTP',
       html: `
@@ -51,9 +52,11 @@ exports.sendOtp = async (employeeId, email, action) => {
       `,
     };
 
+    const isAuthorizedTestRecipient = (email || '').toLowerCase() === 'hospitalsjaiprakash@gmail.com' || (email || '').toLowerCase() === process.env.TEST_EMAIL_WHITELIST?.toLowerCase();
+    const isMockSuppressed = (process.env.EMAIL_SAFE_MODE === 'mock' || process.env.EMAIL_LOG_ONLY === 'true') && !isAuthorizedTestRecipient;
+
     if (
-      process.env.EMAIL_SAFE_MODE === 'mock' ||
-      process.env.EMAIL_LOG_ONLY === 'true' ||
+      isMockSuppressed ||
       !process.env.SMTP_USER ||
       !process.env.SMTP_PASS ||
       process.env.SMTP_USER === 'your-gmail@gmail.com' ||
@@ -65,14 +68,38 @@ exports.sendOtp = async (employeeId, email, action) => {
       console.log(`Action: ${cleanAction}`);
       console.log(`OTP Code: ${otp}`);
       console.log('=============================================\n');
+
+      try {
+        await query(
+          `INSERT INTO communication_logs (recipient_contact, type, subject, status)
+           VALUES ($1, 'EMAIL', 'JPHRC IMS - Your Security OTP', 'SENT')`,
+          [email]
+        );
+      } catch (_) {}
+
       return true;
     }
 
     try {
-      await transporter.sendMail(mailOptions);
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`[OTP] Sent successfully to ${email} (MessageId: ${info?.messageId || 'ok'})`);
+      try {
+        await query(
+          `INSERT INTO communication_logs (recipient_contact, type, subject, status)
+           VALUES ($1, 'EMAIL', 'JPHRC IMS - Your Security OTP', 'SENT')`,
+          [email]
+        );
+      } catch (_) {}
     } catch (mailError) {
       console.warn('[OTP] Mail server dispatch warning:', mailError.message);
       console.log(`[DEVELOPMENT / FALLBACK] OTP for ${email}: ${otp}`);
+      try {
+        await query(
+          `INSERT INTO communication_logs (recipient_contact, type, subject, status, error_message)
+           VALUES ($1, 'EMAIL', 'JPHRC IMS - Your Security OTP', 'FAILED', $2)`,
+          [email, mailError.message]
+        );
+      } catch (_) {}
     }
     return true;
   } catch (error) {
