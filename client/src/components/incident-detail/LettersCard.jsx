@@ -506,6 +506,9 @@ export default function LettersCard({
                         href={lettersApi.getPdfUrl(incident.id, letter.id)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={(e) => {
+                          e.currentTarget.href = lettersApi.getPdfUrl(incident.id, letter.id);
+                        }}
                         className="text-emerald-700 hover:text-emerald-900 font-semibold flex items-center gap-1 text-[11px]"
                         title="Download or preview authentic letterhead PDF"
                       >
@@ -560,7 +563,10 @@ export default function LettersCard({
                   href={lettersApi.getPdfUrl(incident.id, selectedViewLetter.id)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  download={`${selectedViewLetter.reference_number || selectedViewLetter.ref_number || 'letter'}.pdf`}
+                  onClick={(e) => {
+                    e.currentTarget.href = lettersApi.getPdfUrl(incident.id, selectedViewLetter.id);
+                  }}
+                  download={`${(selectedViewLetter.reference_number || selectedViewLetter.ref_number || 'letter').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`}
                   className="btn-primary text-xs flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white"
                 >
                   <FileText size={14} /> Download Official PDF
