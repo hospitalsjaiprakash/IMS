@@ -85,7 +85,6 @@ function getHeaderTemplate() {
       padding: 6px 18mm 2px 18mm;
     }
     .brand-col {
-      width: 44%;
       display: flex;
       flex-direction: column;
       justify-content: center;
@@ -102,20 +101,25 @@ function getHeaderTemplate() {
       margin-top: 3px;
       letter-spacing: 0.2px;
     }
+    .right-unit {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
     .div-line {
       width: 1.5px;
       height: 56px;
       background-color: #94a3b8;
-      margin: 0 10px;
     }
     .contact-col {
-      width: 39%;
       display: flex;
       flex-direction: column;
       justify-content: center;
       font-size: 6.8pt;
       line-height: 1.38;
       color: #1e293b;
+      white-space: nowrap;
     }
     .contact-row {
       display: flex;
@@ -125,10 +129,10 @@ function getHeaderTemplate() {
       white-space: nowrap;
     }
     .nabh-col {
-      width: 15%;
       display: flex;
       align-items: center;
       justify-content: flex-end;
+      padding-left: 2px;
     }
     .nabh-img {
       height: 58px;
@@ -145,26 +149,28 @@ function getHeaderTemplate() {
         <img class="brand-img" src="data:image/png;base64,${headerLogoBase64}" alt="Jaiprakash Hospitals" />
         <div class="doc-num">Doc. No.: JPHRC/GNR/FRM/004A</div>
       </div>
-      <div class="div-line"></div>
-      <div class="contact-col">
-        <div class="contact-row">
-          <span>${ICON_PIN}<strong>Main Hospital :</strong> Dayanand Nagar, Rourkela-769004, Odisha</span>
+      <div class="right-unit">
+        <div class="div-line"></div>
+        <div class="contact-col">
+          <div class="contact-row">
+            <span>${ICON_PIN}<strong>Main Hospital :</strong> Dayanand Nagar, Rourkela-769004, Odisha</span>
+          </div>
+          <div class="contact-row">
+            <span>${ICON_PHONE}<strong>Helpline No. :</strong> 9779 109 109</span>
+          </div>
+          <div class="contact-row">
+            <span>${ICON_MAIL}info@jaiprakashhospitals.com</span>
+          </div>
+          <div class="contact-row">
+            <span>${ICON_GLOBE}www.jaiprakashhospitals.com</span>
+          </div>
+          <div style="font-weight: 700; margin-top: 1px; color: #0f172a;">
+            CIN : U85120OR2008PTC029111
+          </div>
         </div>
-        <div class="contact-row">
-          <span>${ICON_PHONE}<strong>Helpline No. :</strong> 9779 109 109</span>
+        <div class="nabh-col">
+          <img class="nabh-img" src="data:image/svg+xml;base64,${nabhBase64}" alt="NABH Accredited" />
         </div>
-        <div class="contact-row">
-          <span>${ICON_MAIL}info@jaiprakashhospitals.com</span>
-        </div>
-        <div class="contact-row">
-          <span>${ICON_GLOBE}www.jaiprakashhospitals.com</span>
-        </div>
-        <div style="font-weight: 700; margin-top: 1px; color: #0f172a;">
-          CIN : U85120OR2008PTC029111
-        </div>
-      </div>
-      <div class="nabh-col">
-        <img class="nabh-img" src="data:image/svg+xml;base64,${nabhBase64}" alt="NABH Accredited" />
       </div>
     </div>
   </div>

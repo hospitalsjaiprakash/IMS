@@ -594,7 +594,7 @@ export default function LettersCard({
             {/* Letterhead Header Content */}
             <div className="px-6 py-2.5 flex items-center justify-between border-b border-slate-100 bg-white">
               {/* Brand Logo & Doc Control */}
-              <div className="w-[42%] flex flex-col justify-center">
+              <div className="flex flex-col justify-center">
                 <img
                   src="/letterhead/jph-header-logo.png"
                   alt="Jaiprakash Hospital"
@@ -605,31 +605,34 @@ export default function LettersCard({
                 </div>
               </div>
 
-              {/* Vertical Divider */}
-              <div className="w-[1px] h-14 bg-slate-300 mx-2"></div>
+              {/* Hospital Info & NABH (Single Unit, Aligned to Right) */}
+              <div className="flex items-center gap-3 shrink-0">
+                {/* Vertical Divider */}
+                <div className="w-[1px] h-14 bg-slate-300"></div>
 
-              {/* Contact Information */}
-              <div className="w-[42%] text-[9px] leading-[1.35] text-slate-700">
-                <div className="truncate">
-                  <span className="text-[#146537] font-bold">📍 Main Hospital :</span> Dayanand Nagar, Rourkela-769004, Odisha
+                {/* Contact Information */}
+                <div className="text-[9px] leading-[1.35] text-slate-700">
+                  <div>
+                    <span className="text-[#146537] font-bold">📍 Main Hospital :</span> Dayanand Nagar, Rourkela-769004, Odisha
+                  </div>
+                  <div>
+                    <span className="text-[#146537] font-bold">📞 Helpline No. :</span> 9779 109 109
+                  </div>
+                  <div>✉️ info@jaiprakashhospitals.com</div>
+                  <div>🌐 www.jaiprakashhospitals.com</div>
+                  <div className="font-bold text-slate-900 mt-0.5">
+                    CIN : U85120OR2008PTC029111
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[#146537] font-bold">📞 Helpline No. :</span> 9779 109 109
-                </div>
-                <div>✉️ info@jaiprakashhospitals.com</div>
-                <div>🌐 www.jaiprakashhospitals.com</div>
-                <div className="font-bold text-slate-900 mt-0.5">
-                  CIN : U85120OR2008PTC029111
-                </div>
-              </div>
 
-              {/* NABH Badge */}
-              <div className="w-[14%] flex justify-end">
-                <img
-                  src="/letterhead/nabh-accredited-logo.svg"
-                  alt="NABH Accredited"
-                  className="h-14 w-auto object-contain"
-                />
+                {/* NABH Badge */}
+                <div className="shrink-0 pl-1">
+                  <img
+                    src="/letterhead/nabh-accredited-logo.svg"
+                    alt="NABH Accredited"
+                    className="h-14 w-auto object-contain"
+                  />
+                </div>
               </div>
             </div>
 
