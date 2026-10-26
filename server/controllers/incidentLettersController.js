@@ -6,6 +6,9 @@ const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeServi
 const { buildInitialLetterData, TEMPLATE_DEFINITIONS, formatDate } = require('../utils/letterTemplates');
 const { numberToWords } = require('../utils/numberToWords');
 const { recordEvent, recordLetterVersion, getNextRoundNo } = require('../utils/incidentEvents');
+const { generateLetterPdf } = require('../services/pdfService');
+const { buildEmailDispatchNoticeHtml } = require('../templates/letterHtmlTemplate');
+const { isR2Configured, uploadToR2, downloadFromR2 } = require('../config/s3');
 
 /**
  * Helper to normalize template keys between frontend and database check constraints
@@ -77,6 +80,70 @@ exports.getIncidentLetters = async (req, res) => {
   } catch (error) {
     console.error('[GET /incidents/:id/letters] error:', error);
     res.status(500).json({ error: 'Failed to fetch incident letters.' });
+  }
+};
+
+// =============================================
+// GET OFFICIAL LETTER PDF (Draft or Frozen)
+// =============================================
+exports.getLetterPdf = async (req, res) => {
+  try {
+    const { id, letterId } = req.params;
+
+    const letterRes = await query(
+      `SELECT l.*,
+              u_draft.full_name as drafted_by_name,
+              u_app.full_name as approved_by_name
+       FROM incident_letters l
+       LEFT JOIN users u_draft ON u_draft.id = l.drafted_by
+       LEFT JOIN users u_app ON u_app.id = l.approved_by
+       WHERE l.id = $1 AND l.incident_id = $2`,
+      [letterId, id]
+    );
+
+    if (!letterRes.rows.length) {
+      return res.status(404).json({ error: 'Letter not found.' });
+    }
+
+    const letter = letterRes.rows[0];
+    const isApproved = ['approved', 'dispatched'].includes(letter.status);
+
+    // If letter is already approved and has frozen PDF in R2, stream from R2
+    if (isApproved && letter.pdf_storage_path && isR2Configured()) {
+      try {
+        const buffer = await downloadFromR2(letter.pdf_storage_path);
+        const filename = `${letter.reference_number || 'letter'}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+        return res.end(Buffer.from(buffer));
+      } catch (r2Err) {
+        console.warn('[getLetterPdf] Failed downloading from R2, generating fresh:', r2Err.message);
+      }
+    }
+
+    // Generate PDF on the fly
+    const incRes = await query('SELECT * FROM incidents WHERE id = $1', [id]);
+    const incident = incRes.rows[0] || {};
+    const qrCodeDataUrl = letter.qr_code_url || await generateIncidentQrCode(id);
+
+    const pdfBuffer = await generateLetterPdf({
+      letter,
+      incident,
+      approvers: {
+        draftedByName: letter.drafted_by_name,
+        approvedByName: letter.approved_by_name
+      },
+      qrCodeDataUrl,
+      isDraft: !isApproved
+    });
+
+    const filename = `${letter.reference_number || 'letter'}${!isApproved ? '_DRAFT' : ''}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    return res.end(Buffer.from(pdfBuffer));
+  } catch (error) {
+    console.error('[GET /incidents/:id/letters/:letterId/pdf] error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate letter PDF.' });
   }
 };
 
@@ -717,16 +784,62 @@ exports.submitManagementLetterDecision = async (req, res) => {
     // ── POST-COMMIT ASYNCHRONOUS NOTIFICATIONS & EMAIL DISPATCH (NON-BLOCKING) ──
     try {
       const incidentUrl = getIncidentUrl(id);
+      const approverName = req.user.full_name || 'Executive Management Authority';
+
       for (const letter of lettersRes.rows) {
         try {
           const qrCodeDataUrl = letter.qr_code_url || await generateIncidentQrCode(id);
-          const emailHtml = buildLetterEmailHtml(letter, incident, incidentUrl, qrCodeDataUrl);
+
+          // 1. Generate frozen authentic hospital letterhead PDF
+          let pdfBuffer = null;
+          try {
+            pdfBuffer = await generateLetterPdf({
+              letter,
+              incident,
+              approvers: {
+                draftedByName: letter.drafted_by_name || 'Incident Management Committee Lead',
+                approvedByName: approverName
+              },
+              qrCodeDataUrl,
+              isDraft: false
+            });
+
+            // 2. Freeze PDF into Cloudflare R2
+            if (isR2Configured() && pdfBuffer) {
+              const s3Key = `${incident.reference_id}/letters/${letter.reference_number}.pdf`;
+              await uploadToR2(s3Key, pdfBuffer, 'application/pdf', {
+                incidentId: id,
+                letterId: letter.id,
+                referenceNumber: letter.reference_number
+              });
+              await query('UPDATE incident_letters SET pdf_storage_path = $1 WHERE id = $2', [s3Key, letter.id]);
+              letter.pdf_storage_path = s3Key;
+            }
+          } catch (pdfErr) {
+            console.error('[Letter Dispatch] Warning generating PDF for letter:', letter.id, pdfErr.message);
+          }
+
+          // 3. Build email notification with PDF attachment
+          const emailHtml = buildEmailDispatchNoticeHtml({
+            letter,
+            incident,
+            portalUrl: incidentUrl
+          });
+
+          const emailAttachments = pdfBuffer ? [
+            {
+              filename: `${letter.reference_number}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf'
+            }
+          ] : [];
 
           if (letter.recipient_email) {
             sendEmail(letter.recipient_email, {
               subject: `${letter.subject} - Ref: ${letter.reference_number}`,
               html: emailHtml,
-              text: `${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo:\n${letter.recipient_name} (${letter.recipient_emp_no || ''})\n${letter.recipient_department} - ${letter.recipient_designation}\n\n${letter.body_text}\n\nVerify incident at: ${incidentUrl}`
+              text: `${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo:\n${letter.recipient_name} (${letter.recipient_emp_no || ''})\n${letter.recipient_department} - ${letter.recipient_designation}\n\n${letter.body_text}\n\nOfficial signed letter is attached.\nVerify incident at: ${incidentUrl}`,
+              attachments: emailAttachments
             }).catch(err => console.error('[Letter Dispatch] Email to employee failed:', err.message));
           }
 
@@ -742,7 +855,8 @@ exports.submitManagementLetterDecision = async (req, res) => {
               sendEmail(cc.email, {
                 subject: `[CC] ${letter.subject} - Ref: ${letter.reference_number}`,
                 html: emailHtml,
-                text: `[CARBON COPY]\n\n${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo: ${letter.recipient_name}\n\n${letter.body_text}\n\nIncident URL: ${incidentUrl}`
+                text: `[CARBON COPY]\n\n${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo: ${letter.recipient_name}\n\nOfficial signed letter is attached.\nIncident URL: ${incidentUrl}`,
+                attachments: emailAttachments
               }).catch(err => console.error('[Letter Dispatch] CC email failed:', err.message));
             }
           }

@@ -89,6 +89,13 @@ if (isR2Configured() && s3Client && process.env.S3_BUCKET_NAME) {
     fileFilter,
     limits
   });
+} else if (process.env.NODE_ENV === 'test') {
+  // In automated test environments without R2 credentials, use memory storage for MIME/size validation
+  upload = multer({
+    storage: multer.memoryStorage(),
+    fileFilter,
+    limits
+  });
 } else {
   // If R2 is not configured, strictly prohibit local disk upload fallback as per hospital directive
   upload = {

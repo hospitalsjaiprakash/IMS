@@ -55,6 +55,10 @@ npm run build
 log "Syncing staging client build assets to /home/ims/staging/public_html..."
 mkdir -p /home/ims/staging/public_html/assets
 rsync -av --delete "$APP_DIR/client/dist/assets/" /home/ims/staging/public_html/assets/
+if [ -d "$APP_DIR/client/dist/letterhead" ]; then
+  mkdir -p /home/ims/staging/public_html/letterhead
+  rsync -av --delete "$APP_DIR/client/dist/letterhead/" /home/ims/staging/public_html/letterhead/
+fi
 /bin/cp -f "$APP_DIR/client/dist/index.html" /home/ims/staging/public_html/
 /bin/cp -f "$APP_DIR/client/dist/"*.svg /home/ims/staging/public_html/ 2>/dev/null || true
 /bin/cp -f "$APP_DIR/client/dist/.htaccess" /home/ims/staging/public_html/ 2>/dev/null || true

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 135" width="120" height="135">
+  <defs>
+    <!-- Upper arc for text (clockwise) -->
+    <path id="upperArc" d="M 16,60 A 44,44 0 0,1 104,60" fill="none" />
+    <!-- Lower arc for text (clockwise from bottom left to bottom right) -->
+    <path id="lowerArc" d="M 22,64 A 42,42 0 0,0 98,64" fill="none" />
+  </defs>
+
+  <!-- Outer Ring (Maroon) -->
+  <circle cx="60" cy="60" r="54" fill="none" stroke="#991b1b" stroke-width="4.5" />
+  
+  <!-- Upper Text: PATIENT SAFETY & QUALITY OF CARE -->
+  <text font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="6.2" font-weight="800" fill="#991b1b" letter-spacing="0.3px">
+    <textPath href="#upperArc" startOffset="50%" text-anchor="middle">
+      PATIENT SAFETY &amp; QUALITY OF CARE
+    </textPath>
+  </text>
+
+  <!-- Lower Text: ACCREDITED -->
+  <text font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="7.5" font-weight="900" fill="#991b1b" letter-spacing="1px">
+    <textPath href="#lowerArc" startOffset="50%" text-anchor="middle">
+      ACCREDITED
+    </textPath>
+  </text>
+
+  <!-- Inner Blue Ring -->
+  <circle cx="60" cy="60" r="34" fill="#f0f9ff" stroke="#0284c7" stroke-width="3" />
+
+  <!-- Medical Symbol / Caduceus Graphics inside -->
+  <g transform="translate(60, 52) scale(0.65)">
+    <!-- Wings / Leaves -->
+    <path d="M-18,-8 C-12,-16 -4,-12 0,-4 C4,-12 12,-16 18,-8 C10,-4 4,2 0,6 C-4,2 -10,-4 -18,-8 Z" fill="#0284c7" />
+    <!-- Central Staff -->
+    <rect x="-1.5" y="-12" width="3" height="24" rx="1.5" fill="#0369a1" />
+    <circle cx="0" cy="-14" r="3.5" fill="#0369a1" />
+  </g>
+
+  <!-- Red Center Triangle / Banner for NABH -->
+  <polygon points="35,66 85,66 60,78" fill="#dc2626" stroke="#991b1b" stroke-width="0.8" />
+  
+  <!-- NABH Text inside badge -->
+  <text x="60" y="64" text-anchor="middle" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="900" fill="#0369a1" letter-spacing="0.8px">NABH</text>
+
+  <!-- Bottom Certificate Number -->
+  <text x="60" y="127" text-anchor="middle" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" fill="#334155" letter-spacing="0.5px">H-2023-1175</text>
+</svg>

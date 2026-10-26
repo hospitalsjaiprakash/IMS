@@ -53,6 +53,7 @@ router.post('/:id/management-action', authenticate, authorize('head_management',
 // Formal Letter Workflow
 router.get('/:id/letters', authenticate, incidentLettersController.getIncidentLetters);
 router.get('/:id/letters/defaults', authenticate, incidentLettersController.getLetterTemplateDefaults);
+router.get('/:id/letters/:letterId/pdf', authenticate, incidentLettersController.getLetterPdf);
 router.post('/:id/letters/draft', authenticate, authorize('imc', 'system_admin'), incidentLettersController.saveLetterDraft);
 router.delete('/:id/letters/:letterId', authenticate, authorize('imc', 'system_admin'), incidentLettersController.deleteLetterDraft);
 router.post('/:id/letters/submit-to-management', authenticate, authorize('imc', 'system_admin'), incidentLettersController.submitLettersToManagement);

@@ -710,131 +710,192 @@ export default function LetterDraftingModal({
 
         {/* --- TAB 2: LIVE LETTERHEAD PREVIEW --- */}
         {activeTab === 'preview' && (
-          <div className="bg-white border-2 border-slate-300 rounded-xl p-8 shadow-sm font-serif text-slate-800 space-y-6 max-h-[60vh] overflow-y-auto">
-            {/* Hospital Header */}
-            <div className="border-b-2 border-slate-800 pb-4 text-center">
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <Building className="text-slate-800" size={24} />
-                <h1 className="text-xl font-bold tracking-wide uppercase text-slate-900">
-                  Jai Prakash Hospital & Research Centre
-                </h1>
-              </div>
-              <p className="text-[11px] font-sans text-slate-600 tracking-wider uppercase font-semibold">
-                Incident Management Committee (IMC) • Quality & Patient Safety Division
-              </p>
-              <p className="text-[10px] font-sans text-slate-500 mt-0.5">
-                JPHRC Campus, Main Road • Phone: +91-1234-567890 • Email: imc@jphrc.org
-              </p>
+          <div className="relative bg-white border border-slate-300 rounded-lg overflow-hidden shadow-sm font-sans max-h-[65vh] overflow-y-auto">
+            {/* Top Green Band with Lime Wedge */}
+            <div className="relative w-full h-3 bg-[#146537] overflow-hidden">
+              <div className="absolute top-0 left-0 w-8 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
+              <div className="absolute top-0 left-7 w-1.5 h-full bg-white -skew-x-[35deg]"></div>
             </div>
 
-            {/* Reference Number & Date */}
-            <div className="flex items-center justify-between text-xs font-sans font-semibold text-slate-700 border-b border-slate-100 pb-2">
-              <div>
-                Ref. No: <span className="font-mono text-slate-900 font-bold">{refNumber || 'JPHRC/IMC/PENDING'}</span>
+            {/* Letterhead Header Content */}
+            <div className="px-6 py-2.5 flex items-center justify-between border-b border-slate-100 bg-white">
+              {/* Brand Logo & Doc Control */}
+              <div className="w-[42%] flex flex-col justify-center">
+                <img
+                  src="/letterhead/jph-header-logo.png"
+                  alt="Jaiprakash Hospital"
+                  className="h-9 object-contain object-left"
+                />
+                <div className="text-[10px] font-semibold text-slate-600 mt-1 tracking-tight">
+                  Doc. No.: JPHRC/GNR/FRM/004A
+                </div>
               </div>
-              <div>
-                Date: <span className="text-slate-900">{letterDate}</span>
+
+              {/* Vertical Divider */}
+              <div className="w-[1px] h-14 bg-slate-300 mx-2"></div>
+
+              {/* Contact Information */}
+              <div className="w-[42%] text-[9px] leading-[1.35] text-slate-700">
+                <div className="truncate">
+                  <span className="text-[#146537] font-bold">📍 Main Hospital :</span> Dayanand Nagar, Rourkela-769004, Odisha
+                </div>
+                <div>
+                  <span className="text-[#146537] font-bold">📞 Helpline No. :</span> 9779 109 109
+                </div>
+                <div>✉️ info@jaiprakashhospitals.com</div>
+                <div>🌐 www.jaiprakashhospitals.com</div>
+                <div className="font-bold text-slate-900 mt-0.5">
+                  CIN : U85120OR2008PTC029111
+                </div>
+              </div>
+
+              {/* NABH Badge */}
+              <div className="w-[14%] flex justify-end">
+                <img
+                  src="/letterhead/nabh-accredited-logo.svg"
+                  alt="NABH Accredited"
+                  className="h-14 w-auto object-contain"
+                />
               </div>
             </div>
 
-            {/* Addressed To */}
-            <div className="text-xs font-sans space-y-0.5 text-slate-800">
-              <p className="font-bold">To,</p>
-              <p className="font-bold text-sm text-slate-900">
-                {selectedEmployeeObj.full_name || selectedEmployeeObj.name || '[Employee Name]'}
-              </p>
-              <p className="text-slate-600">
-                Employee ID: <span className="font-mono font-semibold">{selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && selectedEmployeeObj.employee_id.length < 20 ? selectedEmployeeObj.employee_id : '') || '[Code]'}</span>
-              </p>
-              <p className="text-slate-600">
-                Designation: <span className="font-semibold">{recipientDesignation || selectedEmployeeObj.designation || 'Staff'}</span>
-              </p>
-              <p className="text-slate-600">
-                Department: <span className="font-semibold">{recipientDepartment || selectedEmployeeObj.department || selectedEmployeeObj.department_name || '[Department]'}</span>
-              </p>
-              {recipientEmail && (
-                <p className="text-slate-500 text-[11px]">
-                  Email: {recipientEmail}
+            {/* Central Watermark (60% width, 7% opacity) */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+              <img
+                src="/letterhead/jph-round-watermark.png"
+                alt="JPH Watermark"
+                className="w-[60%] max-w-[340px] opacity-[0.07] object-contain select-none"
+              />
+            </div>
+
+            {/* Draft Watermark Overlay */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+              <span className="text-4xl font-black text-rose-500/10 uppercase tracking-[0.3em] -rotate-45 select-none">
+                DRAFT — FOR REVIEW
+              </span>
+            </div>
+
+            {/* Letter Printable Body */}
+            <div className="relative z-10 px-8 py-6 space-y-4 text-xs text-slate-800 leading-relaxed">
+              {/* Ref No & Date */}
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2 text-xs font-semibold text-slate-700">
+                <div>
+                  Ref No: <span className="font-mono text-slate-900 font-bold">{refNumber || 'JPHRC/IMC/PENDING'}</span>
+                </div>
+                <div>
+                  Date: <span className="text-slate-900">{letterDate}</span>
+                </div>
+              </div>
+
+              {/* Recipient Addressee Block */}
+              <div className="bg-slate-50 border-l-4 border-[#146537] p-3 rounded text-xs space-y-0.5">
+                <p className="font-bold text-slate-900">To,</p>
+                <p className="font-bold text-sm text-[#146537]">
+                  {selectedEmployeeObj.full_name || selectedEmployeeObj.name || '[Employee Name]'}
                 </p>
+                {(selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && selectedEmployeeObj.employee_id.length < 20 ? selectedEmployeeObj.employee_id : '')) && (
+                  <p className="text-slate-600 font-medium">
+                    Emp. ID: <span className="font-mono">{selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || selectedEmployeeObj.employee_id}</span>
+                  </p>
+                )}
+                <p className="text-slate-600">
+                  Department: <span className="font-semibold">{recipientDepartment || selectedEmployeeObj.department || selectedEmployeeObj.department_name || '[Department]'}</span>
+                  {(recipientDesignation || selectedEmployeeObj.designation) && (
+                    <span> • Designation: <span className="font-semibold">{recipientDesignation || selectedEmployeeObj.designation}</span></span>
+                  )}
+                </p>
+              </div>
+
+              {/* Subject */}
+              <div className="font-bold text-slate-900 text-xs">
+                Subject: <u className="underline decoration-[#146537] underline-offset-2">{subject || '[Subject line pending]'}</u>
+              </div>
+
+              {/* Incident Context Badge */}
+              <div className="text-[11px] bg-amber-50 border border-amber-200 rounded p-2 text-amber-900">
+                <strong>Incident Context:</strong> {incident?.reference_id} • Occurred on {formatDate(incident?.incident_date)}
+              </div>
+
+              {/* Salutation */}
+              <div className="font-semibold text-slate-800">
+                Dear Staff,
+              </div>
+
+              {/* Body Paragraphs */}
+              <div className="leading-relaxed whitespace-pre-line text-slate-700 text-justify space-y-2">
+                {bodyContent || 'No letter content written yet. Switch to Editor tab to write content.'}
+              </div>
+
+              {/* Monetary Penalty Box (if applicable) */}
+              {penaltyAmount && (
+                <div className="bg-rose-50 border border-rose-200 border-l-4 border-l-rose-600 p-3 rounded text-xs text-rose-900">
+                  <div className="font-bold">Monetary Penalty Ordered: ₹{Number(penaltyAmount).toLocaleString('en-IN')} {penaltyAmountWords ? `(${penaltyAmountWords})` : ''}</div>
+                  <div className="text-[10px] text-rose-700 mt-0.5">Recovery shall be processed through Accounts / Payroll as per hospital disciplinary regulations.</div>
+                </div>
               )}
-              <p className="text-slate-600">Jai Prakash Hospital & Research Centre</p>
-            </div>
 
-            {/* Subject */}
-            <div className="text-xs font-sans font-bold text-slate-900 border-l-4 border-slate-800 pl-3 py-1 bg-slate-50">
-              Subject: <u>{subject || '[Subject line pending]'}</u>
-            </div>
+              {/* Closing Sign-off Section */}
+              <div className="pt-4 border-t border-slate-200 space-y-1">
+                <div className="font-bold text-slate-900">By Order of,</div>
+                <div className="font-semibold text-slate-800">Incident Management Committee & Executive Management</div>
+                <div className="text-[10px] text-slate-500">Jaiprakash Hospital and Research Centre Pvt. Ltd.</div>
 
-            {/* Incident Context Badge */}
-            <div className="text-[11px] font-sans bg-amber-50/70 border border-amber-200 rounded p-2 text-amber-900">
-              <strong>Incident Reference:</strong> {incident?.reference_id} • Occurred on {formatDate(incident?.incident_date)}
-            </div>
-
-            {/* Body */}
-            <div className="text-xs leading-relaxed text-slate-800 whitespace-pre-line font-serif space-y-3">
-              {bodyContent || 'No letter content written yet. Switch to Editor to write content.'}
-            </div>
-
-            {/* Signatures */}
-            <div className="pt-8 grid grid-cols-2 gap-4 text-xs font-sans">
-              <div className="border-t border-slate-400 pt-2 text-left">
-                <p className="font-bold text-slate-900">Incident Management Committee</p>
-                <p className="text-[10px] text-slate-500">Convenor / Chairperson</p>
-                <p className="text-[9px] text-slate-400">JPHRC Quality Assurance</p>
-              </div>
-              <div className="border-t border-slate-400 pt-2 text-right">
-                <p className="font-bold text-slate-900">Executive Management</p>
-                <p className="text-[10px] text-slate-500">Medical Superintendent / Director</p>
-                <p className="text-[9px] text-slate-400">Jai Prakash Hospital & Research Centre</p>
-              </div>
-            </div>
-
-            {/* Footer with CC and QR Code Callout */}
-            <div className="border-t-2 border-slate-200 pt-4 flex items-end justify-between gap-4 font-sans text-[10px]">
-              <div className="space-y-1 text-slate-600 flex-1">
-                <p className="font-bold text-slate-800 uppercase tracking-wider text-[9px]">
-                  Copy forwarded for information and necessary action to:
-                </p>
-                <ol className="list-decimal list-inside space-y-0.5">
-                  {ccList.map((cc, i) => (
-                    <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
-                  ))}
-                </ol>
+                <div className="inline-block mt-2 bg-amber-50 border border-amber-300 text-amber-800 px-2.5 py-1 rounded text-[10px] font-semibold">
+                  ⏳ Draft Directive — Pending Executive Management Approval
+                </div>
               </div>
 
-              {/* Dynamic Scannable QR Code */}
-              <div className="shrink-0 flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-lg p-2 text-[9px] text-slate-600 max-w-[220px]">
-                {qrCodeUrl ? (
-                  <a
-                    href={incidentUrl || `/incidents/${incident?.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Click or scan to verify incident on IMS portal"
-                    className="shrink-0 group block"
-                  >
+              {/* CC & QR Code Row */}
+              <div className="pt-3 border-t border-dashed border-slate-200 flex items-end justify-between gap-4 text-[10px]">
+                <div className="flex-1 space-y-1 text-slate-600">
+                  <div className="font-bold text-slate-800 uppercase tracking-wider text-[9px]">
+                    Copy Communicated for Information & Record To:
+                  </div>
+                  <ol className="list-decimal list-inside space-y-0.5">
+                    {ccList.map((cc, i) => (
+                      <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
+                    ))}
+                  </ol>
+                </div>
+
+                {/* QR Code */}
+                {qrCodeUrl && (
+                  <div className="shrink-0 text-center w-24">
                     <img
                       src={qrCodeUrl}
-                      alt="IMS Incident Verification QR"
-                      className="w-14 h-14 border border-slate-300 rounded shadow-xs group-hover:border-indigo-500 transition-colors"
+                      alt="IMS QR Verification"
+                      className="w-16 h-16 mx-auto border border-slate-200 rounded p-0.5 bg-white shadow-xs"
                     />
-                  </a>
-                ) : (
-                  <QrCode size={36} className="text-slate-800 shrink-0" />
+                    <div className="text-[8px] text-slate-500 mt-1 leading-tight">
+                      Scan to verify incident dossier
+                    </div>
+                  </div>
                 )}
-                <div className="leading-tight">
-                  <span className="font-bold text-slate-800 block">IMS Verification QR</span>
-                  Scan or click to authenticate official record on IMS portal
-                  {incidentUrl && (
-                    <a
-                      href={incidentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-indigo-600 hover:underline flex items-center gap-0.5 mt-0.5 font-semibold text-[9px]"
-                    >
-                      Verify Link <ExternalLink size={9} />
-                    </a>
-                  )}
+              </div>
+            </div>
+
+            {/* Letterhead Footer */}
+            <div className="relative z-10 bg-slate-50 border-t border-slate-200">
+              <div className="px-6 py-2 text-[9px] text-slate-600 space-y-0.5">
+                <div className="flex items-center gap-3">
+                  <span>📍 <strong>City Centre,</strong> Ambedkar Chowk, Uditnagar, Rourkela-769012</span>
+                  <span>📞 : 7606000999 / 7682860043</span>
+                  <span>✉️ : citycentre@jaiprakashhospitals.com</span>
                 </div>
+                <div className="flex items-center gap-3">
+                  <span>📍 <strong>City Centre,</strong> Main Road, Rajgangpur-770017</span>
+                  <span>📞 : 9078884831 / 9078884832</span>
+                  <span>✉️ : citycentre.rgp@jaiprakashhospitals.com</span>
+                </div>
+                <div className="flex justify-between items-center pt-1 border-t border-slate-200 text-[9px] font-medium text-slate-500">
+                  <span>Ref: {refNumber || 'JPHRC/IMC/PENDING'}</span>
+                  <span>Official Form: JPHRC/GNR/FRM/004A</span>
+                </div>
+              </div>
+
+              {/* Bottom Green Band with Lime Wedge */}
+              <div className="relative w-full h-2.5 bg-[#146537] overflow-hidden">
+                <div className="absolute top-0 left-0 w-7 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
               </div>
             </div>
           </div>

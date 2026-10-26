@@ -196,6 +196,8 @@ export const lettersApi = {
   deleteDraft: (incidentId, letterId) => api.delete(`/incidents/${incidentId}/letters/${letterId}`),
   submitToManagement: (incidentId) => api.post(`/incidents/${incidentId}/letters/submit-to-management`),
   managementDecision: (incidentId, data) => api.post(`/incidents/${incidentId}/letters/management-decision`, data),
+  getPdfUrl: (incidentId, letterId) => `/api/incidents/${incidentId}/letters/${letterId}/pdf`,
+  downloadPdf: (incidentId, letterId) => api.get(`/incidents/${incidentId}/letters/${letterId}/pdf`, { responseType: 'blob' }),
 };
 
 // ── Trainers ──────────────────────────────────────
