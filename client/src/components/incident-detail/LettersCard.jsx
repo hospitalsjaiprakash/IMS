@@ -552,7 +552,7 @@ export default function LettersCard({
           open={Boolean(selectedViewLetter)}
           onClose={() => setSelectedViewLetter(null)}
           title={`Official Letterhead: ${selectedViewLetter.ref_number || selectedViewLetter.reference_number || 'Draft'}`}
-          size="2xl"
+          size="full"
           footer={
             <div className="flex items-center justify-between w-full">
               <span className="text-xs text-slate-500 font-medium">
@@ -589,194 +589,230 @@ export default function LettersCard({
             </div>
           }
         >
-          {/* Authentic Letterhead Sheet */}
-          <div className="relative bg-white border border-slate-300 rounded-lg overflow-hidden shadow-sm font-sans max-h-[75vh] overflow-y-auto">
-            {/* Top Green Band with Lime Wedge */}
-            <div className="relative w-full h-3 bg-[#146537] overflow-hidden">
-              <div className="absolute top-0 left-0 w-8 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
-              <div className="absolute top-0 left-7 w-1.5 h-full bg-white -skew-x-[35deg]"></div>
-            </div>
-
-            {/* Letterhead Header Content */}
-            <div className="px-6 py-2.5 flex items-center justify-between border-b border-slate-100 bg-white">
-              {/* Brand Logo & Doc Control */}
-              <div className="flex flex-col justify-center">
-                <img
-                  src="/letterhead/jph-header-logo.png"
-                  alt="Jaiprakash Hospital"
-                  className="h-9 object-contain object-left"
-                />
-                <div className="text-[10px] font-semibold text-slate-600 mt-1 tracking-tight">
-                  Doc. No.: JPHRC/GNR/FRM/004A
-                </div>
-              </div>
-
-              {/* Hospital Info & NABH (Single Unit, Aligned to Right) */}
-              <div className="flex items-center gap-3 shrink-0">
-                {/* Vertical Divider */}
-                <div className="w-[1px] h-14 bg-slate-300"></div>
-
-                {/* Contact Information */}
-                <div className="text-[9px] leading-[1.35] text-slate-700">
-                  <div>
-                    <span className="text-[#146537] font-bold">📍 Main Hospital :</span> Dayanand Nagar, Rourkela-769004, Odisha
-                  </div>
-                  <div>
-                    <span className="text-[#146537] font-bold">📞 Helpline No. :</span> 9779 109 109
-                  </div>
-                  <div>✉️ info@jaiprakashhospitals.com</div>
-                  <div>🌐 www.jaiprakashhospitals.com</div>
-                  <div className="font-bold text-slate-900 mt-0.5">
-                    CIN : U85120OR2008PTC029111
-                  </div>
-                </div>
-
-                {/* NABH Badge */}
-                <div className="shrink-0 pl-1">
-                  <img
-                    src="/letterhead/nabh-accredited-logo.svg"
-                    alt="NABH Accredited"
-                    className="h-14 w-auto object-contain"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Central Watermark (60% width, 7% opacity) */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
-              <img
-                src="/letterhead/jph-round-watermark.png"
-                alt="JPH Watermark"
-                className="w-[60%] max-w-[340px] opacity-[0.07] object-contain select-none"
-              />
-            </div>
-
-            {/* Draft Watermark Banner */}
-            {!['approved', 'dispatched'].includes(selectedViewLetter.status) && (
+          {/* Authentic A4 Document Canvas / Desk Backdrop */}
+          <div className="bg-slate-300/80 -m-5 p-4 sm:p-8 flex justify-center overflow-y-auto max-h-[78vh]">
+            {/* Authentic A4 Sheet (210mm x 297mm proportions) */}
+            <div className="w-full max-w-[210mm] min-h-[297mm] bg-white text-slate-800 shadow-[0_8px_30px_rgba(0,0,0,0.18),0_1px_4px_rgba(0,0,0,0.08)] border border-slate-300 relative flex flex-col justify-between select-text my-auto font-sans">
+              
+              {/* Central Fixed Watermark (60% width, 7% opacity) */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
-                <span className="text-4xl font-black text-rose-500/10 uppercase tracking-[0.3em] -rotate-45 select-none">
-                  DRAFT — FOR REVIEW
-                </span>
-              </div>
-            )}
-
-            {/* Letter Printable Body */}
-            <div className="relative z-10 px-8 py-6 space-y-4 text-xs text-slate-800 leading-relaxed">
-              {/* Ref No & Date */}
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2 text-xs font-semibold text-slate-700">
-                <div>
-                  Ref No: <span className="font-mono text-slate-900 font-bold">{selectedViewLetter.ref_number || selectedViewLetter.reference_number}</span>
-                </div>
-                <div>
-                  Date: <span className="text-slate-900">{formatDate(selectedViewLetter.letter_date)}</span>
-                </div>
+                <img
+                  src="/letterhead/jph-round-watermark.png"
+                  alt="JPH Watermark"
+                  className="w-[125mm] max-w-[58%] opacity-[0.07] object-contain select-none"
+                />
               </div>
 
-              {/* Recipient Addressee Block */}
-              <div className="bg-slate-50 border-l-4 border-[#146537] p-3 rounded text-xs space-y-0.5">
-                <p className="font-bold text-slate-900">To,</p>
-                <p className="font-bold text-sm text-[#146537]">
-                  {selectedViewLetter.employee_name || selectedViewLetter.recipient_name}
-                </p>
-                {(selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no) && (
-                  <p className="text-slate-600 font-medium">
-                    Emp. ID: <span className="font-mono">{selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no}</span>
-                  </p>
-                )}
-                <p className="text-slate-600">
-                  Department: <span className="font-semibold">{selectedViewLetter.employee_department || selectedViewLetter.recipient_department}</span>
-                  {(selectedViewLetter.employee_designation || selectedViewLetter.recipient_designation) && (
-                    <span> • Designation: <span className="font-semibold">{selectedViewLetter.employee_designation || selectedViewLetter.recipient_designation}</span></span>
-                  )}
-                </p>
-              </div>
-
-              {/* Subject */}
-              <div className="font-bold text-slate-900 text-xs">
-                Subject: <u className="underline decoration-[#146537] underline-offset-2">{selectedViewLetter.subject}</u>
-              </div>
-
-              {/* Salutation */}
-              <div className="font-semibold text-slate-800">
-                {selectedViewLetter.salutation ? selectedViewLetter.salutation.replace(/,+$/, '') + ',' : 'Dear Staff,'}
-              </div>
-
-              {/* Body Paragraphs */}
-              <div className="leading-relaxed whitespace-pre-line text-slate-700 text-justify space-y-2">
-                {selectedViewLetter.body_content || selectedViewLetter.body_text}
-              </div>
-
-              {/* Monetary Penalty Box (if applicable) */}
-              {selectedViewLetter.penalty_amount && (
-                <div className="bg-rose-50 border border-rose-200 border-l-4 border-l-rose-600 p-3 rounded text-xs text-rose-900">
-                  <div className="font-bold">Monetary Penalty Ordered: ₹{Number(selectedViewLetter.penalty_amount).toLocaleString('en-IN')} {selectedViewLetter.penalty_amount_words ? `(${selectedViewLetter.penalty_amount_words})` : ''}</div>
-                  <div className="text-[10px] text-rose-700 mt-0.5">Recovery shall be processed through Accounts / Payroll as per hospital disciplinary regulations.</div>
+              {/* Faint DRAFT Watermark Banner (if not yet approved/dispatched) */}
+              {!['approved', 'dispatched'].includes(selectedViewLetter.status) && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+                  <span className="text-5xl font-black text-rose-500/[0.08] uppercase tracking-[0.35em] -rotate-45 select-none whitespace-nowrap">
+                    DRAFT — FOR REVIEW
+                  </span>
                 </div>
               )}
 
-              {/* Closing Sign-off Section */}
-              <div className="pt-4 border-t border-slate-200 space-y-1">
-                <div className="font-bold text-slate-900">By Order of,</div>
-                <div className="font-semibold text-slate-800">Incident Management Committee & Executive Management</div>
-                <div className="text-[10px] text-slate-500">Jaiprakash Hospital and Research Centre Pvt. Ltd.</div>
-
-                <div className="inline-block mt-2 bg-emerald-50 border border-emerald-300 text-emerald-800 px-2.5 py-1 rounded text-[10px] font-semibold">
-                  ✓ Digitally verified and approved via IMS • Ref: {selectedViewLetter.ref_number || selectedViewLetter.reference_number}
-                </div>
-              </div>
-
-              {/* CC & QR Code Row */}
-              <div className="pt-3 border-t border-dashed border-slate-200 flex items-end justify-between gap-4 text-[10px]">
-                <div className="flex-1 space-y-1 text-slate-600">
-                  <div className="font-bold text-slate-800 uppercase tracking-wider text-[9px]">
-                    Copy Communicated for Information & Record To:
-                  </div>
-                  <ol className="list-decimal list-inside space-y-0.5">
-                    {(selectedViewLetter.cc_list || selectedViewLetter.cc_recipients || []).map((cc, i) => (
-                      <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
-                    ))}
-                  </ol>
+              {/* Top Section: Official Letterhead Header */}
+              <div className="relative z-10 bg-white">
+                {/* Top Green Band with Lime Wedge & White Accent */}
+                <div className="relative w-full h-3 bg-[#146537] overflow-hidden">
+                  <div className="absolute top-0 left-0 w-9 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
+                  <div className="absolute top-0 left-8 w-1.5 h-full bg-white -skew-x-[35deg]"></div>
                 </div>
 
-                {/* QR Code */}
-                {(selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data) && (
-                  <div className="shrink-0 text-center w-24">
+                {/* Header Content */}
+                <div className="px-6 sm:px-[18mm] py-2.5 flex items-center justify-between border-b border-slate-200 bg-white">
+                  {/* Brand Logo & Doc Control */}
+                  <div className="flex flex-col justify-center">
                     <img
-                      src={selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data}
-                      alt="IMS QR Verification"
-                      className="w-16 h-16 mx-auto border border-slate-200 rounded p-0.5 bg-white shadow-xs"
+                      src="/letterhead/jph-header-logo.png"
+                      alt="Jaiprakash Hospital"
+                      className="h-10 object-contain object-left"
                     />
-                    <div className="text-[8px] text-slate-500 mt-1 leading-tight">
-                      Scan to verify authentic incident dossier
+                    <div className="text-[9px] font-semibold text-slate-600 mt-1 tracking-tight">
+                      Doc. No.: JPHRC/GNR/FRM/004A
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
 
-            {/* Letterhead Footer */}
-            <div className="relative z-10 bg-slate-50 border-t border-slate-200">
-              <div className="px-6 py-2 text-[9px] text-slate-600 space-y-0.5">
-                <div className="flex items-center gap-3">
-                  <span>📍 <strong>City Centre,</strong> Ambedkar Chowk, Uditnagar, Rourkela-769012</span>
-                  <span>📞 : 7606000999 / 7682860043</span>
-                  <span>✉️ : citycentre@jaiprakashhospitals.com</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span>📍 <strong>City Centre,</strong> Main Road, Rajgangpur-770017</span>
-                  <span>📞 : 9078884831 / 9078884832</span>
-                  <span>✉️ : citycentre.rgp@jaiprakashhospitals.com</span>
-                </div>
-                <div className="flex justify-between items-center pt-1 border-t border-slate-200 text-[9px] font-medium text-slate-500">
-                  <span>Ref: {selectedViewLetter.ref_number || selectedViewLetter.reference_number}</span>
-                  <span>Official Form: JPHRC/GNR/FRM/004A</span>
+                  {/* Hospital Info & NABH (Single Unit, Aligned to Right) */}
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    {/* Vertical Divider */}
+                    <div className="w-[1.5px] h-14 bg-slate-300 shrink-0"></div>
+
+                    {/* Contact Information */}
+                    <div className="text-[8.5px] leading-[1.38] text-slate-700 whitespace-nowrap">
+                      <div>
+                        <span className="text-[#146537] font-bold">📍 Main Hospital :</span> Dayanand Nagar, Rourkela-769004, Odisha
+                      </div>
+                      <div>
+                        <span className="text-[#146537] font-bold">📞 Helpline No. :</span> 9779 109 109
+                      </div>
+                      <div>✉️ info@jaiprakashhospitals.com</div>
+                      <div>🌐 www.jaiprakashhospitals.com</div>
+                      <div className="font-bold text-slate-900 mt-0.5">
+                        CIN : U85120OR2008PTC029111
+                      </div>
+                    </div>
+
+                    {/* NABH Badge */}
+                    <div className="shrink-0 pl-1">
+                      <img
+                        src="/letterhead/nabh-accredited-logo.svg"
+                        alt="NABH Accredited"
+                        className="h-14 w-auto object-contain"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Bottom Green Band with Lime Wedge */}
-              <div className="relative w-full h-2.5 bg-[#146537] overflow-hidden">
-                <div className="absolute top-0 left-0 w-7 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
+              {/* Middle Section: Printable Letter Body (18mm margins matching PDF) */}
+              <div className="relative z-10 px-6 sm:px-[18mm] pt-4 pb-6 flex-1 flex flex-col justify-between text-[10pt] text-slate-800 leading-relaxed">
+                <div className="space-y-3.5">
+                  {/* Ref No & Date */}
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-[10pt] font-semibold text-slate-900">
+                    <div>
+                      Ref No: <span className="font-mono text-slate-900">{selectedViewLetter.ref_number || selectedViewLetter.reference_number}</span>
+                    </div>
+                    <div>
+                      Date: <span className="text-slate-900">{formatDate(selectedViewLetter.letter_date)}</span>
+                    </div>
+                  </div>
+
+                  {/* Recipient Addressee Block */}
+                  <div className="bg-[#f8fafc] border-l-[3.5px] border-[#146537] px-3.5 py-2 rounded text-[9.5pt] leading-[1.45] text-slate-800 space-y-0.5">
+                    <p className="font-bold text-slate-900 text-[10pt]">To,</p>
+                    <p className="font-bold text-[10.5pt] text-[#146537]">
+                      {selectedViewLetter.employee_name || selectedViewLetter.recipient_name}
+                    </p>
+                    {(selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no || selectedViewLetter.employee_id) && (
+                      <p className="text-slate-600 font-medium text-[9pt]">
+                        Emp. ID: <span className="font-mono text-slate-800">{selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no || selectedViewLetter.employee_id}</span>
+                      </p>
+                    )}
+                    <p className="text-slate-600 text-[9pt]">
+                      Department: <span className="font-semibold text-slate-800">{selectedViewLetter.employee_department || selectedViewLetter.recipient_department}</span>
+                      {(selectedViewLetter.employee_designation || selectedViewLetter.recipient_designation) && (
+                        <span> • Designation: <span className="font-semibold text-slate-800">{selectedViewLetter.employee_designation || selectedViewLetter.recipient_designation}</span></span>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Subject */}
+                  <div className="font-bold text-slate-900 text-[10pt]">
+                    Subject: <u className="underline decoration-[#146537] underline-offset-3">{selectedViewLetter.subject}</u>
+                  </div>
+
+                  {/* Salutation */}
+                  <div className="font-semibold text-slate-800 text-[10pt]">
+                    {selectedViewLetter.salutation ? selectedViewLetter.salutation.replace(/,+$/, '') + ',' : 'Dear Staff,'}
+                  </div>
+
+                  {/* Body Paragraphs */}
+                  <div className="space-y-2 text-[10pt] leading-[1.6] text-justify text-slate-800">
+                    {(selectedViewLetter.body_content || selectedViewLetter.body_text || '')
+                      .split(/\n\s*\n/)
+                      .map((p, idx) => (
+                        <p key={idx} className="whitespace-pre-line">
+                          {p}
+                        </p>
+                      ))}
+                  </div>
+
+                  {/* Monetary Penalty Box (if applicable) */}
+                  {selectedViewLetter.penalty_amount && (
+                    <div className="my-3 bg-[#fff1f2] border border-[#fecdd3] border-l-4 border-l-[#e11d48] px-3.5 py-2.5 rounded text-[9.5pt] text-[#9f1239]">
+                      <div className="font-bold">
+                        Monetary Penalty Ordered: ₹{Number(selectedViewLetter.penalty_amount).toLocaleString('en-IN')} {selectedViewLetter.penalty_amount_words ? `(${selectedViewLetter.penalty_amount_words})` : ''}
+                      </div>
+                      <div className="text-[8pt] text-[#4c0519] mt-0.5">
+                        Recovery shall be processed through Accounts / Payroll as per hospital disciplinary regulations.
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sign-off & CC Block */}
+                <div className="mt-6 pt-3 space-y-3.5">
+                  {/* Closing Sign-off Section */}
+                  <div className="border-t border-slate-200 pt-2.5 space-y-0.5">
+                    <div className="font-bold text-slate-900 text-[9.5pt]">By Order of,</div>
+                    <div className="font-semibold text-slate-800 text-[9pt]">Incident Management Committee & Executive Management</div>
+                    <div className="text-[8.5pt] text-slate-500">Jaiprakash Hospital and Research Centre Pvt. Ltd.</div>
+
+                    <div className="text-[8pt] text-slate-600 mt-1 leading-tight">
+                      <div>Drafted by: <strong className="text-slate-800">{selectedViewLetter.drafted_by_name || 'Incident Management Committee Lead'}</strong></div>
+                      {selectedViewLetter.approved_by_name && (
+                        <div>Approved by: <strong className="text-slate-800">{selectedViewLetter.approved_by_name}</strong></div>
+                      )}
+                    </div>
+
+                    {['approved', 'dispatched'].includes(selectedViewLetter.status) ? (
+                      <div className="inline-block mt-2 bg-[#f0fdf4] border border-[#86efac] text-[#166534] px-2.5 py-1 rounded text-[7.5pt] font-semibold">
+                        ✓ Digitally verified and approved via IMS on {formatDate(selectedViewLetter.approved_at || selectedViewLetter.letter_date)} • Ref: {selectedViewLetter.ref_number || selectedViewLetter.reference_number}
+                      </div>
+                    ) : (
+                      <div className="inline-block mt-2 bg-amber-50 border border-amber-300 text-amber-800 px-2.5 py-1 rounded text-[7.5pt] font-semibold">
+                        ⏳ Draft Directive — Pending Executive Management Approval
+                      </div>
+                    )}
+                  </div>
+
+                  {/* CC & QR Code Row */}
+                  <div className="pt-2.5 border-t border-dashed border-slate-200 flex items-end justify-between gap-4 text-[8.5pt]">
+                    <div className="flex-1 space-y-1 text-slate-600">
+                      <div className="font-bold text-slate-700 uppercase tracking-wider text-[8pt]">
+                        Copy Communicated for Information & Record To:
+                      </div>
+                      <ol className="list-decimal list-inside space-y-0.5 text-slate-600 text-[8pt]">
+                        {(selectedViewLetter.cc_list || selectedViewLetter.cc_recipients || []).map((cc, i) => (
+                          <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    {/* QR Code */}
+                    {(selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data) && (
+                      <div className="shrink-0 text-center w-24">
+                        <img
+                          src={selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data}
+                          alt="IMS QR Verification"
+                          className="w-[76px] h-[76px] mx-auto border border-slate-300 rounded p-1 bg-white shadow-xs"
+                        />
+                        <div className="text-[6.8pt] text-slate-500 mt-1 leading-tight">
+                          Scan to verify authentic incident dossier
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
+
+              {/* Bottom Section: Letterhead Footer (Anchored at page bottom) */}
+              <div className="relative z-10 bg-white border-t border-slate-200 mt-auto">
+                <div className="px-6 sm:px-[18mm] py-2 text-[7pt] text-slate-600 space-y-0.5">
+                  <div className="flex items-center gap-3">
+                    <span>📍 <strong>City Centre,</strong> Ambedkar Chowk, Uditnagar, Rourkela-769012</span>
+                    <span>📞 : 7606000999 / 7682860043</span>
+                    <span>✉️ : citycentre@jaiprakashhospitals.com</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span>📍 <strong>City Centre,</strong> Main Road, Rajgangpur-770017</span>
+                    <span>📞 : 9078884831 / 9078884832</span>
+                    <span>✉️ : citycentre.rgp@jaiprakashhospitals.com</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1 border-t border-dotted border-slate-200 text-[7pt] font-semibold text-slate-500">
+                    <span>Ref: {selectedViewLetter.ref_number || selectedViewLetter.reference_number}</span>
+                    <span>Page 1 of 1 • Official Form: JPHRC/GNR/FRM/004A</span>
+                  </div>
+                </div>
+
+                {/* Bottom Green Band with Lime Wedge */}
+                <div className="relative w-full h-[11px] bg-[#146537] overflow-hidden">
+                  <div className="absolute top-0 left-0 w-8 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
+                </div>
+              </div>
+
             </div>
           </div>
         </Modal>
