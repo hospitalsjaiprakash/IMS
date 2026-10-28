@@ -13,7 +13,7 @@ async function generateIncidentQrCode(incidentId) {
     const dataUrl = await QRCode.toDataURL(incidentUrl, {
       errorCorrectionLevel: 'M',
       margin: 2,
-      width: 140,
+      width: 240,
       color: {
         dark: '#1e293b',
         light: '#ffffff'

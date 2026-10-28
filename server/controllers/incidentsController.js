@@ -772,7 +772,12 @@ exports.getIncident = async (req, res) => {
     incident.investigation_attachments = attachments.rows.filter(a => a.stage === 'investigator_report');
 
     const respEmps = await query(
-      `SELECT r.*, u.full_name, u.employee_id as emp_id, u.designation, d.name as department_name 
+      `SELECT r.*, 
+              u.full_name, 
+              u.employee_id as emp_id, 
+              u.employee_id as employee_code, 
+              u.designation, 
+              d.name as department_name 
        FROM incident_responsible_employees r
        JOIN users u ON u.id = r.employee_id
        LEFT JOIN departments d ON d.id = r.department_id
@@ -784,7 +789,11 @@ exports.getIncident = async (req, res) => {
     const lettersRes = await query(
       `SELECT l.*, 
               l.recipient_name as employee_name,
-              l.recipient_emp_no as employee_code,
+              COALESCE(
+                CASE WHEN l.recipient_emp_no ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN NULL ELSE l.recipient_emp_no END,
+                u_recip.employee_id,
+                l.recipient_emp_no
+              ) as employee_code,
               l.recipient_department as employee_department,
               l.recipient_designation as employee_designation,
               l.reference_number as ref_number,
@@ -797,6 +806,7 @@ exports.getIncident = async (req, res) => {
        FROM incident_letters l
        LEFT JOIN users u_draft ON u_draft.id = l.drafted_by
        LEFT JOIN users u_app ON u_app.id = l.approved_by
+       LEFT JOIN users u_recip ON u_recip.id::text = l.employee_id::text OR u_recip.id::text = l.recipient_emp_no
        WHERE l.incident_id = $1
        ORDER BY l.created_at ASC`,
       [incident.id]

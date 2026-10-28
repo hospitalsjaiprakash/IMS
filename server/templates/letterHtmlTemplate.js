@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { getIncidentUrl } = require('../utils/qrCodeService');
 
 // Cache base64 asset strings in memory for instant reuse
 let cachedHeaderLogoBase64 = null;
@@ -277,13 +278,23 @@ function formatDate(d) {
 /**
  * Build Letter Document HTML (Rendered inside the A4 page body)
  */
-function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl = null, isDraft = false }) {
+function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl = null, isDraft = false, incidentUrl = null }) {
   const { watermarkBase64 } = loadLetterheadAssets();
 
   const refNumber = letter.reference_number || letter.ref_number || 'JPHRC/IMS/DRAFT';
   const letterDate = formatDate(letter.letter_date || letter.created_at || new Date());
   const recipientName = letter.recipient_name || letter.employee_name || 'Staff Member';
-  const recipientEmpNo = letter.recipient_emp_no || letter.employee_code || '';
+
+  const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+  let recipientEmpNo = letter.recipient_emp_no || letter.employee_code || '';
+  if (isUuid(recipientEmpNo)) {
+    recipientEmpNo = (letter.employee_code && !isUuid(letter.employee_code))
+      ? letter.employee_code
+      : (letter.user_employee_id || letter.emp_id || '');
+  }
+
+  const incId = letter.incident_id || incident.id;
+  const finalIncidentUrl = incidentUrl || (incId ? getIncidentUrl(incId) : '');
   const recipientDept = letter.recipient_department || letter.employee_department || 'Hospital Personnel';
   const recipientDesig = letter.recipient_designation || letter.employee_designation || '';
   const subject = letter.subject || 'Official Hospital Directive';
@@ -535,25 +546,26 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
     }
 
     .qr-container {
-      width: 100px;
+      width: 115px;
       text-align: center;
       flex-shrink: 0;
     }
 
     .qr-img {
-      width: 78px;
-      height: 78px;
+      width: 95px;
+      height: 95px;
       border: 1px solid #cbd5e1;
       border-radius: 4px;
       padding: 2px;
       background: #ffffff;
+      cursor: pointer;
     }
 
     .qr-caption {
-      font-size: 6.5pt;
+      font-size: 7pt;
       color: #64748b;
-      margin-top: 3px;
-      line-height: 1.2;
+      margin-top: 4px;
+      line-height: 1.25;
     }
   </style>
 </head>
@@ -626,8 +638,10 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
 
         ${qrCodeDataUrl ? `
           <div class="qr-container">
-            <img class="qr-img" src="${qrCodeDataUrl}" alt="IMS Dossier QR" />
-            <div class="qr-caption">Scan to verify authentic incident dossier</div>
+            <a href="${finalIncidentUrl || '#'}" target="_blank" rel="noopener noreferrer" class="qr-link" style="text-decoration: none; cursor: pointer; display: inline-block;">
+              <img class="qr-img" src="${qrCodeDataUrl}" alt="IMS Dossier QR" />
+              <div class="qr-caption">Scan or click to verify authentic incident dossier</div>
+            </a>
           </div>
         ` : ''}
       </div>

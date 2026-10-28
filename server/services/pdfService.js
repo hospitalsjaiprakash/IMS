@@ -66,7 +66,7 @@ function scheduleBrowserIdleClose() {
  * @param {boolean} [params.isDraft=false] - whether to print faint DRAFT watermark
  * @returns {Promise<Buffer>} A4 PDF Buffer
  */
-async function generateLetterPdf({ letter, incident = {}, approvers = {}, qrCodeDataUrl = null, isDraft = false }) {
+async function generateLetterPdf({ letter, incident = {}, approvers = {}, qrCodeDataUrl = null, isDraft = false, incidentUrl = null }) {
   const browser = await getBrowser();
   const page = await browser.newPage();
 
@@ -76,7 +76,8 @@ async function generateLetterPdf({ letter, incident = {}, approvers = {}, qrCode
       incident,
       approvers,
       qrCodeDataUrl,
-      isDraft
+      isDraft,
+      incidentUrl
     });
 
     await page.setContent(htmlContent, {

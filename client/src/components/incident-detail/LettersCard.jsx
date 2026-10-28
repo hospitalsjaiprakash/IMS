@@ -444,7 +444,7 @@ export default function LettersCard({
                       </h4>
                       <p className="text-[10px] text-slate-500 truncate">
                         {[
-                          letter.employee_code || letter.recipient_emp_no,
+                          (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(letter.employee_code || letter.recipient_emp_no || '') ? (letter.employee_code || letter.recipient_emp_no) : ''),
                           letter.employee_designation || letter.recipient_designation,
                           letter.employee_department || letter.recipient_department
                         ].filter(Boolean).join(' • ')}
@@ -685,11 +685,19 @@ export default function LettersCard({
                     <p className="font-bold text-[10.5pt] text-[#146537]">
                       {selectedViewLetter.employee_name || selectedViewLetter.recipient_name}
                     </p>
-                    {(selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no || selectedViewLetter.employee_id) && (
-                      <p className="text-slate-600 font-medium text-[9pt]">
-                        Emp. ID: <span className="font-mono text-slate-800">{selectedViewLetter.employee_code || selectedViewLetter.recipient_emp_no || selectedViewLetter.employee_id}</span>
-                      </p>
-                    )}
+                    {(() => {
+                      const cleanEmpId = [
+                        selectedViewLetter.employee_code,
+                        selectedViewLetter.recipient_emp_no,
+                        selectedViewLetter.emp_id,
+                        selectedViewLetter.employee_id
+                      ].find(val => val && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val).trim()));
+                      return cleanEmpId ? (
+                        <p className="text-slate-600 font-medium text-[9pt]">
+                          Emp. ID: <span className="font-mono text-slate-800">{cleanEmpId}</span>
+                        </p>
+                      ) : null;
+                    })()}
                     <p className="text-slate-600 text-[9pt]">
                       Department: <span className="font-semibold text-slate-800">{selectedViewLetter.employee_department || selectedViewLetter.recipient_department}</span>
                       {(selectedViewLetter.employee_designation || selectedViewLetter.recipient_designation) && (
@@ -773,14 +781,22 @@ export default function LettersCard({
 
                     {/* QR Code */}
                     {(selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data) && (
-                      <div className="shrink-0 text-center w-24">
-                        <img
-                          src={selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data}
-                          alt="IMS QR Verification"
-                          className="w-[76px] h-[76px] mx-auto border border-slate-300 rounded p-1 bg-white shadow-xs"
-                        />
-                        <div className="text-[6.8pt] text-slate-500 mt-1 leading-tight">
-                          Scan to verify authentic incident dossier
+                      <div className="shrink-0 text-center w-28">
+                        <a
+                          href={`${window.location.origin}/incidents/${incident?.id || selectedViewLetter.incident_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block group transition-transform hover:scale-105"
+                          title="Click to open Incident Dossier in IMS"
+                        >
+                          <img
+                            src={selectedViewLetter.qr_code_url || selectedViewLetter.qr_code_data}
+                            alt="IMS QR Verification"
+                            className="w-[96px] h-[96px] mx-auto border border-slate-300 rounded-md p-1 bg-white shadow-xs group-hover:border-[#146537] group-hover:shadow-md transition-all cursor-pointer"
+                          />
+                        </a>
+                        <div className="text-[7pt] text-slate-500 mt-1 leading-tight">
+                          Scan or click to verify authentic incident dossier
                         </div>
                       </div>
                     )}
