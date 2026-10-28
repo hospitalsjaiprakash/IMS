@@ -36,6 +36,7 @@ export default function LetterDraftingModal({
   const [bodyContent, setBodyContent] = useState('');
   const [penaltyAmount, setPenaltyAmount] = useState('');
   const [penaltyAmountWords, setPenaltyAmountWords] = useState('');
+  const [recipientEmpNo, setRecipientEmpNo] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [recipientDepartment, setRecipientDepartment] = useState('');
   const [recipientDesignation, setRecipientDesignation] = useState('');
@@ -51,6 +52,8 @@ export default function LetterDraftingModal({
   useEffect(() => {
     if (!show) return;
 
+    const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
     if (existingLetter) {
       setSelectedEmpId(existingLetter.employee_id || '');
       setLetterType(existingLetter.letter_type || existingLetter.template_type || 'warning_letter');
@@ -63,6 +66,8 @@ export default function LetterDraftingModal({
       setPenaltyAmount(pAmt);
       setPenaltyAmountWords(existingLetter.penalty_amount_words || (pAmt ? convertNumberToWords(pAmt) : ''));
       
+      const rawEmpNo = existingLetter.recipient_emp_no || existingLetter.employee_code || existingLetter.employee_id;
+      setRecipientEmpNo(rawEmpNo && !isUuid(rawEmpNo) ? rawEmpNo : '');
       setRecipientEmail(existingLetter.recipient_email || existingLetter.employee_email || '');
       setRecipientDepartment(existingLetter.recipient_department || existingLetter.employee_department || '');
       setRecipientDesignation(existingLetter.recipient_designation || existingLetter.employee_designation || '');
@@ -74,6 +79,8 @@ export default function LetterDraftingModal({
       setSelectedEmpId(targetEmpId);
 
       const targetEmpObj = responsibleEmployees.find(e => (e.employee_id || e.id) === targetEmpId) || initialEmployee || {};
+      const initialCode = targetEmpObj.emp_id || targetEmpObj.employee_code || targetEmpObj.employee_no || (targetEmpObj.employee_id && !isUuid(targetEmpObj.employee_id) ? targetEmpObj.employee_id : '');
+      if (initialCode) setRecipientEmpNo(initialCode);
       const empOutcomes = (Array.isArray(targetEmpObj.outcomes) && targetEmpObj.outcomes.length > 0)
         ? targetEmpObj.outcomes
         : parseProposedOutcomes(incident?.proposed_outcome);
@@ -143,6 +150,9 @@ export default function LetterDraftingModal({
           setPenaltyAmountWords('');
         }
 
+        if (def.recipientEmpNo && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(def.recipientEmpNo)) {
+          setRecipientEmpNo(def.recipientEmpNo);
+        }
         setRecipientEmail(def.recipientEmail || '');
         setRecipientDepartment(def.recipientDepartment || '');
         setRecipientDesignation(def.recipientDesignation || '');
@@ -168,6 +178,8 @@ export default function LetterDraftingModal({
     let nextPenalty = null;
     let nextType = letterType;
     if (emp) {
+      const code = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(emp.employee_id) ? emp.employee_id : '');
+      if (code) setRecipientEmpNo(code);
       if (emp.penalty_amount) {
         nextPenalty = String(emp.penalty_amount);
         setPenaltyAmount(nextPenalty);
@@ -260,12 +272,15 @@ export default function LetterDraftingModal({
     }
 
     setIsSaving(true);
+    const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+    const cleanEmpNo = recipientEmpNo || selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && !isUuid(selectedEmployeeObj.employee_id) ? selectedEmployeeObj.employee_id : '');
+
     try {
       await lettersApi.saveDraft(incident.id, {
         letterId: existingLetter?.id,
         employeeId: selectedEmpId,
         recipientName: selectedEmployeeObj.full_name || selectedEmployeeObj.name,
-        recipientEmpNo: selectedEmployeeObj.employee_id || selectedEmployeeObj.emp_id,
+        recipientEmpNo: cleanEmpNo,
         recipientEmail: recipientEmail.trim() || null,
         recipientDepartment: recipientDepartment.trim() || null,
         recipientDesignation: recipientDesignation.trim() || null,
@@ -803,9 +818,9 @@ export default function LetterDraftingModal({
                     <p className="font-bold text-[10.5pt] text-[#146537]">
                       {selectedEmployeeObj.full_name || selectedEmployeeObj.name || '[Employee Name]'}
                     </p>
-                    {(selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && selectedEmployeeObj.employee_id.length < 20 ? selectedEmployeeObj.employee_id : '')) && (
+                    {(recipientEmpNo || selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedEmployeeObj.employee_id) ? selectedEmployeeObj.employee_id : '')) && (
                       <p className="text-slate-600 font-medium text-[9pt]">
-                        Emp. ID: <span className="font-mono text-slate-800">{selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || selectedEmployeeObj.employee_id}</span>
+                        Emp. ID: <span className="font-mono text-slate-800">{recipientEmpNo || selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || selectedEmployeeObj.employee_id}</span>
                       </p>
                     )}
                     <p className="text-slate-600 text-[9pt]">
@@ -880,14 +895,22 @@ export default function LetterDraftingModal({
                     </div>
 
                     {qrCodeUrl && (
-                      <div className="shrink-0 text-center w-24">
-                        <img
-                          src={qrCodeUrl}
-                          alt="IMS QR Verification"
-                          className="w-[76px] h-[76px] mx-auto border border-slate-300 rounded p-1 bg-white shadow-xs"
-                        />
-                        <div className="text-[6.8pt] text-slate-500 mt-1 leading-tight">
-                          Scan to verify incident dossier
+                      <div className="shrink-0 text-center w-28">
+                        <a
+                          href={incidentUrl || `${window.location.origin}/incidents/${incident?.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block group transition-transform hover:scale-105"
+                          title="Click to open Incident Dossier in IMS"
+                        >
+                          <img
+                            src={qrCodeUrl}
+                            alt="IMS QR Verification"
+                            className="w-[96px] h-[96px] mx-auto border border-slate-300 rounded-md p-1 bg-white shadow-xs group-hover:border-[#146537] group-hover:shadow-md transition-all cursor-pointer"
+                          />
+                        </a>
+                        <div className="text-[7pt] text-slate-500 mt-1 leading-tight">
+                          Scan or click to verify incident dossier
                         </div>
                       </div>
                     )}

@@ -48,7 +48,11 @@ exports.getIncidentLetters = async (req, res) => {
     const result = await query(
       `SELECT l.*,
               l.recipient_name as employee_name,
-              l.recipient_emp_no as employee_code,
+              COALESCE(
+                CASE WHEN l.recipient_emp_no ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN NULL ELSE l.recipient_emp_no END,
+                u_recip.employee_id,
+                l.recipient_emp_no
+              ) as employee_code,
               l.recipient_department as employee_department,
               l.recipient_designation as employee_designation,
               l.reference_number as ref_number,
@@ -61,6 +65,7 @@ exports.getIncidentLetters = async (req, res) => {
        FROM incident_letters l
        LEFT JOIN users u_draft ON u_draft.id = l.drafted_by
        LEFT JOIN users u_app ON u_app.id = l.approved_by
+       LEFT JOIN users u_recip ON u_recip.id::text = l.employee_id::text OR u_recip.id::text = l.recipient_emp_no
        WHERE l.incident_id = $1 
          AND l.template_type NOT IN ('trainer_appointment', 'trainer_appointment_letter')
        ORDER BY l.created_at ASC`,
@@ -92,11 +97,18 @@ exports.getLetterPdf = async (req, res) => {
 
     const letterRes = await query(
       `SELECT l.*,
+              COALESCE(
+                CASE WHEN l.recipient_emp_no ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN NULL ELSE l.recipient_emp_no END,
+                u_recip.employee_id,
+                l.recipient_emp_no
+              ) as employee_code,
+              u_recip.employee_id as user_employee_id,
               u_draft.full_name as drafted_by_name,
               u_app.full_name as approved_by_name
        FROM incident_letters l
        LEFT JOIN users u_draft ON u_draft.id = l.drafted_by
        LEFT JOIN users u_app ON u_app.id = l.approved_by
+       LEFT JOIN users u_recip ON u_recip.id::text = l.employee_id::text OR u_recip.id::text = l.recipient_emp_no
        WHERE l.id = $1 AND l.incident_id = $2`,
       [letterId, id]
     );
@@ -134,7 +146,8 @@ exports.getLetterPdf = async (req, res) => {
         approvedByName: letter.approved_by_name
       },
       qrCodeDataUrl,
-      isDraft: !isApproved
+      isDraft: !isApproved,
+      incidentUrl: getIncidentUrl(id)
     });
 
     const filename = `${letter.reference_number || 'letter'}${!isApproved ? '_DRAFT' : ''}.pdf`;
@@ -277,28 +290,34 @@ exports.saveLetterDraft = async (req, res) => {
     let finalEmpDesig = recipientDesignation;
     let finalEmpEmail = recipientEmail;
 
-    if (!finalEmpName) {
-      const mRes = await query(
-        'SELECT id, employee_id, name, email, department, designation FROM master_employees WHERE id::text = $1 OR employee_id = $1',
-        [employeeId]
-      );
-      if (mRes.rows.length) {
-        finalEmpName = mRes.rows[0].name;
-        finalEmpNo = mRes.rows[0].employee_id;
-        finalEmpDept = mRes.rows[0].department;
-        finalEmpDesig = mRes.rows[0].designation;
-        finalEmpEmail = mRes.rows[0].email;
-      } else {
+    const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
+    // If finalEmpNo is missing or accidentally a UUID, or if finalEmpName is missing, resolve from DB
+    if (!finalEmpNo || isUuid(finalEmpNo) || !finalEmpName) {
+      const lookupId = (isUuid(finalEmpNo) ? finalEmpNo : null) || employeeId;
+      if (lookupId) {
         const uRes = await query(
           'SELECT id, employee_id, full_name, email, department, designation FROM users WHERE id::text = $1 OR employee_id = $1',
-          [employeeId]
+          [lookupId]
         );
         if (uRes.rows.length) {
-          finalEmpName = uRes.rows[0].full_name;
-          finalEmpNo = uRes.rows[0].employee_id;
-          finalEmpDept = uRes.rows[0].department;
-          finalEmpDesig = uRes.rows[0].designation;
-          finalEmpEmail = uRes.rows[0].email;
+          if (!finalEmpName || finalEmpName === 'Staff Member') finalEmpName = uRes.rows[0].full_name;
+          if (!finalEmpNo || isUuid(finalEmpNo)) finalEmpNo = uRes.rows[0].employee_id;
+          if (!finalEmpDept) finalEmpDept = uRes.rows[0].department;
+          if (!finalEmpDesig) finalEmpDesig = uRes.rows[0].designation;
+          if (!finalEmpEmail) finalEmpEmail = uRes.rows[0].email;
+        } else {
+          const mRes = await query(
+            'SELECT id, employee_id, name, email, department, designation FROM master_employees WHERE id::text = $1 OR employee_id = $1',
+            [lookupId]
+          );
+          if (mRes.rows.length) {
+            if (!finalEmpName || finalEmpName === 'Staff Member') finalEmpName = mRes.rows[0].name;
+            if (!finalEmpNo || isUuid(finalEmpNo)) finalEmpNo = mRes.rows[0].employee_id;
+            if (!finalEmpDept) finalEmpDept = mRes.rows[0].department;
+            if (!finalEmpDesig) finalEmpDesig = mRes.rows[0].designation;
+            if (!finalEmpEmail) finalEmpEmail = mRes.rows[0].email;
+          }
         }
       }
     }
@@ -321,8 +340,13 @@ exports.saveLetterDraft = async (req, res) => {
          SET template_type = $1, reference_number = $2, letter_date = $3,
              subject = $4, salutation = $5, body_text = $6, penalty_amount = $7,
              penalty_amount_words = $8, cc_recipients = $9, qr_code_url = $10,
+             recipient_name = COALESCE($11, recipient_name),
+             recipient_emp_no = COALESCE($12, recipient_emp_no),
+             recipient_department = COALESCE($13, recipient_department),
+             recipient_designation = COALESCE($14, recipient_designation),
+             recipient_email = COALESCE($15, recipient_email),
              status = 'drafted', updated_at = NOW()
-         WHERE id = $11 AND incident_id = $12
+         WHERE id = $16 AND incident_id = $17
          RETURNING *`,
         [
           finalTemplateType,
@@ -335,6 +359,11 @@ exports.saveLetterDraft = async (req, res) => {
           finalPenaltyWords,
           JSON.stringify(finalCcRecipients),
           qrCodeUrl,
+          finalEmpName,
+          finalEmpNo || null,
+          finalEmpDept || null,
+          finalEmpDesig || null,
+          finalEmpEmail || null,
           letterId,
           id
         ]
@@ -801,7 +830,8 @@ exports.submitManagementLetterDecision = async (req, res) => {
                 approvedByName: approverName
               },
               qrCodeDataUrl,
-              isDraft: false
+              isDraft: false,
+              incidentUrl
             });
 
             // 2. Freeze PDF into Cloudflare R2
