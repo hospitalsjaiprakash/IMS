@@ -326,11 +326,20 @@ function renderActionContent({
           <div className="flex items-center gap-2 pt-1">
             <button
               type="button"
-              onClick={onOpenMdModal}
+              onClick={() => {
+                if (hasVerifiedTraining) {
+                  const el = document.getElementById('step7-training-card');
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth' });
+                    return;
+                  }
+                }
+                onOpenMdModal();
+              }}
               className="btn-primary btn-sm bg-purple-700 hover:bg-purple-800 border-purple-700 flex items-center gap-1.5 shadow-xs"
             >
               {hasVerifiedTraining ? <CheckCircle2 size={14} /> : <Sparkles size={14} />}
-              <span>{hasVerifiedTraining ? 'Approve Training & Officially Close Incident' : 'Issue Executive Management Directive'}</span>
+              <span>{hasVerifiedTraining ? 'Review Verified Training & Close Incident' : 'Issue Executive Management Directive'}</span>
             </button>
           </div>
         </div>
