@@ -163,7 +163,7 @@ export default function TrainingProgressCard({
 
   return (
     <>
-      <div className="card p-5 border border-indigo-200 bg-white shadow-sm space-y-4">
+      <div id="step7-training-card" className="card p-5 border border-indigo-200 bg-white shadow-sm space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">

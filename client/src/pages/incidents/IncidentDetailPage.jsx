@@ -511,7 +511,10 @@ export default function IncidentDetailPage() {
     user?.is_system_admin ||
     user?.isSystemAdmin
   );
-  const canMdAct = isManagement && user?.id !== incident.reporter_id && incident.status === 'with_head_management';
+  const hasVerifiedTraining = Array.isArray(data?.trainers) && data.trainers.some(t =>
+    ['verified', 'verified_by_imc', 'closed'].includes(t.status)
+  );
+  const canMdAct = isManagement && user?.id !== incident.reporter_id && incident.status === 'with_head_management' && !hasVerifiedTraining && !incident.management_decision;
   const canReopen = (isManagement || isImcMember) && user?.id !== incident.reporter_id && ['resolved', 'closed'].includes(incident.status);
   const canEscalate = (isManagement || isImcMember) && user?.id !== incident.reporter_id && !['resolved', 'closed', 'withdrawn'].includes(incident.status) && !incident.priority_escalated_by;
 
@@ -1526,7 +1529,8 @@ export default function IncidentDetailPage() {
 
 
 
-            {incident.status === 'with_head_management' && (
+            {/* Phase 1: Initial Executive Management Review (Before Letter/Training Approval) */}
+            {incident.status === 'with_head_management' && !hasVerifiedTraining && !incident.management_decision && (
               <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
                 <div className="space-y-1">
                   <p className="font-bold text-amber-900 text-sm flex items-center gap-2">
@@ -1543,6 +1547,32 @@ export default function IncidentDetailPage() {
                     className="btn-primary btn-sm text-xs bg-amber-600 hover:bg-amber-700 border-amber-600 shadow-sm flex items-center gap-1.5 font-semibold"
                   >
                     Provide Management Decision Now →
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Phase 2: Post-Training Final Closure Review */}
+            {incident.status === 'with_head_management' && hasVerifiedTraining && (
+              <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
+                <div className="space-y-1">
+                  <p className="font-bold text-emerald-950 text-sm flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-600" /> Awaiting Final Management Sign-off & Incident Closure
+                  </p>
+                  <p className="text-xs text-emerald-800">
+                    Corrective training has been delivered and verified by the IMC (and disciplinary letters dispatched). Executive Management final review and official case closure is required.
+                  </p>
+                </div>
+                {isManagement && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const el = document.getElementById('step7-training-card');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="btn-primary btn-sm text-xs bg-emerald-700 hover:bg-emerald-800 border-emerald-700 shadow-sm flex items-center gap-1.5 font-semibold"
+                  >
+                    Review Training & Close Incident ↓
                   </button>
                 )}
               </div>
