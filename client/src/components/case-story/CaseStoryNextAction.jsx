@@ -71,7 +71,15 @@ export default function CaseStoryNextAction({
       )}
 
       {/* ── TRAINING MANAGEMENT SECTION (IF RELEVANT STATUS OR TRAINERS EXIST) ── */}
-      {(trainers.length > 0 || ['pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review', 'pending_training'].includes(status) || incident?.needs_training) && (
+      {Boolean(
+        !['submitted', 'with_hod', 'with_hod_and_imc', 'redirect_requested', 'with_investigator', 'with_imc_review', 'with_imc'].includes(status) &&
+        !(status === 'with_head_management' && !incident?.management_decision) &&
+        (
+          trainers.length > 0 ||
+          ['pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review', 'pending_training'].includes(status) ||
+          (incident?.needs_training && ['pending_letter_generation', 'pending_management_letter_approval', 'closed', 'resolved'].includes(status))
+        )
+      ) && (
         <TrainingProgressCard
           incident={incident}
           trainers={trainers}

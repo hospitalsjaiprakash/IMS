@@ -108,11 +108,15 @@ exports.assignTrainer = async (req, res) => {
     }
     const incident = incRes.rows[0];
 
-    // Status Gate: Only permitted if Management has reviewed and approved the training mandate
-    if (!['pending_trainer_assignment', 'training_in_progress'].includes(incident.status)) {
+    // Strict Management Approval Gate
+    const hasMgmtApproved = Boolean(incident.management_decision);
+    const isDualTrackTraining = ['pending_letter_generation', 'pending_management_letter_approval'].includes(incident.status) && hasMgmtApproved && Boolean(incident.needs_training);
+    const isStandardTraining = ['pending_trainer_assignment', 'training_in_progress'].includes(incident.status) && hasMgmtApproved;
+
+    if (!isDualTrackTraining && !isStandardTraining) {
       await client.query('ROLLBACK');
       return res.status(400).json({
-        error: 'Cannot assign trainer: Management has not yet reviewed and approved the training mandate for this incident.'
+        error: 'Cannot assign trainer: Executive Management has not yet reviewed and approved the training mandate for this incident.'
       });
     }
 

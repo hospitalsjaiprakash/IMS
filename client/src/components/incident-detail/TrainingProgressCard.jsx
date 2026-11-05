@@ -38,9 +38,11 @@ export default function TrainingProgressCard({
   const isInProgress = incident?.status === 'training_in_progress';
   const isPendingImcReview = incident?.status === 'pending_imc_training_review';
   const isNeedsTraining = Boolean(incident?.needs_training);
+  const hasMgmtApproved = Boolean(incident?.management_decision);
 
-  const canAssignTrainer = isImcLead && (
+  const canAssignTrainer = isImcLead && hasMgmtApproved && (
     isPendingAssignment ||
+    (isNeedsTraining && ['pending_letter_generation', 'pending_management_letter_approval'].includes(incident?.status) && !trainers.length) ||
     (isInProgress && activeAssignment?.status === 'rework_requested')
   );
 
@@ -135,12 +137,22 @@ export default function TrainingProgressCard({
     }
   };
 
+  // Mandatory Training & CAPA Protocol must NEVER display before Management's formal approval
+  const isPreManagementApproval = [
+    'submitted', 'with_hod', 'with_hod_and_imc', 'redirect_requested', 
+    'with_investigator', 'with_imc_review', 'with_imc'
+  ].includes(incident?.status) || (incident?.status === 'with_head_management' && !hasMgmtApproved);
+
+  if (isPreManagementApproval) {
+    return null;
+  }
+
   const shouldRenderCard = Boolean(
     trainers.length > 0 ||
     isPendingAssignment ||
     isInProgress ||
     isPendingImcReview ||
-    (isNeedsTraining && ['closed', 'resolved'].includes(incident?.status))
+    (isNeedsTraining && ['pending_letter_generation', 'pending_management_letter_approval', 'closed', 'resolved'].includes(incident?.status))
   );
 
   if (!shouldRenderCard) {
