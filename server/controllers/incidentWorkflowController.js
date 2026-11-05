@@ -817,10 +817,76 @@ exports.submitManagementAction = async (req, res) => {
       }
     }
 
+    // Check if training has already been assigned and completed
+    const trainerCheck = await client.query(
+      `SELECT id, status FROM incident_trainers WHERE incident_id = $1`,
+      [id]
+    );
+    const hasExistingTrainers = trainerCheck.rows.length > 0;
+    const allExistingTrainersVerified = hasExistingTrainers && trainerCheck.rows.every(t =>
+      ['verified', 'verified_by_imc', 'closed'].includes(t.status)
+    );
+
+    // Check if letters exist and are resolved/approved
+    const lettersCheck = await client.query(
+      `SELECT id, status FROM incident_letters WHERE incident_id = $1`,
+      [id]
+    );
+    const hasExistingLetters = lettersCheck.rows.length > 0;
+    const allExistingLettersApproved = !hasExistingLetters || lettersCheck.rows.every(l =>
+      ['mgmt_approved', 'sent_to_employee', 'acknowledged', 'closed'].includes(l.status)
+    );
+
+    const isPostActionClosure = (hasExistingTrainers && allExistingTrainersVerified && allExistingLettersApproved);
+
     let nextStatus = 'closed';
     let returnMessage = 'Management agreed with IMC. Incident has been officially CLOSED.';
 
-    if (isLetterOutcome) {
+    if (isPostActionClosure && decision === 'AGREE') {
+      // POST-TRAINING / POST-DISCIPLINARY SIGN-OFF BY MANAGEMENT -> CLOSE
+      nextStatus = 'closed';
+      returnMessage = 'Executive Management signed off on completed training and disciplinary outcomes. Incident officially CLOSED.';
+
+      await client.query(
+        `UPDATE incidents
+         SET status = 'closed', management_decision = $1, management_notes = COALESCE($2, management_notes),
+             resolved_at = NOW(), updated_at = NOW()
+         WHERE id = $3`,
+        [decision, notes, id]
+      );
+
+      await client.query(
+        `UPDATE incident_trainers SET status = 'closed', updated_at = NOW() WHERE incident_id = $1`,
+        [id]
+      );
+
+      await client.query(
+        `UPDATE incident_responsible_employees 
+         SET training_completed = TRUE, training_verified_by = $1, training_verified_at = NOW() 
+         WHERE incident_id = $2`,
+        [req.user.id, id]
+      );
+
+      // Notify reporter & committee
+      await createNotification(
+        incident.reporter_id,
+        id,
+        'Incident Concluded & Closed',
+        `Corrective training was successfully delivered and verified. Incident ${incident.reference_id} has been officially closed by Management.`,
+        'incident_closed'
+      );
+
+      const imcMembers = await query("SELECT id, email FROM users WHERE role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE");
+      for (const member of imcMembers.rows) {
+        await createNotification(
+          member.id,
+          id,
+          'Incident Closed by Management',
+          `Management confirmed training completion and officially closed incident ${incident.reference_id}.`,
+          'incident_closed'
+        );
+      }
+    } else if (isLetterOutcome) {
       // PATH B (or DUAL TRACK B+C): Forward to IMC for formal letter generation
       nextStatus = 'pending_letter_generation';
       returnMessage = isTrainingOutcome
@@ -1483,36 +1549,68 @@ exports.rejectInvestigatorReport = async (req, res) => {
 // REOPEN INCIDENT
 // =============================================
 exports.reopenIncident = async (req, res) => {
+  const client = await getClient();
   try {
+    await client.query('BEGIN');
     const { id } = req.params;
     const { reason } = req.body;
-    if (!reason) return res.status(400).json({ error: 'Reason is required to re-open an incident.' });
-    await query(
-      `UPDATE incidents SET status = 'with_imc', updated_at = NOW() WHERE id = $1 AND status = 'resolved'`,
+    if (!reason || !reason.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Reason is required to re-open an incident.' });
+    }
+
+    const incRes = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
+    if (!incRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Incident not found' });
+    }
+    const incident = incRes.rows[0];
+
+    if (!['resolved', 'closed'].includes(incident.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only resolved or closed incidents can be reopened.' });
+    }
+
+    const isMgmt = req.user.role === 'head_management' || req.user.is_management_member;
+    const isImcLead = req.user.is_imc_lead || req.user.role === 'imc';
+    const isAdmin = req.user.role === 'system_admin' || req.user.is_system_admin;
+    if (!isMgmt && !isImcLead && !isAdmin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only Executive Management or IMC Convenor can reopen an incident.' });
+    }
+
+    const prevStatus = incident.status;
+    await client.query(
+      `UPDATE incidents SET status = 'with_imc', updated_at = NOW() WHERE id = $1`,
       [id]
     );
 
-    await recordEvent(query, {
+    await recordEvent(client, {
       incidentId: id,
       eventType: 'INCIDENT_REOPENED',
       actor: req.user,
-      statusBefore: 'resolved',
+      statusBefore: prevStatus,
       statusAfter: 'with_imc',
-      title: 'Incident Reopened by Staff',
-      summary: `Incident reopened. Reason: "${reason}"`,
-      payload: { reason }
+      title: 'Incident Reopened for Exceptional Review',
+      summary: `Incident reopened from ${prevStatus}. Justification: "${reason.trim()}"`,
+      payload: { reason: reason.trim(), reopenedFrom: prevStatus }
     });
 
-    await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason }, req.ip);
+    await client.query('COMMIT');
+
+    await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason: reason.trim(), prevStatus }, req.ip);
 
     if (req.io) {
       req.io.emit('incident_updated', { id, status: 'with_imc' });
     }
 
-    res.json({ success: true });
+    res.json({ success: true, message: 'Incident successfully reopened and moved to IMC queue.' });
   } catch (e) {
+    await client.query('ROLLBACK');
     console.error('[POST /incidents/:id/reopen] error:', e);
-    res.status(500).json({ error: 'Failed to reopen' });
+    res.status(500).json({ error: 'Failed to reopen incident' });
+  } finally {
+    client.release();
   }
 };
 

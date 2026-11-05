@@ -653,6 +653,11 @@ exports.mapDepartmentLeader = async (req, res) => {
     }
     const deptName = deptRes.rows[0].name;
 
+    // Role elevation: any employee mapped as department reviewer gets reviewer permissions (hod role)
+    if (user.role === 'employee') {
+      await query(`UPDATE users SET role = 'hod', updated_at = NOW() WHERE id = $1`, [user.id]);
+    }
+
     // Single assigned staff member for this department:
     // Update assigned_user_id and hod_user_id (for backwards compatibility)
     await query(
@@ -662,13 +667,21 @@ exports.mapDepartmentLeader = async (req, res) => {
       [user.id, departmentId]
     );
 
+    // Sync into department_reviewers table
+    await query(`
+      INSERT INTO department_reviewers (user_id, department_id, reviewer_role, is_active, assigned_by, updated_at)
+      VALUES ($1, $2, 'Department Reviewer', true, $3, NOW())
+      ON CONFLICT (user_id, department_id, reviewer_role)
+      DO UPDATE SET is_active = true, updated_at = NOW()
+    `, [user.id, departmentId, req.user.id]);
+
     await auditLog(req.user.id, 'DEPARTMENT_FEEDBACK_STAFF_MAPPED', null, {
       departmentId, deptName, targetEmployee: user.employee_id, targetName: user.full_name
     }, req.ip);
 
     res.json({ 
       success: true, 
-      message: `Successfully assigned ${user.full_name} (${user.employee_id}) as feedback staff for ${deptName}.` 
+      message: `Successfully assigned ${user.full_name} (${user.employee_id}) as department reviewer for ${deptName}.` 
     });
   } catch (error) {
     console.error('Error in mapDepartmentLeader:', error);
@@ -1177,7 +1190,7 @@ exports.getDepartmentReviewers = async (req, res) => {
 
 exports.assignDepartmentReviewer = async (req, res) => {
   try {
-    const { employeeId, departmentIds, reviewerRole = 'HOD' } = req.body;
+    const { employeeId, departmentIds, reviewerRole = 'Department Reviewer' } = req.body;
     if (!employeeId || !departmentIds || !Array.isArray(departmentIds) || departmentIds.length === 0) {
       return res.status(400).json({ error: 'Employee ID and at least one department ID are required.' });
     }
@@ -1187,10 +1200,9 @@ exports.assignDepartmentReviewer = async (req, res) => {
       return res.status(404).json({ error: 'Employee not found in hospital directory.' });
     }
 
-    // Role promotion: if user is currently basic employee, elevate role to reviewer
+    // Role promotion: if user is currently basic employee, elevate role to reviewer (hod)
     if (user.role === 'employee') {
-      const activeRole = reviewerRole === 'Assistant COO' ? 'asst_coo' : 'hod';
-      await query(`UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`, [activeRole, user.id]);
+      await query(`UPDATE users SET role = 'hod', updated_at = NOW() WHERE id = $1`, [user.id]);
     }
 
     const assigned = [];

@@ -41,7 +41,7 @@ export default function TrainingProgressCard({
 
   const canAssignTrainer = isImcLead && (
     isPendingAssignment ||
-    (isNeedsTraining && (!trainers.length || activeAssignment?.status === 'rework_requested'))
+    (isInProgress && activeAssignment?.status === 'rework_requested')
   );
 
   // Can user submit training report? (Assigned trainer, or IMC lead / Admin on behalf)
@@ -137,10 +137,10 @@ export default function TrainingProgressCard({
 
   const shouldRenderCard = Boolean(
     trainers.length > 0 ||
-    isNeedsTraining ||
     isPendingAssignment ||
     isInProgress ||
-    isPendingImcReview
+    isPendingImcReview ||
+    (isNeedsTraining && ['closed', 'resolved'].includes(incident?.status))
   );
 
   if (!shouldRenderCard) {

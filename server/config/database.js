@@ -130,12 +130,6 @@ pool.query(`
     started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     completed_at TIMESTAMP WITH TIME ZONE
   );
-
-  ALTER TABLE incident_responsible_employees
-  ADD COLUMN IF NOT EXISTS training_completed BOOLEAN DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS training_verified_at TIMESTAMP,
-  ADD COLUMN IF NOT EXISTS training_verified_by UUID REFERENCES users(id);
-
   ALTER TABLE incidents DROP CONSTRAINT IF EXISTS incidents_status_check;
   ALTER TABLE incidents ADD CONSTRAINT incidents_status_check 
     CHECK (status IN (

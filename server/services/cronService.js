@@ -40,6 +40,16 @@ async function processHodEscalations() {
       JOIN departments d ON idp.department_id = d.id
       JOIN users u_hod ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u_hod.id)
       WHERE i.status IN ('with_hod', 'with_hod_and_imc')
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          WHERE f.incident_id = i.id
+            AND f.role = 'hod'
+            AND (
+              f.department_id = d.id
+              OR f.author_id = u_hod.id
+              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
+            )
+        )
     `);
 
     // 3. Process each incident

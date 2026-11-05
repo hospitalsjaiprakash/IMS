@@ -6,14 +6,14 @@ const DEFAULT_HRMS_SHEET_URL =
   process.env.HRMS_SHEET_API_URL ||
   'https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnSYZVP94xasOMSDsEvLn-jtKtCa6mBgeYHVTu-Co9O2Gyls1Ea9DVaHIV9o0nJ9TxJBOcW3VfKEBWfYRwkAQbYNbVbSYOKA24mcAmEc9S9NQLDOXJW5ZaXJjmkyYRGEol1XbmSfiqBnVFwMJwIHJLd9cPnhyMcqwKVkWlbBp1j-jEwhrPy_q-uUxErSZGW3i_IzcjeiE5fgIRLs7mbKyd0loIsquZkZl244b-Rv3UfypcHOsMNaRZp8tIIikKiMMCnSGBTInct-w56mS_BxYdd2vK8qDw&lib=MeefmFwESMyRsKf_wGawyRU_EvQiFty4u';
 
-const PRIMARY_ADMIN_EMP_ID = '12243';
-const PRIMARY_ADMIN_EMAIL = 'hospitalsjaiprakash@gmail.com';
+const GENERIC_ADMIN_EMP_ID = '00000';
+const GENERIC_ADMIN_EMAIL = 'hospitalsjaiprakash@gmail.com';
 
 /**
- * Determine initial role based on designation or primary admin ID
+ * Determine initial role based on designation or generic admin ID
  */
 function determineRole(employeeId, designation) {
-  if (String(employeeId).trim() === PRIMARY_ADMIN_EMP_ID) {
+  if (String(employeeId).trim() === GENERIC_ADMIN_EMP_ID) {
     return 'system_admin';
   }
   const desig = (designation || '').toUpperCase();
@@ -126,7 +126,7 @@ async function syncEmployeesFromHrms(overrideUrl = null) {
            department = COALESCE(EXCLUDED.department, master_employees.department),
            designation = COALESCE(EXCLUDED.designation, master_employees.designation),
            role = CASE 
-             WHEN master_employees.role = 'system_admin' THEN 'system_admin'
+             WHEN master_employees.role IN ('system_admin', 'imc', 'head_management', 'hod') THEN master_employees.role
              WHEN EXCLUDED.role = 'system_admin' THEN 'system_admin'
              ELSE EXCLUDED.role
            END`,
@@ -135,28 +135,26 @@ async function syncEmployeesFromHrms(overrideUrl = null) {
     }
     insertedCount = validEmployees.length;
 
-    // Ensure primary system admin (12243) is set up with email and admin flag
+    // Ensure generic system admin (00000) exists and remains active
     const adminCheck = await client.query(
       `SELECT id, password_hash, email FROM users WHERE employee_id = $1`,
-      [PRIMARY_ADMIN_EMP_ID]
+      [GENERIC_ADMIN_EMP_ID]
     );
 
+    const defaultAdminHash = '$2a$12$cbr/Yf96fTcsCCUNnZcNVO/U35hGTuSWMsLfo7c3nPPkKMzBT3qrC';
     if (adminCheck.rows.length === 0) {
-      // Create user account for admin if not already present
-      const defaultHash = await bcrypt.hash('1admin', 12);
       await client.query(
         `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_system_admin, is_active, password_hash)
-         VALUES ($1, 'Sourav Barik', $2, 'Digital Communications', 'System Administrator', 'system_admin', TRUE, TRUE, $3)
+         VALUES ($1, 'System Administrator', $2, 'Digital Communications', 'System Administrator', 'system_admin', TRUE, TRUE, $3)
          ON CONFLICT (employee_id) DO UPDATE SET
            email = $2,
            role = 'system_admin',
            is_system_admin = TRUE,
            is_active = TRUE`,
-        [PRIMARY_ADMIN_EMP_ID, PRIMARY_ADMIN_EMAIL, defaultHash]
+        [GENERIC_ADMIN_EMP_ID, GENERIC_ADMIN_EMAIL, defaultAdminHash]
       );
-      console.log(`[HRMS Sync] Created primary System Admin user (Emp ID: ${PRIMARY_ADMIN_EMP_ID}).`);
+      console.log(`[HRMS Sync] Ensured generic System Admin user (Emp ID: ${GENERIC_ADMIN_EMP_ID}).`);
     } else {
-      // Ensure email and system_admin flags are intact
       await client.query(
         `UPDATE users SET 
            email = COALESCE(NULLIF($2, ''), email),
@@ -165,7 +163,7 @@ async function syncEmployeesFromHrms(overrideUrl = null) {
            is_active = TRUE,
            updated_at = NOW()
          WHERE employee_id = $1`,
-        [PRIMARY_ADMIN_EMP_ID, PRIMARY_ADMIN_EMAIL]
+        [GENERIC_ADMIN_EMP_ID, GENERIC_ADMIN_EMAIL]
       );
     }
 
@@ -223,6 +221,8 @@ async function getHrmsSyncStatus() {
 module.exports = {
   syncEmployeesFromHrms,
   getHrmsSyncStatus,
-  PRIMARY_ADMIN_EMP_ID,
-  PRIMARY_ADMIN_EMAIL
+  GENERIC_ADMIN_EMP_ID,
+  GENERIC_ADMIN_EMAIL,
+  PRIMARY_ADMIN_EMP_ID: GENERIC_ADMIN_EMP_ID,
+  PRIMARY_ADMIN_EMAIL: GENERIC_ADMIN_EMAIL
 };

@@ -7,14 +7,14 @@ const incidentActionsController = require('../controllers/incidentActionsControl
 const { setUploadStage, uploadIncidentAttachments } = require('../middleware/upload');
 
 // ─── HOD ALIASES ─────────────────────────────────────
-router.get('/hod/dashboard', authenticate, authorize('hod'), incidentsController.getDashboardStats);
+router.get('/hod/dashboard', authenticate, authorize('hod', 'employee', 'system_admin'), incidentsController.getDashboardStats);
 router.get('/hod/assigned-departments', authenticate, incidentsController.getAssignedDepartments);
-router.get('/hod/team', authenticate, authorize('hod'), incidentsController.getHodTeam);
-router.get('/hod/incidents', authenticate, authorize('hod'), incidentsController.getIncidents);
-router.get('/hod/incidents/export', authenticate, authorize('hod'), incidentsController.exportIncidents);
-router.get('/hod/incidents/:id', authenticate, authorize('hod'), incidentsController.getIncident);
-router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod', 'employee', 'system_admin', 'asst_coo', 'coo'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
-router.post('/hod/incidents/:id/redirect', authenticate, authorize('hod', 'employee', 'system_admin', 'asst_coo', 'coo'), incidentActionsController.requestRedirect);
+router.get('/hod/team', authenticate, authorize('hod', 'employee', 'system_admin'), incidentsController.getHodTeam);
+router.get('/hod/incidents', authenticate, authorize('hod', 'employee', 'system_admin'), incidentsController.getIncidents);
+router.get('/hod/incidents/export', authenticate, authorize('hod', 'employee', 'system_admin'), incidentsController.exportIncidents);
+router.get('/hod/incidents/:id', authenticate, authorize('hod', 'employee', 'system_admin'), incidentsController.getIncident);
+router.post('/hod/incidents/:id/feedback', authenticate, authorize('hod', 'employee', 'system_admin'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
+router.post('/hod/incidents/:id/redirect', authenticate, authorize('hod', 'employee', 'system_admin'), incidentActionsController.requestRedirect);
 
 // ─── IMC ALIASES ─────────────────────────────────────
 router.get('/imc/dashboard', authenticate, authorize('imc', 'system_admin'), incidentsController.getDashboardStats);

@@ -36,7 +36,7 @@ Employees can:
 - View assigned training status
 
 #### Department Review
-A senior staff would be assigned a single department or multiple departments who can:
+A Department Reviewer can be any employee (not limited to HOD or Incharge designations/roles) assigned by the System Administrator to oversee a single department or multiple departments who can:
 - Review incidents assigned to their departments
 - Submit departmental feedback
 - Upload supporting evidence
@@ -80,10 +80,9 @@ Management can:
 
 #### System Administration
 System Administrators can:
-- Manage users & roles
-- Configure departments
-- Assign senior staff (HODs, Incharges, or Assistant COOs) to single or multiple departments
-- Synchronize and manage employee master records from the hospital's central HRMS (OfficePortal)
+- Manage users & roles through a single production generic administrator account (`00000`, `hospitalsjaiprakash@gmail.com`), with the authority to assign or delegate administrator privileges to any hospital employee
+- Configure departments and assign any employee as a Department Reviewer to single or multiple departments *(Note: Department Reviewers can be any employee assigned by the System Administrator and are not limited to HOD or Incharge designations or roles; there is no separate Assistant COO review role)*
+- Synchronize and manage employee master records dynamically from the hospital's central HRMS (OfficePortal) without hardcoded employee data
 - Configure IMC members, Management users, and investigators
 - Configure SLA settings
 - Monitor audit logs, notification delivery, and login history
@@ -213,21 +212,21 @@ The Hospital Incident Management System functions as an enterprise web applicati
 ### 2.5 Product Functions
 - **Authentication**: Registration (validated against HRMS master directory), Login, JWT verification, Password Reset, Multi-Role Session Switching.
 - **Employee**: Report incident, View incident timeline/status, Withdraw incident, Receive notifications, Complete assigned training.
-- **Department Review (Senior Staff / HOD / Incharge / Assistant COO)**: A senior staff member assigned to oversee a single department or multiple departments: Review department incidents, Submit departmental feedback, Request department redirects, Upload evidence, Recommend CAPA, Monitor SLAs.
+- **Department Review (Department Reviewer)**: Any hospital employee assigned by the System Administrator to oversee a single department or multiple departments (not limited to HOD or Incharge designation or role): Review department incidents, Submit departmental feedback, Request department redirects, Upload evidence, Recommend CAPA, Monitor SLAs. (Incidents are reviewed exclusively by employees assigned to particular departments by the admin; there is no separate Assistant COO review role).
 - **IMC**: Investigate incidents, Assign investigators, Review redirect requests, Escalate priority, Return incident to reviewer, Verify training, Generate official investigation reports.
 - **Management**: Review investigation findings, Return to IMC if incomplete, Assign responsible employees and mandatory training, Generate final hospital reports, Close incidents, Monitor departmental performance.
-- **System Administrator**: User & Role management, Senior staff single/multi-department mappings, SLA configuration, Notification monitoring, Audit logs, HRMS synchronization management & quota monitoring.
+- **System Administrator**: Sovereign administration through a single generic administrator account (`00000`, `hospitalsjaiprakash@gmail.com`) with authority to assign admin rights to any employee, manage department reviewer mappings for any employee, SLA configuration, Notification monitoring, Audit logs, and HRMS synchronization management without hardcoded employee data.
 - **HRMS Synchronization & Directory Management**: Automated employee master directory ingestion via cursor-based Change Feed, real-time lifecycle updates via signed Webhooks (`employee.created`, `employee.updated`, `employee.terminated`), department & job title ingestion, local employee master caching, status-based access enforcement (`active`, `noticePeriod`, `terminated`).
 
 ### 2.6 User Classes
 | User | Description |
 | :--- | :--- |
 | **Employee** | Reports hospital incidents and completes mandated training |
-| **Department Reviewer (Senior Staff / HOD / Incharge / Assistant COO)** | Senior staff member assigned to review incidents and submit findings for a single department or multiple departments |
+| **Department Reviewer** | Any hospital employee assigned by the System Administrator to review incidents and submit findings for a single department or multiple departments (not limited to HOD or Incharge designation or role; no Assistant COO role) |
 | **Investigator** | Conducts investigations assigned by IMC |
 | **IMC** | Investigates, approves redirects, escalates priority, verifies training |
 | **Management** | Final review, accountability determination, training mandate, and incident closure |
-| **System Administrator** | System configuration, senior staff department mappings, HRMS sync monitoring, and audit oversight |
+| **System Administrator** | Generic administrator (`00000` / `hospitalsjaiprakash@gmail.com`) for system configuration, department reviewer mappings, role assignment, HRMS sync monitoring, and audit oversight |
 
 ### 2.7 Operating Environment
 - **Client Web Browsers**: Google Chrome, Microsoft Edge, Mozilla Firefox, Safari.
@@ -313,9 +312,12 @@ Staff accounts are provisioned through an automated self-registration flow verif
 - **Refresh Token**: Valid for 7 days; stored securely in HTTP-only cookies to rotate access tokens without forcing re-login.
 
 ### 4.5 Authorization & Multi-Role Support
-Enforced via RBAC across 8 distinct classes: `Employee`, `HOD`, `Incharge`, `Assistant COO`, `Investigator`, `IMC`, `Management`, and `System Administrator`.
-- **Senior Staff Multi-Department Review**: A senior staff member (HOD, Incharge, or Assistant COO) can be assigned to oversee a single department or multiple departments simultaneously.
-- **Multi-Role Switching**: If an employee has multiple roles assigned (e.g., Employee + HOD + Investigator), they can switch active dashboards dynamically without having to log out and log back in. Every switch is logged for auditability.
+Enforced via RBAC across 6 core operational roles: `Employee`, `Department Reviewer`, `Investigator`, `IMC`, `Management`, and `System Administrator`.
+- **Single Generic Production Administrator**: Production enforces exactly one generic administrator account with numeric Employee ID `00000` and email `hospitalsjaiprakash@gmail.com`. All individual employee admin accounts are removed. This sovereign generic account possesses exclusive authority to assign or delegate administrator privileges to any hospital employee.
+- **Department Reviewer Role (Open to Any Employee)**: A Department Reviewer could be ANY hospital employee assigned by the System Administrator for particular departments. The reviewer role is strictly functional and not limited to or dependent on having an HOD, Incharge, or senior designation. Any employee assigned by the admin gains the authority to review incidents and submit departmental feedback for their assigned department(s). There is no separate Assistant COO review role.
+- **Dynamic HRMS Employee Directory**: Following the implementation of the HRMS API, no employee data or administrator identities are hardcoded. Ingestion from OfficePortal dynamically populates employee records while preserving system roles and administrative credentials across synchronization cycles.
+- **Multi-Department Review Capability**: Any employee assigned as a Department Reviewer can be mapped by the administrator to oversee a single department or multiple departments simultaneously.
+- **Multi-Role Switching**: If an employee has multiple roles assigned (e.g., Employee + Department Reviewer + Investigator), they can switch active dashboards dynamically without having to log out and log back in. Every switch is logged for auditability.
 
 ### 4.6 Password Policy & Forgot Password
 - **Policy**: Minimum 8 characters, including at least one uppercase letter, one lowercase letter, one number, and one special character.
@@ -396,14 +398,13 @@ Provides a personalized overview of employee reporting activity.
 
 ---
 
-## Chapter 6 – Department Reviewer Module (Senior Staff / HOD / Incharge / Assistant COO)
+## Chapter 6 – Department Reviewer Module
 
 ### 6.1 Module Overview & User Roles
 The Department Reviewer Module manages departmental investigation, feedback submission, root cause identification, and redirection workflows within defined Service Level Agreements (SLAs).
-- **Single or Multi-Department Assignment**: A senior staff member is formally assigned to review incidents for either a single department (e.g., Chief Medical Officer for Medical Services) or multiple departments simultaneously (e.g., an Assistant COO or Senior Administrator overseeing Facility, Security, and Housekeeping).
-- **HOD (Head of Department)**: Departmental head responsible for clinical or administrative review of their assigned department.
-- **Incharge**: Acts with full departmental review authority for assigned departments.
-- **Assistant COO / Senior Staff**: Exercises oversight and review authority across all assigned or mapped departments, with distinct action logging in the audit trail.
+- **Review Authority Assigned by Admin (Open to Any Employee)**: A Department Reviewer could be ANY hospital employee assigned by the System Administrator for particular departments. The reviewer role is strictly functional and is not limited to or restricted by HOD, Incharge, or senior clinical designations. Any employee mapped to a department by the administrator possesses full authority to review incidents, request redirections, recommend CAPA, and submit departmental findings.
+- **Single or Multi-Department Assignment**: Any employee can be assigned by the System Administrator to review incidents for either a single department or multiple departments simultaneously.
+- **No Assistant COO Role**: Incidents are reviewed solely by employees assigned by the administrator for particular departments. There is no separate or implicit role of Assistant COO in reviewing incidents.
 
 ### 6.2 Departmental Dashboard & Monitoring Cards
 - **Summary Cards**: Total Assigned Incidents, Pending Feedback, Active Incidents, Resolved Incidents, Redirect Requests, Overdue SLA, and Escalated Incidents.
@@ -424,18 +425,18 @@ The departmental reviewer submits structured findings:
 ### 6.5 Redirect Request & Adjudication Workflow
 If an assigned incident falls outside the department's responsibility, the reviewer initiates a formal redirect request to the Incident Management Committee (IMC):
 - **Workflow**: Click `Request Redirect` $\rightarrow$ Select Suggested Responsible Department $\rightarrow$ Enter Mandatory Justification Reason $\rightarrow$ Upload Evidence (Optional) $\rightarrow$ Submit Request.
-- **IMC Adjudication**: While pending, the incident remains tracked under the requesting department. If IMC approves, the incident re-routes to the correct department and the SLA countdown resets.
+- **IMC Adjudication**: While pending, the incident remains tracked under the requesting department. If IMC approves, the incident re-routes to the correct department and the SLA countdown resets. In multi-department incidents, only the requesting department is substituted, preserving all other co-involved departments.
 
 ### 6.6 SLA Governance & Multi-Department Oversight
-- **SLA Monitoring**: Default 7-day turnaround timer initiated upon incident assignment. Automated notifications fire on Day 5 (Warning) and Day 7 (Breach alert to Reviewer & IMC).
-- **Multi-Department Oversight**: Senior staff assigned to multiple departments automatically inherit operational review access across all assigned queues, with their specific reviewer identity recorded in every feedback audit record.
+- **SLA Monitoring**: Default 7-day turnaround timer initiated upon incident assignment. Automated notifications fire on Day 5 (Warning) and Day 7 (Breach alert to Reviewer & IMC). Overdue reminders and escalation alerts automatically exclude departments and HODs that have already submitted their feedback.
+- **Multi-Department Oversight**: Any employee assigned to multiple departments automatically inherits operational review access across all assigned queues, with their specific reviewer identity recorded in every feedback audit record.
 
 ### 6.7 Functional Requirements & REST APIs
 | ID | Requirement Description |
 | :--- | :--- |
 | **FR-HOD-001 to 003** | Display assigned department queues, submit structured feedback, and auto-save local drafts. |
 | **FR-HOD-004 to 006** | Initiate redirect requests with mandatory reasons, monitor SLAs, and dispatch warning alerts. |
-| **FR-HOD-007 to 010** | Upload evidence to R2, support Assistant COO multi-department mapping, Incharge delegation, and audit logging. |
+| **FR-HOD-007 to 010** | Upload evidence to R2, support any employee multi-department reviewer mapping by Admin, feedback drafting, and audit logging. |
 
 #### REST API Endpoints
 | Method | Endpoint | Purpose |
@@ -575,14 +576,18 @@ The System Administrator (Super Admin) is responsible for configuring, maintaini
   - *System Status Monitor*: Health indicators for PostgreSQL, Cloudflare R2, SMTP Email Service, WhatsApp API, Task Scheduler, and Background Job Queue.
 
 ### 9.3 User, Role, Hierarchy & HRMS Directory Management
-- **HRMS Master Directory Synchronization**: Master employee data is ingested from the hospital's central HRMS (OfficePortal Public API v1). System Administrators can trigger manual on-demand synchronizations (full directory or incremental delta change feed) or monitor automated scheduled syncs (every 15 minutes).
+- **HRMS Master Directory Synchronization**: Master employee data is ingested from the hospital's central HRMS (OfficePortal Public API v1). No employee records or administrative identities are hardcoded. System Administrators can trigger manual on-demand synchronizations (full directory or incremental delta change feed) or monitor automated scheduled syncs (every 15 minutes). System-critical roles (`system_admin`, `imc`, `head_management`, `hod`) and assigned reviewer mappings are strictly preserved across sync cycles.
 - **Employee Lifecycle Governance**:
   - `active`: Full HIMS access based on assigned RBAC roles.
   - `noticePeriod`: Standard access retained; administrative alert flagged for handover of pending incident reviews or investigations.
   - `terminated`: HIMS login is automatically disabled (`status = 'inactive'`). Historical incident reports, departmental feedback, investigations, and audit logs are strictly preserved in perpetuity without cascading deletions.
-- **Multi-Role Assignment**: Assign one or multiple operational roles (`Employee`, `HOD`, `Incharge`, `Assistant COO`, `Investigator`, `IMC`, `Management`, `System Administrator`).
-- **Senior Staff Single & Multi-Department Oversight Mapping**:
-  - Because hospital organizational hierarchies frequently assign senior clinicians or administrative leaders to oversee multiple units, the Administrator can assign a Senior Staff member (`HOD`, `Incharge`, or `Assistant COO`) to oversee either a **single department** or **multiple departments** simultaneously.
+- **Production Generic Administrator Identity & Privilege Delegation**:
+  - The production environment enforces a single generic administrator account (Employee ID: `00000`, Email: `hospitalsjaiprakash@gmail.com`).
+  - All legacy individual employee admin accounts are removed.
+  - The generic administrator has the authority to assign or delegate administrative privileges to any hospital employee as needed.
+- **Multi-Role Assignment**: Assign one or multiple operational roles (`Employee`, `Department Reviewer`, `Investigator`, `IMC`, `Management`, `System Administrator`).
+- **Department Reviewer Mapping (Open to Any Employee)**:
+  - The Administrator can assign ANY hospital employee as a Department Reviewer to oversee a single department or multiple departments simultaneously. The reviewer assignment is purely functional and not limited to HOD or Incharge roles or designations.
   - The Admin UI provides an interactive mapping matrix (`user_id` $\leftrightarrow$ `department_ids[]`) allowing granular configuration. When a multi-department reviewer logs in, their dashboard automatically consolidates queues with department filter toggles.
 - **Investigator Management**: Designate or remove specialized hospital investigators and monitor active/completed investigation workloads.
 
@@ -604,13 +609,13 @@ The System Administrator (Super Admin) is responsible for configuring, maintaini
 ### 9.6 Functional Requirements & REST APIs
 | ID | Requirement Description |
 | :--- | :--- |
-| **FR-ADM-001** | Manage user credentials, accounts, and profile states linked to HRMS directory. |
-| **FR-ADM-002** | Assign single or multiple RBAC roles to employees. |
+| **FR-ADM-001** | Manage user credentials, accounts, and profile states linked dynamically to HRMS directory without hardcoded employee data. |
+| **FR-ADM-002** | Assign single or multiple RBAC roles to employees from the generic admin account (`00000`). |
 | **FR-ADM-003** | Configure workflow SLAs, reminder days, and escalation rules. |
 | **FR-ADM-004 to 006** | Monitor multi-channel notifications, view immutable audit logs, and manage investigators. |
 | **FR-ADM-007 to 010** | Configure department mappings, master data, system health, and integrations. |
 | **FR-ADM-011** | Trigger and monitor external HRMS directory syncs (full and delta) and rate limit quotas. |
-| **FR-ADM-012** | Map senior staff reviewers (HOD / Incharge / Assistant COO) to single or multiple departments. |
+| **FR-ADM-012** | Map any employee as a department reviewer across single or multiple departments. |
 
 #### REST API Endpoints
 | Method | Endpoint | Purpose |
@@ -636,107 +641,158 @@ The System Administrator (Super Admin) is responsible for configuring, maintaini
 ## Chapter 10 – Incident Workflow & Business Process
 
 ### 10.1 Overview & Complete Lifecycle
-HIMS enforces a standardized, multi-tier state machine designed to route hospital incidents seamlessly across six distinct operational layers: `Employee`, `Department (HOD/Incharge/COO)`, `IMC`, `Investigator`, `Management`, and `System Administrator`. Every state transition is strictly timestamped, immutable in the audit logs, and tied to automated multi-channel notifications and SLA timers.
+HIMS enforces a standardized, multi-tier state machine designed to route hospital incidents seamlessly across six distinct operational layers: `Employee`, `Department Reviewer (HOD/Incharge)`, `IMC`, `Investigator`, `Management`, and `System Administrator`. Every state transition is strictly timestamped, immutable in the audit logs, and tied to automated multi-channel notifications and SLA timers.
 
 ```
-┌─────────────────────┐
-│ Employee Reports    │
-└──────────┬──────────┘
-           │
-           ▼
-Automatic Incident Number Generation
-           │
-           ▼
-Department Assignment & SLA Timer Starts
-           │
-           ▼
-HOD / Incharge Review
-           │
-      ┌────┴────┐
-      │         │
-      ▼         ▼
-Feedback   Redirect Request
-      │         │
-      │         ▼
-      │      IMC Decision
-      │     ┌────┴────┐
-      │     │         │
-      │  Reject    Approve
-      │     │         │
-      ▼     │         ▼
-      └─────┴──► Correct Department
-                 │
-                 ▼
-         IMC Investigation
-                 │
-      ┌──────────┴───────────┐
-      ▼                      ▼
-Assign Investigator     Direct Investigation
-      │                      │
-      ▼                      ▼
-Investigation Submitted
-                 │
-                 ▼
-Management Review
-      ┌──────────┴────────────┐
-      ▼                       ▼
-Return to IMC           Approve Investigation
-                              │
-                              ▼
-Training Decision
-      ┌──────────┴───────────┐
-      ▼                      ▼
-Training Required       No Training
-      │                      │
-      ▼                      ▼
-Training Completed      Close Incident
-      │
-      ▼
-IMC Verification
-      │
-      ▼
-Management Closure
+┌────────────────────────────────────────────────────────┐
+│ 1. Employee Incident Reporting                         │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+         Automatic Incident Number Generation
+                           │
+                           ▼
+    Department Assignment & SLA Turnaround Timer Starts
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Departmental Review (Assigned Department Reviewer)  │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+     Submit Feedback             Request Redirection
+              │                         │
+              │                         ▼
+              │                  IMC Adjudication
+              │                 ┌───────┴───────┐
+              │                 ▼               ▼
+              │             Rejected         Approved
+              │                 │               │
+              │                 │    (Replaces requesting dept;
+              │                 │     preserves co-involved depts)
+              │                 │               ▼
+              │                 └───────► Target Department
+              ▼                                 │
+              └─────────────────┬───────────────┘
+                                │ (All involved depts responded)
+                                ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Quality Committee Assessment (IMC Review)           │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+     Direct IMC Review         Assign Field Investigator
+              │                         │
+              │                         ▼
+              │                Investigator Findings Submitted
+              │                         │
+              └────────────┬────────────┘
+                           ▼
+     IMC Quality Findings & Outcome Proposal Formulated
+     (No Action | Disciplinary Notice | Training | Both)
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 4. Executive Management Governance Decision Gate       │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+     Disapprove / Return        Approve Outcome Mandate
+     (Re-investigate / Revise)          │
+              │                         ▼
+              │               Mandated Outcome Type
+              │        ┌────────────────┼────────────────┐
+              │        ▼                ▼                ▼
+              │   No Action      Track B: Letters  Track C: Training
+              │        │                │                │
+              │        │        (Parallel Execution if Dual-Track)
+              │        │                │                │
+              │        │                ▼                ▼
+              │        │         IMC Drafts        IMC Appoints
+              │        │         Formal Letters    Hospital Trainer
+              │        │                │                │
+              │        │                ▼                ▼
+              │        │          Management         Trainer Delivers
+              │        │          Authorizes         Session & Submits
+              │        │          Dispatch           Report + Roster
+              │        │                │                │
+              │        │                ▼                ▼
+              │        │         Notice Sent        IMC Verifies
+              │        │         to Employee        Training Report
+              │        │                │                │
+              │        │                └────────┬───────┘
+              │        │                         ▼
+              │        │             Both Tracks Completed
+              │        │                         │
+              ▼        ▼                         ▼
+┌────────────────────────────────────────────────────────┐
+│ 5. Executive Management Final Review & Official Sign-off│
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 6. Incident Officially CLOSED (Read-Only Archive)      │
+└────────────────────────────────────────────────────────┘
 ```
 
 ### 10.2 Incident States
 | State | Description |
 | :--- | :--- |
-| **Draft** | Saved locally by employee; unsubmitted and editable |
-| **Submitted** | Formal submission accepted; reference number assigned |
-| **Assigned to Department** | Routed to responsible HOD/Incharge/Assistant COO |
-| **HOD Review** | Active departmental investigation and feedback preparation |
-| **Redirect Requested** | HOD requested redirection to another department |
-| **Redirect Approved** | IMC approved redirection; SLA restarted under new department |
-| **IMC Investigation** | Active quality oversight and RCA/CAPA preparation by IMC |
-| **Investigator Assigned** | Delegated to specialized investigator for fieldwork |
-| **Investigation Submitted** | Complete findings submitted to Management for governance |
-| **Returned by Management** | Returned to IMC for deeper analysis or missing evidence |
-| **Training Assigned** | Mandatory employee training assigned prior to resolution |
-| **Training Verification** | Attendance and completion certificates awaiting IMC validation |
-| **Closed** | Final closure certified by Management; record locked read-only |
+| **Draft** | Saved locally by employee; unsubmitted and fully editable |
+| **Submitted** | Formal submission accepted; unique reference ID generated |
+| **Assigned to Department** | Routed to assigned departmental reviewers (any employee assigned by the Administrator) |
+| **Department Review** (`with_hod`) | Active departmental investigation and feedback preparation by assigned department reviewer |
+| **Redirect Requested** (`redirect_requested`) | Department reviewer requested redirection to another department |
+| **Redirect Approved** | IMC approved redirection; requesting department substituted while co-involved departments remain preserved |
+| **IMC Assessment** (`with_imc` / `with_imc_review`) | Active quality oversight, RCA/CAPA, and outcome formulation by IMC |
+| **Investigator Assigned** (`with_investigator`) | Delegated to specialized hospital investigator for fieldwork |
+| **Management Review** (`with_head_management`) | Forwarded to Executive Management for formal governance and outcome approval |
+| **Pending Letter Generation** (`pending_letter_generation`) | Management approved outcome involving formal disciplinary/advisory notices; IMC drafting letters |
+| **Pending Letter Approval** (`pending_management_letter_approval`) | Disciplinary drafts submitted to Management for dispatch authorization |
+| **Pending Trainer Assignment** (`pending_trainer_assignment`) | Management approved training mandate; awaiting designated trainer appointment by IMC |
+| **Training in Progress** (`training_in_progress`) | Appointed trainer conducting practical sessions with involved staff |
+| **Pending IMC Training Review** (`pending_imc_training_review`) | Trainer report and attendance sheet uploaded, awaiting IMC quality verification |
+| **Final Management Sign-off** (`with_head_management`) | Training verified by IMC (and letters dispatched if dual-track); awaiting final sign-off by Management |
+| **Closed** (`closed`) | Final closure certified by Executive Management; record locked read-only across hospital |
 
-### 10.3 Core Operational Workflows
-- **Employee Workflow**: Create, save draft, upload evidence to R2, submit, and track chronological progression. Prohibited from editing/deleting submitted records or reading confidential review text.
-- **Department Workflow**: Notification triggers immediate SLA countdown. HOD must submit findings/immediate actions or formally request a redirect with mandatory justification. Unresolved queues escalate on Day 3, Day 5, and threshold breach.
-- **Redirect Workflow**: If HOD identifies an incorrect departmental assignment, a redirect request routes to IMC. If approved, the case re-routes to the correct department and resets the SLA timer.
-- **IMC & Investigator Workflows**: IMC evaluates HOD findings, conducts RCA/CAPA, or assigns an Investigator. Investigators upload evidence and findings directly to the case file.
-- **Management & Training Workflows**: Executive review gate. Management approves or returns findings, evaluates accountability, mandates training, verifies IMC training certificates, and executes final closure.
+### 10.3 Core Operational Workflows & Governance Rules
+- **Employee Workflow**: Create, save draft, upload evidence to R2, submit, and track chronological progression. Prohibited from editing/deleting submitted records or reading confidential committee deliberations.
+- **Department Review Workflow**: Incident assignment triggers an immediate 7-day turnaround SLA timer. The assigned Department Reviewer (any hospital employee assigned by the System Administrator, not limited to HOD or Incharge roles) must submit structured findings or request redirection with mandatory justification. Overdue reminder alerts automatically exclude departments that have already submitted feedback.
+- **Redirection Workflow**: If an assigned incident falls outside the department's purview, the reviewer requests redirection to IMC. Upon IMC approval, the requesting department is replaced by the target department(s), while all other co-involved departments are strictly retained.
+- **Training Governance & Management Approval Gate**:
+  - **Strict Pre-Assignment Approval Gate**: The IMC is strictly prohibited from appointing a trainer or issuing trainer appointment letters prior to Executive Management's formal review and approval.
+  - When the IMC recommends training as an outcome, the incident advances to `with_head_management`.
+  - Executive Management reviews the case and issues a formal decision: approving the outcome (`pending_trainer_assignment`), modifying the directive, or returning for revision.
+  - Only after Management approval can the IMC assign a qualified hospital trainer and define the training syllabus.
+  - The appointed trainer conducts the session, uploads the training report and signed attendance roster, and submits it to the IMC (`pending_imc_training_review`).
+  - The IMC verifies the trainer's report and endorses training completion (`TRAINING_VERIFIED_BY_IMC`), then forwards the case to Executive Management (`with_head_management`).
+  - Executive Management performs the final review and officially signs off, transitioning the incident to `closed`.
+- **Dual-Track Workflow (Disciplinary Letters + Corrective Training)**:
+  - If an incident entails both formal disciplinary notices/letters and corrective training, the two tracks operate in parallel once approved by Management.
+  - Track B (Letters): IMC drafts letters $\rightarrow$ Management authorizes dispatch $\rightarrow$ Letters sent to staff.
+  - Track C (Training): IMC assigns trainer $\rightarrow$ Trainer conducts session and uploads report $\rightarrow$ IMC verifies.
+  - Final closure is held until BOTH tracks are completed and certified by Executive Management.
 - **Notification & Audit Workflows**: Multi-channel alerts (Web, Email, WhatsApp) dispatch on submission, assignment, reminders, redirects, training mandates, and closure. Every user action records immutably in the system audit log.
 
-### 10.4 Advanced Enterprise Features (Recommendations)
-1. **Incident Reopening**: Allows Management to reopen closed incidents if new regulatory requirements or critical evidence emerge, preserving original reference IDs.
-2. **Incident Merge & Link**: Enables IMC to merge duplicate reports of the same event into a primary master record while preserving individual reporter timelines.
-3. **Actionable CAPA Task Tracking**: Converts CAPA text into tracked organizational tasks assigned to specific owners with due dates and verification evidence.
-4. **Automatic Risk Scoring**: Algorithmically assigns an initial risk score (Low to Extreme) based on severity, category, department history, and patient impact.
-5. **Escalation Matrix**: Automated hierarchical escalations: HOD SLA breach $\rightarrow$ Assistant COO $\rightarrow$ IMC $\rightarrow$ Management $\rightarrow$ Hospital Director/COO.
+### 10.4 Advanced Enterprise Features & Exceptions
+1. **Incident Reopening for Exceptional Review**:
+   - Reopening a closed or resolved incident is strictly restricted to **Executive Management** and the **IMC Convenor**.
+   - Mandatory written justification must be supplied and recorded in the audit event trail.
+   - Upon reopening, the incident transitions back to `with_imc` for re-evaluation, preserving historical reference IDs, past training records, and prior decisions.
+2. **Multi-Department Incident Preservation**: Partial redirections replace solely the requesting department's involvement, maintaining seamless continuity for other departments involved in the incident.
+3. **Automated SLA Escalation Exclusions**: Automated cron escalation routines (Day 5 warning, Day 7 breach, Day 21 IMC escalation, Day 28 Management escalation) verify department submission status and automatically exclude departments that have already fulfilled their feedback obligations.
+4. **Hierarchical Escalation Matrix**: Automated SLA escalation path: HOD SLA breach $\rightarrow$ Department Email Reminder (Day 5 & 7) $\rightarrow$ Quality Committee / IMC Escalation (Day 21) $\rightarrow$ Executive Management Escalation (Day 28).
 
 ### 10.5 Functional Requirements
 | ID | Requirement Description |
 | :--- | :--- |
 | **FR-WF-001 to 003** | Enforce automated state transitions, track progression, and maintain timeline integrity. |
-| **FR-WF-004 to 005** | Monitor stage-specific SLAs and generate multi-channel alerts. |
-| **FR-WF-006 to 008** | Manage redirect adjudications, investigator delegation, and mandatory training gates. |
-| **FR-WF-009 to 010** | Generate immutable audit logs and prevent illegal state transitions. |
+| **FR-WF-004 to 005** | Monitor stage-specific SLAs and generate multi-channel alerts, excluding responded departments from escalations. |
+| **FR-WF-006 to 008** | Enforce Management pre-approval gate before trainer assignment, parallel dual-track execution, and final Management closure sign-off. |
+| **FR-WF-009 to 010** | Generate immutable audit logs, enforce role-restricted incident reopening with mandatory reasons, and prevent illegal transitions. |
 
 ---
 
@@ -777,11 +833,11 @@ Management Closure
   - `date_of_joining` (DATE), `termination_date` (DATE, Nullable)
   - `raw_payload` (JSONB) — Full vendor payload preserved for schema-agnostic extensibility
   - `synced_at` (TIMESTAMP WITH TIME ZONE, Default `NOW()`)
-- **department_reviewers Table**: Configured by System Administrator to map senior staff across single or multiple departments:
+- **department_reviewers Table**: Configured by System Administrator to map any hospital employee across single or multiple departments:
   - `id` (UUID, Primary Key)
   - `user_id` (UUID, Foreign Key $\rightarrow$ `users.id`, Indexed)
-  - `department_id` (UUID, Foreign Key $\rightarrow$ `departments.id`, Indexed)
-  - `reviewer_role` (VARCHAR 32) — Enum: `HOD` | `Incharge` | `Assistant COO`
+  - `department_id` (INTEGER, Foreign Key $\rightarrow$ `departments.id`, Indexed)
+  - `reviewer_role` (VARCHAR 32, Default `'Department Reviewer'`) — Functional reviewer title (e.g., `Department Reviewer`, `HOD`, `Incharge`)
   - `is_active` (BOOLEAN, Default `true`)
   - `assigned_by` (UUID, Foreign Key $\rightarrow$ `users.id`)
   - `created_at` (TIMESTAMP), `updated_at` (TIMESTAMP)
@@ -824,7 +880,7 @@ Management Closure
 ### 12.2 Comprehensive REST Endpoint Specifications
 - **Authentication**: `POST /auth/login`, `/logout`, `/refresh-token`, `/forgot-password`, `/verify-otp`, `/reset-password`, `GET /auth/me`, `/sessions`, `DELETE /auth/sessions/:id`. (Validates login against `master_employees` status).
 - **Employee & Directory**: `GET /employee/dashboard`, `/incidents`, `/incidents/:id`, `/incidents/:id/timeline`, `POST /employee/incidents`, `/incidents/draft`, `/incidents/:id/attachments`, `PUT /employee/incidents/draft/:id`, `GET /employee/search` (Autocomplete employee directory search for incident reporting and training nomination).
-- **Department Reviewer (Senior Staff / HOD / Incharge / COO)**:
+- **Department Reviewer (Any Assigned Employee)**:
   - `GET /hod/dashboard?departmentId=...` (Dashboard metrics scoped to specific department or consolidated across all assigned departments)
   - `GET /hod/incidents?departmentId=...` (Incident queue filtered by assigned department)
   - `GET /hod/assigned-departments` (Returns array of departments assigned to current reviewer)

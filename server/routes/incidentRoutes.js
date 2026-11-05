@@ -19,12 +19,12 @@ router.get('/:id', authenticate, incidentsController.getIncident);
 router.put('/:id', authenticate, incidentActionsController.updateIncident);
 router.post('/:id/withdraw', authenticate, incidentsController.withdrawIncident);
 
-// HOD actions (authorized for HODs, Asst COOs, COOs, and department leaders)
-router.post('/:id/hod-feedback', authenticate, authorize('hod', 'asst_coo', 'coo', 'employee'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
-router.post('/:id/request-redirect', authenticate, authorize('hod', 'asst_coo', 'coo', 'employee'), incidentActionsController.requestRedirect);
+// HOD actions (authorized for HODs and assigned department reviewers)
+router.post('/:id/hod-feedback', authenticate, authorize('hod', 'employee', 'system_admin'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
+router.post('/:id/request-redirect', authenticate, authorize('hod', 'employee', 'system_admin'), incidentActionsController.requestRedirect);
 
 // Feedback edit
-router.put('/:id/feedback', authenticate, authorize('hod', 'imc', 'head_management'), incidentActionsController.editFeedback);
+router.put('/:id/feedback', authenticate, authorize('hod', 'employee', 'imc', 'head_management', 'system_admin'), incidentActionsController.editFeedback);
 
 // IMC & Admin actions
 router.post('/:id/claim', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.claimIncident);
@@ -45,7 +45,7 @@ router.post('/:id/reject-investigator-report', authenticate, authorize('imc', 's
 // Escalation, reminders & reopen
 router.post('/:id/escalate-priority', authenticate, authorize('imc', 'head_management'), incidentActionsController.escalatePriority);
 router.post('/:id/remind-hod', authenticate, authorize('imc', 'head_management'), incidentActionsController.remindHod);
-router.post('/:id/reopen', authenticate, authorize('head_management', 'imc'), incidentWorkflowController.reopenIncident);
+router.post('/:id/reopen', authenticate, authorize('head_management', 'imc', 'system_admin'), incidentWorkflowController.reopenIncident);
 
 // Management action (Governance decision)
 router.post('/:id/management-action', authenticate, authorize('head_management', 'system_admin'), setUploadStage('md_decision'), uploadIncidentAttachments, incidentWorkflowController.submitManagementAction);

@@ -10,6 +10,6 @@ router.get('/departments', authenticate, commonController.getDepartments);
 // Attachment download and preview endpoints
 router.get('/attachments/:id/download', authenticate, commonController.downloadAttachment);
 router.get('/attachments/:id/preview', authenticate, commonController.previewAttachment);
-router.get('/attachments/:id/view', commonController.serveAttachmentFile);
+router.get('/attachments/:id/view', authenticate, commonController.serveAttachmentFile);
 
 module.exports = router;

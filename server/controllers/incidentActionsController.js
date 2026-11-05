@@ -235,17 +235,28 @@ exports.approveRedirect = async (req, res) => {
     }
     const targetDepts = deptRes.rows;
 
-    let finalDeptIds = targetDepts.map(d => d.id);
+    // Fetch currently attached departments to this incident
+    const existingDeptsRes = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1', [id]);
+    const existingDeptIds = existingDeptsRes.rows.map(r => r.department_id);
 
-    // Support Partial Redirection: retain existing departments if requested
+    // Identify requesting department
+    let requestingDeptId = null;
+    if (incident.redirect_requested_by_dept) {
+      const reqDeptRes = await client.query('SELECT id FROM departments WHERE name = $1', [incident.redirect_requested_by_dept]);
+      if (reqDeptRes.rows.length) requestingDeptId = reqDeptRes.rows[0].id;
+    }
+
+    // By default in multi-department incidents, preserve all co-involved departments that did NOT request redirect
+    const uninvolvedDeptIds = existingDeptIds.filter(dId => dId !== requestingDeptId);
+
+    let finalDeptIds = [...new Set([...uninvolvedDeptIds, ...targetDepts.map(d => d.id)])];
+
+    // Support Partial Redirection: retain requesting department if requested
     if (Array.isArray(retainedDepartments) && retainedDepartments.length > 0) {
       const retainedRes = await client.query('SELECT id, name FROM departments WHERE name = ANY($1) OR id::text = ANY($1)', [retainedDepartments]);
       finalDeptIds = [...new Set([...finalDeptIds, ...retainedRes.rows.map(d => d.id)])];
-    } else if (actionType === 'partial' && incident.redirect_requested_by_dept) {
-      const origRes = await client.query('SELECT id, name FROM departments WHERE name = $1', [incident.redirect_requested_by_dept]);
-      if (origRes.rows.length) {
-        finalDeptIds = [...new Set([...finalDeptIds, origRes.rows[0].id])];
-      }
+    } else if (actionType === 'partial' && requestingDeptId) {
+      finalDeptIds = [...new Set([...finalDeptIds, requestingDeptId])];
     }
 
     const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';

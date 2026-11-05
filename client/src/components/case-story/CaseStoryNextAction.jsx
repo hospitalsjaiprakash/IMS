@@ -96,7 +96,7 @@ export default function CaseStoryNextAction({
                 Workflow Action Required
               </span>
               <h3 className="text-base font-bold text-slate-900">
-                {getActionTitle(status, canHodFeedback, canImcAct, isManagement, isAssignedInvestigator, isAssignedTrainer)}
+                {getActionTitle(status, canHodFeedback, canImcAct, isManagement, isAssignedInvestigator, isAssignedTrainer, trainers)}
               </h3>
             </div>
           </div>
@@ -112,6 +112,7 @@ export default function CaseStoryNextAction({
           user,
           status,
           role,
+          trainers,
           canHodFeedback,
           canImcAct,
           isManagement,
@@ -131,7 +132,7 @@ export default function CaseStoryNextAction({
   );
 }
 
-function getActionTitle(status, canHodFeedback, canImcAct, isManagement, isAssignedInvestigator, isAssignedTrainer) {
+function getActionTitle(status, canHodFeedback, canImcAct, isManagement, isAssignedInvestigator, isAssignedTrainer, trainers = []) {
   if (['closed', 'resolved'].includes(status)) {
     return 'Hospital Incident Concluded';
   }
@@ -145,6 +146,10 @@ function getActionTitle(status, canHodFeedback, canImcAct, isManagement, isAssig
     return canImcAct ? 'IMC Committee Assessment & Recommendation' : 'Awaiting Quality Committee Evaluation';
   }
   if (status === 'with_head_management') {
+    const hasVerified = Array.isArray(trainers) && trainers.some(t => ['verified', 'verified_by_imc'].includes(t.status));
+    if (hasVerified) {
+      return isManagement ? 'Final Training Review & Official Incident Closure' : 'Awaiting Final Management Closure';
+    }
     return isManagement ? 'Executive Management Review & Final Directive' : 'Awaiting Management Governance Decision';
   }
   if (status === 'pending_letter_generation') {
@@ -302,10 +307,13 @@ function renderActionContent({
   // 5. MANAGEMENT DIRECTIVE PENDING
   if (status === 'with_head_management') {
     if (isManagement) {
+      const hasVerifiedTraining = Array.isArray(trainers) && trainers.some(t => ['verified', 'verified_by_imc'].includes(t.status));
       return (
         <div className="space-y-3 bg-purple-50/60 border border-purple-200 p-4 rounded-xl">
           <p className="text-xs text-purple-950 leading-relaxed font-medium">
-            IMC has submitted their quality assessment and recommendations. As Executive Management, you may agree with the proposed outcome, modify the directive (e.g. mandate training, disciplinary penalty), or return for re-investigation.
+            {hasVerifiedTraining
+              ? 'Corrective training has been delivered and verified by the Incident Management Committee (IMC). Please conduct the final review of the training report and sign off to officially close the incident.'
+              : 'IMC has submitted their quality assessment and recommendations. As Executive Management, you may agree with the proposed outcome, modify the directive (e.g. mandate training, disciplinary penalty), or return for re-investigation.'}
           </p>
           <div className="flex items-center gap-2 pt-1">
             <button
@@ -313,8 +321,8 @@ function renderActionContent({
               onClick={onOpenMdModal}
               className="btn-primary btn-sm bg-purple-700 hover:bg-purple-800 border-purple-700 flex items-center gap-1.5 shadow-xs"
             >
-              <Sparkles size={14} />
-              <span>Issue Executive Management Directive</span>
+              {hasVerifiedTraining ? <CheckCircle2 size={14} /> : <Sparkles size={14} />}
+              <span>{hasVerifiedTraining ? 'Approve Training & Officially Close Incident' : 'Issue Executive Management Directive'}</span>
             </button>
           </div>
         </div>

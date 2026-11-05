@@ -51,6 +51,44 @@ exports.getDepartments = async (req, res) => {
   }
 };
 
+async function canUserAccessIncidentAttachment(user, incidentId) {
+  if (!user) return false;
+  if (user.role === 'system_admin' || user.is_system_admin ||
+      user.role === 'head_management' || user.is_management_member ||
+      user.role === 'imc' || user.is_imc_member || user.is_imc_lead) {
+    return true;
+  }
+  const incRes = await query('SELECT reporter_id FROM incidents WHERE id = $1', [incidentId]);
+  if (!incRes.rows.length) return false;
+  if (incRes.rows[0].reporter_id === user.id) return true;
+
+  // Check trainer assignment
+  const trRes = await query('SELECT 1 FROM incident_trainers WHERE incident_id = $1 AND trainer_id = $2', [incidentId, user.id]);
+  if (trRes.rows.length) return true;
+
+  // Check investigator
+  const invRes = await query('SELECT 1 FROM investigators WHERE incident_id = $1 AND user_id = $2', [incidentId, user.id]);
+  if (invRes.rows.length) return true;
+
+  // Check department HOD / assigned reviewer
+  const deptRes = await query(`
+    SELECT 1 FROM incident_departments idp
+    JOIN departments d ON idp.department_id = d.id
+    WHERE idp.incident_id = $1
+      AND (
+        COALESCE(d.assigned_user_id, d.hod_user_id) = $2
+        OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true)
+      )
+  `, [incidentId, user.id]);
+  if (deptRes.rows.length) return true;
+
+  // Check responsible person
+  const respRes = await query('SELECT 1 FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2', [incidentId, user.id]);
+  if (respRes.rows.length) return true;
+
+  return false;
+}
+
 /**
  * Download attachment via presigned S3 URL or local path (forces download attachment header)
  */
@@ -59,6 +97,12 @@ exports.downloadAttachment = async (req, res) => {
     const result = await query('SELECT * FROM attachments WHERE id = $1', [req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: 'Attachment not found' });
     const att = result.rows[0];
+
+    if (att.incident_id) {
+      const allowed = await canUserAccessIncidentAttachment(req.user, att.incident_id);
+      if (!allowed) return res.status(403).json({ error: 'Access denied: You are not authorized to access this attachment.' });
+    }
+
     const storedFilename = att.stored_filename;
 
     if (s3Client && process.env.S3_BUCKET_NAME) {
@@ -89,6 +133,12 @@ exports.previewAttachment = async (req, res) => {
     const result = await query('SELECT * FROM attachments WHERE id = $1', [req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: 'Attachment not found' });
     const att = result.rows[0];
+
+    if (att.incident_id) {
+      const allowed = await canUserAccessIncidentAttachment(req.user, att.incident_id);
+      if (!allowed) return res.status(403).json({ error: 'Access denied: You are not authorized to access this attachment.' });
+    }
+
     const storedFilename = att.stored_filename;
 
     if (s3Client && process.env.S3_BUCKET_NAME) {
@@ -120,6 +170,12 @@ exports.serveAttachmentFile = async (req, res) => {
     const result = await query('SELECT * FROM attachments WHERE id = $1', [req.params.id]);
     if (!result.rows.length) return res.status(404).send('Attachment not found');
     const att = result.rows[0];
+
+    if (att.incident_id) {
+      const allowed = await canUserAccessIncidentAttachment(req.user, att.incident_id);
+      if (!allowed) return res.status(403).send('Access denied: You are not authorized to view this attachment.');
+    }
+
     const storedFilename = att.stored_filename;
 
     if (s3Client && process.env.S3_BUCKET_NAME) {

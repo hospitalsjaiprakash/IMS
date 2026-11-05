@@ -108,6 +108,14 @@ exports.assignTrainer = async (req, res) => {
     }
     const incident = incRes.rows[0];
 
+    // Status Gate: Only permitted if Management has reviewed and approved the training mandate
+    if (!['pending_trainer_assignment', 'training_in_progress'].includes(incident.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Cannot assign trainer: Management has not yet reviewed and approved the training mandate for this incident.'
+      });
+    }
+
     // If trainee is not supplied, find from responsible employees or incident
     if (!traineeEmployeeId || !traineeName) {
       const respRes = await client.query(
