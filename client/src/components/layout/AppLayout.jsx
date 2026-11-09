@@ -133,10 +133,14 @@ export default function AppLayout() {
   };
 
   const renderSidebarContent = () => {
-    const isHod = user?.role === 'hod' ||
+    const isRootSystemAccount = ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(String(user?.employeeId || '').trim().toUpperCase());
+    const isHod = !isRootSystemAccount && (
+      user?.role === 'hod' ||
+      Boolean(user?.isHod) ||
       (user?.designation || '').toUpperCase() === 'HOD' ||
       (user?.designation || '').toUpperCase().includes('HEAD OF DEPT') ||
-      (user?.designation || '').toUpperCase().includes('HEAD OF DEPARTMENT');
+      (user?.designation || '').toUpperCase().includes('HEAD OF DEPARTMENT')
+    );
 
     return (
       <div className="flex flex-col h-full">
@@ -229,7 +233,7 @@ export default function AppLayout() {
               <span>Switch to Management</span>
             </button>
           )}
-          {user?.role !== 'employee' && user?.role !== 'hod' && (
+          {!isRootSystemAccount && user?.role !== 'employee' && user?.role !== 'hod' && (
             <button onClick={() => openAdminLogin(isHod ? 'hod' : 'employee')} className="nav-item-inactive w-full text-left text-green-700 hover:bg-green-50">
               <Shield size={17} className="flex-shrink-0" />
               <span>{isHod ? 'Switch to HOD Dashboard' : 'Switch to Employee View'}</span>

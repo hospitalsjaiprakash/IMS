@@ -65,6 +65,7 @@ router.get('/webhooks/logs', authenticate, authorize('system_admin'), adminContr
 
 // System Health & Master Data
 router.get('/system-admins', authenticate, authorize('system_admin'), adminController.getSystemAdmins);
+router.delete('/system-admins/:id', authenticate, authorize('system_admin'), adminController.removeSystemAdminRole);
 router.get('/system-health', authenticate, authorize('system_admin'), adminController.getSystemHealth);
 router.get('/master-data', authenticate, authorize('system_admin'), adminController.getMasterData);
 router.get('/communication-logs', authenticate, authorize('system_admin'), adminController.getCommunicationLogs);

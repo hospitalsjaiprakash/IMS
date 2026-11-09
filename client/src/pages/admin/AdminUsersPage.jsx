@@ -104,6 +104,7 @@ export default function AdminUsersPage() {
       setShowAssignModal(false);
       setAssignForm({ employeeId: '', targetRole: 'system_admin', departmentId: '' });
       qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['master-employees'] });
       qc.invalidateQueries({ queryKey: ['system-admins'] });
       qc.invalidateQueries({ queryKey: ['imc-members'] });
       qc.invalidateQueries({ queryKey: ['management-members'] });
@@ -132,6 +133,7 @@ export default function AdminUsersPage() {
 
   const removeMutation = useMutation({
     mutationFn: (target) => {
+      if (target.type === 'system_admin') return adminApi.removeSystemAdmin(target.id || target.employeeId);
       if (target.type === 'management') return adminApi.removeManagement(target.id);
       if (target.id) return adminApi.removeImc(target.id);
       return adminApi.stopImcAccess({ employeeId: target.employeeId });
@@ -141,6 +143,7 @@ export default function AdminUsersPage() {
       setShowStopModal(false);
       setStopTarget({ id: '', employeeId: '', fullName: '', type: 'imc' });
       qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['master-employees'] });
       qc.invalidateQueries({ queryKey: ['system-admins'] });
       qc.invalidateQueries({ queryKey: ['imc-members'] });
       qc.invalidateQueries({ queryKey: ['management-members'] });
@@ -779,18 +782,18 @@ export default function AdminUsersPage() {
                                   ) : (
                                     <>
                                       <button
-                                        disabled={!u.is_registered}
+                                        disabled={!u.is_registered || String(u.employee_id).trim() === '00000'}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setAssignForm({ employeeId: u.employee_id, targetRole: u.role !== 'employee' ? u.role : 'imc', departmentId: '' });
                                           setShowAssignModal(true);
                                         }}
-                                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : 'bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700'}`}
+                                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered || String(u.employee_id).trim() === '00000' ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : 'bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700'}`}
                                       >
                                         <Edit3 size={13} /> Configure
                                       </button>
                                       <button
-                                        disabled={!u.is_registered}
+                                        disabled={!u.is_registered || String(u.employee_id).trim() === '00000'}
                                         onClick={async (e) => {
                                           e.stopPropagation();
                                           try {
@@ -802,7 +805,7 @@ export default function AdminUsersPage() {
                                             toast.error(error.response?.data?.error || 'Failed to change user status');
                                           }
                                         }}
-                                        className={`ml-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : u.is_active
+                                        className={`ml-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1 ${!u.is_registered || String(u.employee_id).trim() === '00000' ? 'bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed' : u.is_active
                                             ? 'bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200'
                                             : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white border border-emerald-200'
                                           }`}
@@ -878,37 +881,47 @@ export default function AdminUsersPage() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {filteredSysAdmins.map(m => (
-                      <div key={m.id} className="rounded-2xl p-5 bg-gradient-to-br from-rose-50/60 to-white border border-rose-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-4 group">
-                        <div className="flex items-start gap-4">
-                          <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center flex-shrink-0 font-black text-lg shadow-md shadow-rose-500/25">
-                            {m.full_name?.charAt(0) || 'A'}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-black text-slate-900 truncate group-hover:text-rose-600 transition-colors">{m.full_name}</p>
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-600 text-white uppercase tracking-wider">ROOT ADMIN</span>
+                    {filteredSysAdmins.map(m => {
+                      const isRootAdmin = String(m.employee_id).trim() === '00000';
+                      return (
+                        <div key={m.id} className="rounded-2xl p-5 bg-gradient-to-br from-rose-50/60 to-white border border-rose-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-4 group">
+                          <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center flex-shrink-0 font-black text-lg shadow-md shadow-rose-500/25">
+                              {m.full_name?.charAt(0) || 'A'}
                             </div>
-                            <p className="text-xs font-mono font-bold text-slate-700 mt-1">ID: <span className="bg-rose-100 text-rose-900 px-1.5 py-0.5 rounded">{m.employee_id}</span></p>
-                            <p className="text-xs text-slate-500 truncate mt-1">{m.designation || 'System Admin'} · {m.department || 'IT Administration'}</p>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-sm font-black text-slate-900 truncate group-hover:text-rose-600 transition-colors">{m.full_name}</p>
+                                {isRootAdmin ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-600 text-white uppercase tracking-wider">ROOT ADMIN</span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200 uppercase tracking-wider">ADMIN + EMPLOYEE</span>
+                                )}
+                              </div>
+                              <p className="text-xs font-mono font-bold text-slate-700 mt-1">ID: <span className="bg-rose-100 text-rose-900 px-1.5 py-0.5 rounded">{m.employee_id}</span></p>
+                              <p className="text-xs text-slate-500 truncate mt-1">{m.designation || 'System Admin'} · {m.department || 'IT Administration'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-3 border-t border-rose-100/80">
+                            <span className="text-[11px] font-medium text-emerald-600 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> {isRootAdmin ? 'Admin Portal Only' : 'Admin & Employee Access'}
+                            </span>
+                            {isRootAdmin ? (
+                              <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 text-[11px] font-bold inline-flex items-center gap-1">
+                                <Lock size={11} /> Protected Root Account
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleOpenStopModal(m, 'system_admin')}
+                                className="px-3 py-1.5 rounded-xl bg-white hover:bg-red-50 text-red-600 border border-slate-200 hover:border-red-200 text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-2xs"
+                              >
+                                <UserMinus size={13} /> Revoke
+                              </button>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center justify-between pt-3 border-t border-rose-100/80">
-                          <span className="text-[11px] font-medium text-emerald-600 flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Portal Active
-                          </span>
-                          <button
-                            onClick={() => {
-                              setAssignForm({ employeeId: m.employee_id, targetRole: 'system_admin', departmentId: '' });
-                              setShowAssignModal(true);
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 hover:border-rose-200 text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-2xs"
-                          >
-                            <Edit3 size={13} /> Modify
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1936,7 +1949,7 @@ export default function AdminUsersPage() {
             <div>
               <h3 className="text-xs font-black text-red-900 uppercase tracking-wide">Revoking Specialized Portal Access</h3>
               <p className="text-xs text-red-700 mt-1 leading-relaxed">
-                This will immediately revoke their privileges for {stopTarget.type === 'management' ? 'Executive Management' : 'the IMC Committee'}. They will return to standard staff access levels.
+                This will immediately revoke their privileges for {stopTarget.type === 'system_admin' ? 'System Administration' : stopTarget.type === 'management' ? 'Executive Management' : 'the IMC Committee'}. They will retain their standard employee / department dashboard access.
               </p>
             </div>
           </div>

@@ -169,6 +169,7 @@ export const adminApi = {
   createDepartment: (data) => api.post('/admin/departments', data),
   deleteDepartment: (id) => api.delete(`/admin/departments/${id}`),
   getSystemAdmins: () => api.get('/admin/system-admins'),
+  removeSystemAdmin: (id) => api.delete(`/admin/system-admins/${id}`),
   toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
   getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
   broadcastNotification: (data) => api.post('/admin/broadcast-notification', data, { headers: { 'Content-Type': 'multipart/form-data' } }),

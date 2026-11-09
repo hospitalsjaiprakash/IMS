@@ -31,7 +31,8 @@ import CategoryDetailPage from './pages/dashboard/CategoryDetailPage';
 import NotificationsPage from './pages/dashboard/NotificationsPage';
 import EmployeeDirectory from './pages/employees/EmployeeDirectory';
 
-const getRoleDashboard = (role) => {
+const getRoleDashboard = (role, employeeId) => {
+  if (String(employeeId || '').trim() === '00000') return '/admin/dashboard';
   if (role === 'imc') return '/imc/dashboard';
   if (role === 'head_management') return '/management/dashboard';
   if (role === 'system_admin') return '/admin/dashboard';
@@ -54,13 +55,17 @@ const sessionStoragePersister = createSyncStoragePersister({
 function ProtectedRoute({ children, roles }) {
   const { isAuthenticated, user } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (roles && !roles.includes(user?.role)) return <Navigate to={getRoleDashboard(user?.role)} replace />;
+  const isRootAdmin = String(user?.employeeId || '').trim() === '00000';
+  if (isRootAdmin && roles && !roles.includes('system_admin')) {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+  if (roles && !roles.includes(user?.role)) return <Navigate to={getRoleDashboard(user?.role, user?.employeeId)} replace />;
   return children;
 }
 
 function PublicRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore();
-  if (isAuthenticated) return <Navigate to={getRoleDashboard(user?.role)} replace />;
+  if (isAuthenticated) return <Navigate to={getRoleDashboard(user?.role, user?.employeeId)} replace />;
   return children;
 }
 
@@ -120,7 +125,7 @@ export default function App() {
               <Route path="employees" element={<ProtectedRoute roles={['imc', 'head_management', 'system_admin']}><EmployeeDirectory /></ProtectedRoute>} />
               <Route path="notifications" element={<NotificationsPage />} />
               <Route path="incidents" element={<IncidentsListPage />} />
-              <Route path="incidents/new" element={<NewIncidentPage />} />
+              <Route path="incidents/new" element={<ProtectedRoute roles={['employee', 'hod']}><NewIncidentPage /></ProtectedRoute>} />
               <Route path="incidents/:id" element={<IncidentDetailPage />} />
               <Route path="admin/analytics" element={<ProtectedRoute roles={['system_admin','head_management']}><AdminAnalyticsPage /></ProtectedRoute>} />
               <Route path="admin/users" element={<ProtectedRoute roles={['system_admin']}><AdminUsersPage /></ProtectedRoute>} />
