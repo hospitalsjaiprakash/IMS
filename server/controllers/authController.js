@@ -4,11 +4,35 @@ const { query } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const { sendEmail } = require('../utils/emailService');
 
+// ─── Helper: Check if account is a generic system account (not an employee) ─
+const isGenericSystemAccount = (empId) => {
+  return ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(String(empId || '').trim().toUpperCase());
+};
+
 // ─── Helper: Check if user is HOD based on role or designation ──────────────
 const isUserHod = (user) => {
+  if (isGenericSystemAccount(user?.employee_id)) return false;
   if (user?.role === 'hod') return true;
   const desig = (user?.designation || '').toUpperCase();
   return desig === 'HOD' || desig.includes('HEAD OF DEPARTMENT') || desig.includes('HEAD OF DEPT') || desig.startsWith('HEAD OF ') || desig.includes('(HOD)');
+};
+
+// ─── Helper: Check if user has Department Reviewer / HOD access in DB ───────
+const checkUserHodAccess = async (user) => {
+  if (!user || isGenericSystemAccount(user.employee_id)) return false;
+  if (isUserHod(user)) return true;
+  try {
+    const deptCheck = await query(
+      `SELECT 1 FROM departments WHERE assigned_user_id = $1 OR hod_user_id = $1
+       UNION ALL
+       SELECT 1 FROM department_reviewers WHERE user_id = $1 AND is_active = TRUE
+       LIMIT 1`,
+      [user.id]
+    );
+    return deptCheck.rows.length > 0;
+  } catch (err) {
+    return false;
+  }
 };
 
 const syncHodDepartment = async (user) => {
@@ -421,12 +445,29 @@ exports.login = async (req, res) => {
       });
     }
 
-    // If role is employee but user is actually an HOD, ensure hod role is assigned
+    // Determine active role on login:
+    // 1. Root System Admin (00000) always logs into system_admin and never has an employee view
+    // 2. Real employees assigned as Admin (is_system_admin = true) land on their Employee / HOD Dashboard first by default
     let activeRole = user.role;
-    if (activeRole === 'employee' && isUserHod(user)) {
-      activeRole = 'hod';
-      await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
-      user.role = activeRole;
+    const hasHodAccess = await checkUserHodAccess(user);
+
+    if (String(user.employee_id).trim() === '00000') {
+      activeRole = 'system_admin';
+      if (user.role !== 'system_admin' || !user.is_system_admin) {
+        await query('UPDATE users SET role = $1, is_system_admin = TRUE WHERE id = $2', ['system_admin', user.id]);
+      }
+      user.role = 'system_admin';
+      user.is_system_admin = true;
+    } else if (!isGenericSystemAccount(user.employee_id)) {
+      if (activeRole === 'system_admin') {
+        activeRole = hasHodAccess ? 'hod' : 'employee';
+        await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
+        user.role = activeRole;
+      } else if (activeRole === 'employee' && hasHodAccess) {
+        activeRole = 'hod';
+        await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
+        user.role = activeRole;
+      }
     }
 
     await syncHodDepartment(user);
@@ -462,6 +503,7 @@ exports.login = async (req, res) => {
         department: user.department,
         designation: user.designation,
         role: activeRole,
+        isHod: hasHodAccess,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
@@ -487,10 +529,19 @@ exports.getMe = async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = result.rows[0];
-    if (user.role === 'employee' && isUserHod(user)) {
+    const hasHodAccess = await checkUserHodAccess(user);
+
+    if (String(user.employee_id).trim() === '00000') {
+      if (user.role !== 'system_admin' || !user.is_system_admin) {
+        await query('UPDATE users SET role = $1, is_system_admin = TRUE WHERE id = $2', ['system_admin', user.id]);
+      }
+      user.role = 'system_admin';
+      user.is_system_admin = true;
+    } else if (!isGenericSystemAccount(user.employee_id) && user.role === 'employee' && hasHodAccess) {
       user.role = 'hod';
       await query('UPDATE users SET role = $1 WHERE id = $2', [user.role, user.id]);
     }
+
     await syncHodDepartment(user);
     if (!user.phone) {
       const portalRes = await query('SELECT phone FROM master_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
@@ -508,6 +559,7 @@ exports.getMe = async (req, res) => {
       department: user.department,
       designation: user.designation,
       role: user.role,
+      isHod: hasHodAccess,
       isImcLead: user.is_imc_lead,
       isImcMember: user.is_imc_member,
       isManagementMember: user.is_management_member,
@@ -670,6 +722,13 @@ exports.switchRole = async (req, res) => {
       return res.status(401).json({ error: 'Account deactivated.' });
     }
 
+    // Root / generic system accounts do not have an Employee or HOD view
+    if (isGenericSystemAccount(user.employee_id) && (targetRole === 'employee' || targetRole === 'hod')) {
+      return res.status(403).json({ error: 'The root System Admin account does not have an Employee view.' });
+    }
+
+    const hasHodAccess = await checkUserHodAccess(user);
+
     // Validate that the user actually holds the permissions for the target role
     if (targetRole === 'system_admin' && !user.is_system_admin) {
       return res.status(403).json({ error: 'Not authorized for System Admin role.' });
@@ -680,7 +739,7 @@ exports.switchRole = async (req, res) => {
     if (targetRole === 'head_management' && !user.is_management_member) {
       return res.status(403).json({ error: 'Not authorized for Management role.' });
     }
-    if (targetRole === 'hod' && !isUserHod(user)) {
+    if (targetRole === 'hod' && !hasHodAccess) {
       return res.status(403).json({ error: 'Not authorized for HOD role.' });
     }
 
@@ -690,7 +749,7 @@ exports.switchRole = async (req, res) => {
     }
 
     let finalTargetRole = targetRole;
-    if (finalTargetRole === 'employee' && isUserHod(user)) {
+    if (finalTargetRole === 'employee' && hasHodAccess) {
       finalTargetRole = 'hod';
     }
 
@@ -717,6 +776,7 @@ exports.switchRole = async (req, res) => {
         department: user.department,
         designation: user.designation,
         role: finalTargetRole,
+        isHod: hasHodAccess,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
@@ -901,7 +961,12 @@ exports.leaveRole = async (req, res) => {
     if (!prevUserRes.rows.length) return res.status(404).json({ error: 'User not found' });
     const prevUser = prevUserRes.rows[0];
 
-    const baseRole = isUserHod(prevUser) ? 'hod' : 'employee';
+    if (isGenericSystemAccount(prevUser.employee_id)) {
+      return res.status(403).json({ error: 'The root System Admin account cannot leave its system role.' });
+    }
+
+    const hasHodAccess = await checkUserHodAccess(prevUser);
+    const baseRole = hasHodAccess ? 'hod' : 'employee';
 
     if (targetRole === 'imc') {
       return res.status(403).json({ error: 'Self-removal from IMC is disabled. Only System Administrators have the authority to revoke or assign IMC committee membership.' });

@@ -42,6 +42,33 @@ exports.getImcMembers = async (req, res) => {
   }
 };
 
+const getEmployeeBaseRole = async (user) => {
+  if (!user) return 'employee';
+  const desig = (user.designation || '').toUpperCase();
+  if (
+    desig === 'HOD' ||
+    desig.includes('HEAD OF DEPARTMENT') ||
+    desig.includes('HEAD OF DEPT') ||
+    desig.startsWith('HEAD OF ') ||
+    desig.includes('(HOD)')
+  ) {
+    return 'hod';
+  }
+  try {
+    const deptCheck = await query(
+      `SELECT 1 FROM departments WHERE assigned_user_id = $1 OR hod_user_id = $1
+       UNION ALL
+       SELECT 1 FROM department_reviewers WHERE user_id = $1 AND is_active = TRUE
+       LIMIT 1`,
+      [user.id]
+    );
+    if (deptCheck.rows.length > 0) return 'hod';
+  } catch (err) {
+    // ignore
+  }
+  return 'employee';
+};
+
 const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
   try {
     if (!targetId) {
@@ -57,27 +84,38 @@ const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
     }
 
     const user = userResult.rows[0];
+    if (String(user.employee_id).trim() === '00000' && roleType === 'system_admin') {
+      return res.status(400).json({ error: 'The root System Administrator account (00000) cannot be revoked.' });
+    }
+
     const prevRole = user.role;
+    const baseRole = await getEmployeeBaseRole(user);
     let newRole = user.role;
     let updateSql = '';
     let auditLabel = '';
     let actionName = '';
 
     if (roleType === 'imc') {
-      newRole = user.role === 'imc' ? 'employee' : user.role;
+      newRole = user.role === 'imc' ? baseRole : user.role;
       updateSql = `UPDATE users SET role = $1, is_imc_lead = FALSE, is_imc_member = FALSE, updated_at = NOW() WHERE id = $2`;
-      auditLabel = 'employee (Revoked IMC Access)';
+      auditLabel = `${newRole} (Revoked IMC Access)`;
       actionName = 'IMC_ACCESS_STOPPED';
     } else if (roleType === 'head_management') {
-      newRole = user.role === 'head_management' ? 'employee' : user.role;
+      newRole = user.role === 'head_management' ? baseRole : user.role;
       updateSql = `UPDATE users SET role = $1, is_management_member = FALSE, updated_at = NOW() WHERE id = $2`;
-      auditLabel = 'employee (Revoked Management Access)';
+      auditLabel = `${newRole} (Revoked Management Access)`;
       actionName = 'MANAGEMENT_ACCESS_STOPPED';
+    } else if (roleType === 'system_admin') {
+      newRole = user.role === 'system_admin' ? baseRole : user.role;
+      updateSql = `UPDATE users SET role = $1, is_system_admin = FALSE, updated_at = NOW() WHERE id = $2`;
+      auditLabel = `${newRole} (Revoked System Admin Access)`;
+      actionName = 'SYSTEM_ADMIN_ACCESS_STOPPED';
     } else {
       return res.status(400).json({ error: 'Invalid role access revocation requested.' });
     }
 
     await query(updateSql, [newRole, user.id]);
+    await query(`UPDATE master_employees SET role = $1 WHERE employee_id = $2`, [newRole, user.employee_id]);
 
     await query(
       `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
@@ -91,7 +129,7 @@ const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
       newRole
     }, req.ip);
 
-    const roleDisplayName = roleType === 'imc' ? 'IMC' : 'Management';
+    const roleDisplayName = roleType === 'imc' ? 'IMC' : roleType === 'head_management' ? 'Management' : 'System Admin';
     return res.json({
       success: true,
       message: `Successfully revoked ${roleDisplayName} access for ${user.full_name} (${user.employee_id}).`
@@ -190,6 +228,10 @@ exports.stopImcAccess = async (req, res) => {
   return revokeCommitteeAccess(req, res, req.body.employeeId || req.body.id || req.params.id, 'imc');
 };
 
+exports.removeSystemAdminRole = async (req, res) => {
+  return revokeCommitteeAccess(req, res, req.params.id || req.body.employeeId || req.body.id, 'system_admin');
+};
+
 exports.assignUserRole = async (req, res) => {
   try {
     const { employeeId, targetRole, departmentId } = req.body;
@@ -197,24 +239,49 @@ exports.assignUserRole = async (req, res) => {
       return res.status(400).json({ error: 'Employee ID and Role are required.' });
     }
 
-    const user = await getOrCreateUserFromMaster(employeeId, targetRole === 'imc_convenor' ? 'imc' : targetRole);
+    if (String(employeeId).trim() === '00000' && targetRole !== 'system_admin') {
+      return res.status(400).json({ error: 'The root System Administrator account (00000) role cannot be changed.' });
+    }
+
+    const initialMasterRole = ['imc_convenor', 'imc'].includes(targetRole)
+      ? 'imc'
+      : targetRole === 'system_admin'
+      ? 'employee'
+      : targetRole;
+
+    const user = await getOrCreateUserFromMaster(employeeId, initialMasterRole);
     if (!user) {
       return res.status(404).json({ error: 'Employee not found in hospital directory.' });
     }
 
-    const prevRole = user.role;
+    if (String(user.employee_id).trim() === '00000' && targetRole !== 'system_admin') {
+      return res.status(400).json({ error: 'The root System Administrator account (00000) role cannot be changed.' });
+    }
 
-    let updateSql = `UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`;
+    const prevRole = user.role;
+    const baseRole = await getEmployeeBaseRole(user);
+
+    let updateSql = `UPDATE users SET role = $1, is_system_admin = FALSE, updated_at = NOW() WHERE id = $2`;
     let actualRole = targetRole;
+    let auditNewRole = targetRole;
 
     if (targetRole === 'imc') {
       updateSql = `UPDATE users SET role = $1, is_imc_member = TRUE, is_imc_lead = FALSE, updated_at = NOW() WHERE id = $2`;
     } else if (targetRole === 'imc_convenor') {
       actualRole = 'imc';
+      auditNewRole = 'imc_convenor';
       updateSql = `UPDATE users SET role = $1, is_imc_member = TRUE, is_imc_lead = TRUE, updated_at = NOW() WHERE id = $2`;
     } else if (targetRole === 'head_management') {
       updateSql = `UPDATE users SET role = $1, is_management_member = TRUE, updated_at = NOW() WHERE id = $2`;
     } else if (targetRole === 'system_admin') {
+      if (String(user.employee_id).trim() === '00000') {
+        actualRole = 'system_admin';
+      } else {
+        // Hospital employees assigned as Admin keep their personal Employee/HOD base role
+        // while gaining is_system_admin = TRUE so they have both Employee and Admin dashboards.
+        actualRole = ['imc', 'head_management'].includes(user.role) ? user.role : baseRole;
+      }
+      auditNewRole = 'system_admin';
       updateSql = `UPDATE users SET role = $1, is_system_admin = TRUE, updated_at = NOW() WHERE id = $2`;
     }
     await query(updateSql, [actualRole, user.id]);
@@ -231,11 +298,11 @@ exports.assignUserRole = async (req, res) => {
     await query(
       `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
        VALUES ($1, $2, $3, $4)`,
-      [user.id, prevRole, actualRole, req.user.id]
+      [user.id, prevRole, auditNewRole, req.user.id]
     );
 
     await auditLog(req.user.id, 'ROLE_ASSIGNED', null, {
-      targetEmployee: user.employee_id, prevRole, newRole: actualRole, targetRoleRequested: targetRole, departmentId
+      targetEmployee: user.employee_id, prevRole, newRole: auditNewRole, targetRoleRequested: targetRole, departmentId
     }, req.ip);
 
     res.json({ success: true });
@@ -445,8 +512,12 @@ exports.toggleUserActiveStatus = async (req, res) => {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: 'User ID is required' });
 
-    const userRes = await query('SELECT is_active FROM users WHERE id = $1', [id]);
+    const userRes = await query('SELECT id, employee_id, is_active FROM users WHERE id = $1', [id]);
     if (!userRes.rows.length) return res.status(404).json({ error: 'User not found' });
+
+    if (String(userRes.rows[0].employee_id).trim() === '00000') {
+      return res.status(400).json({ error: 'The root System Administrator account (00000) cannot be deactivated.' });
+    }
 
     const newStatus = !userRes.rows[0].is_active;
 
