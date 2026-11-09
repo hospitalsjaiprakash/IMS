@@ -186,6 +186,7 @@ function renderActionContent({
   user,
   status,
   role,
+  trainers = [],
   canHodFeedback,
   canImcAct,
   isManagement,

@@ -27,6 +27,15 @@ jobs:
             server/package-lock.json
             client/package-lock.json
 
+      - name: Scan Codebase for Leaked Secret Patterns
+        run: |
+          echo "Scanning codebase for prohibited secret patterns..."
+          if grep -rnEI 'whsec_[0-9a-zA-Z]{24,}|sk_live_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36,}' --exclude-dir={node_modules,.git,dist} .; then
+            echo "::error::Prohibited secret pattern detected! Live API keys or Stripe webhook secrets must not be committed to git."
+            exit 1
+          fi
+          echo "No unauthorized secret patterns detected."
+
       - name: Validate Server Syntax & Upload Security Tests
         env:
           NODE_ENV: test
@@ -65,4 +74,6 @@ jobs:
           script_stop: true
           command_timeout: 10m
           script: |
+            export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:$PATH"
+            export PM2_HOME="${PM2_HOME:-/home/ims/.pm2}"
             bash /home/ims/staging/app/deploy-staging.sh
