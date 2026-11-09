@@ -8,6 +8,10 @@
 
 set -eo pipefail
 
+# Ensure non-interactive SSH shells have complete system path and PM2 environment
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:$PATH"
+export PM2_HOME="${PM2_HOME:-/home/ims/.pm2}"
+
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRANCH="main"
 HEALTH_CHECK_URL="http://127.0.0.1:5000/health"

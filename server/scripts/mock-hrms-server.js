@@ -22,7 +22,7 @@ const { URL } = require('url');
 const PORT = parseInt(process.env.MOCK_HRMS_PORT, 10) || 5050;
 const VALID_CLIENT_ID = process.env.OFFICEPORTAL_CLIENT_ID || 'demo_jphrc_client_id';
 const VALID_CLIENT_SECRET = process.env.OFFICEPORTAL_CLIENT_SECRET || process.env.OFFICEPORTAL_API_KEY || 'demo_jphrc_secret_key_123';
-const WEBHOOK_SIGNING_KEY = process.env.OFFICEPORTAL_WEBHOOK_KEY || process.env.OFFICEPORTAL_WEBHOOK_SECRET || 'whsec_5f0c8e2a7b4d1f9036c2e8a5b7d0f3c6e9a1b4d7f0c3e6a9b2d5f8c1e4a7b0d3';
+const WEBHOOK_SIGNING_KEY = process.env.OFFICEPORTAL_WEBHOOK_KEY || process.env.OFFICEPORTAL_WEBHOOK_SECRET || 'opsec_5f0c8e2a7b4d1f9036c2e8a5b7d0f3c6e9a1b4d7f0c3e6a9b2d5f8c1e4a7b0d3';
 
 // ─── 30 HOSPITAL DEPARTMENTS MASTER LIST ───────────────────────────────────
 const MOCK_DEPARTMENTS = [

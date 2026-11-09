@@ -39,16 +39,16 @@ async function runTests() {
   // ─────────────────────────────────────────────────────────────────────────
   console.log('--- Test Suite 1: Cryptographic HMAC-SHA256 Verification ---');
 
-  const officialSigningKey = 'whsec_5f0c8e2a7b4d1f9036c2e8a5b7d0f3c6e9a1b4d7f0c3e6a9b2d5f8c1e4a7b0d3';
-  const officialPreviousKey = 'whsec_a3e7c1f5b9d2e6a0c4f8b2d6e0a4c8f2b6d0e4a8c2f6b0d4e8a2c6f0b4d8e2a6';
+  const officialSigningKey = 'opsec_5f0c8e2a7b4d1f9036c2e8a5b7d0f3c6e9a1b4d7f0c3e6a9b2d5f8c1e4a7b0d3';
+  const officialPreviousKey = 'opsec_a3e7c1f5b9d2e6a0c4f8b2d6e0a4c8f2b6d0e4a8c2f6b0d4e8a2c6f0b4d8e2a6';
   const officialTimestamp = 1789978544; // 2026-09-21T08:15:44Z
   const officialRawBody = Buffer.from(
     '{"apiVersion":"v1","deliveryId":"0b6f1c2e-7d4a-4c1e-9a53-2f8e6d1b4c70","events":[{"eventId":"5d2e8a41-3c6b-4f0e-8b27-91a4c7e05d13","types":["employee.deleted"],"occurredAt":"2026-09-21T08:15:42.318Z","attempt":1,"data":{"employeeId":"c3a1e9f2-6b4d-4e8a-a2f7-58d0b9e1c64a","employeeCode":"EMP-0877","deletedAt":"2026-09-21T08:15:42.318Z"}}]}',
     'utf8'
   );
 
-  const officialHeaderSingle = `t=${officialTimestamp},v1=ae4306210bee0400c489e8d76626c1b8dd4a872cb59df8b96de05773b5f4bba6`;
-  const officialHeaderRotation = `t=${officialTimestamp},v1=ae4306210bee0400c489e8d76626c1b8dd4a872cb59df8b96de05773b5f4bba6,v1=bfd36fb9ec37b8a2884f39dd551c1344d6950ce3dba6025859cf7057563247a9`;
+  const officialHeaderSingle = `t=${officialTimestamp},v1=65479a24ab034b7dce8f5eb5808072859fb8d3e799d4e98df544307682b212b2`;
+  const officialHeaderRotation = `t=${officialTimestamp},v1=65479a24ab034b7dce8f5eb5808072859fb8d3e799d4e98df544307682b212b2,v1=effc2afcb4ac4b12a22db4e4075a783bc55ccff8bb9b42c0d08a4d7efcfa1f04`;
 
   // Test 1: Verify against official vector using vendor timestamp as current time
   const passOfficial = isValidSignature(
