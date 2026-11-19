@@ -2,6 +2,38 @@ const fs = require('fs');
 const path = require('path');
 const { getIncidentUrl } = require('../utils/qrCodeService');
 
+/**
+ * Strict HTML entity escaping to prevent HTML/XSS/SSRF injection inside
+ * Puppeteer PDF letterhead templates and outbound dispatch emails.
+ */
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeHttpUrl(url) {
+  if (!url) return '#';
+  const trimmed = String(url).trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return escapeHtml(trimmed);
+  }
+  return '#';
+}
+
+function sanitizeDataImageUrl(url) {
+  if (!url) return '';
+  const trimmed = String(url).trim();
+  if (/^data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+  return '';
+}
+
 // Cache base64 asset strings in memory for instant reuse
 let cachedHeaderLogoBase64 = null;
 let cachedWatermarkBase64 = null;
@@ -252,7 +284,7 @@ function getFooterTemplate(referenceNumber) {
         <span>${ICON_MAIL}: citycentre.rgp@jaiprakashhospitals.com</span>
       </div>
       <div class="f-meta">
-        <span>Ref: ${referenceNumber || 'JPHRC/IMS'}</span>
+        <span>Ref: ${escapeHtml(referenceNumber || 'JPHRC/IMS')}</span>
         <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
       </div>
     </div>
@@ -302,13 +334,13 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
   // Ensure single comma at end of salutation
   salutation = salutation.replace(/,+$/, '') + ',';
 
-  // Format body text with paragraphs
+  // Format body text with paragraphs (escape HTML FIRST, then convert line breaks)
   const rawBody = letter.body_text || letter.body_content || '';
-  const paragraphs = rawBody
+  const paragraphs = String(rawBody)
     .split(/\n\s*\n/)
     .map(p => p.trim())
     .filter(Boolean)
-    .map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`)
+    .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
     .join('');
 
   // Normalize CC recipients list
@@ -325,11 +357,26 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
   const approverName = approvers.approvedByName || letter.approved_by_name || 'Executive Management Authority';
   const approvedAtStr = letter.approved_at ? formatDate(letter.approved_at) : letterDate;
 
+  const safeRefNumber = escapeHtml(refNumber);
+  const safeLetterDate = escapeHtml(letterDate);
+  const safeRecipientName = escapeHtml(recipientName);
+  const safeRecipientEmpNo = escapeHtml(recipientEmpNo);
+  const safeRecipientDept = escapeHtml(recipientDept);
+  const safeRecipientDesig = escapeHtml(recipientDesig);
+  const safeSubject = escapeHtml(subject);
+  const safeSalutation = escapeHtml(salutation);
+  const safePenaltyWords = escapeHtml(letter.penalty_amount_words || '');
+  const safeDrafterName = escapeHtml(drafterName);
+  const safeApproverName = escapeHtml(approverName);
+  const safeApprovedAtStr = escapeHtml(approvedAtStr);
+  const safeIncidentUrl = sanitizeHttpUrl(finalIncidentUrl);
+  const safeQrDataUrl = sanitizeDataImageUrl(qrCodeDataUrl);
+
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Official Letter - ${refNumber}</title>
+  <title>Official Letter - ${safeRefNumber}</title>
   <style>
     @page {
       size: A4 portrait;
@@ -581,20 +628,20 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
   <!-- LETTER BODY -->
   <div class="letter-body">
     <div class="ref-date-row">
-      <div><strong>Ref No:</strong> ${refNumber}</div>
-      <div><strong>Date:</strong> ${letterDate}</div>
+      <div><strong>Ref No:</strong> ${safeRefNumber}</div>
+      <div><strong>Date:</strong> ${safeLetterDate}</div>
     </div>
 
     <div class="recipient-box">
       <div class="recipient-to">To,</div>
-      <div class="recipient-name">${recipientName}</div>
-      ${recipientEmpNo ? `<div><strong>Emp. ID:</strong> ${recipientEmpNo}</div>` : ''}
-      <div><strong>Department:</strong> ${recipientDept}${recipientDesig ? ` • <strong>Designation:</strong> ${recipientDesig}` : ''}</div>
+      <div class="recipient-name">${safeRecipientName}</div>
+      ${safeRecipientEmpNo ? `<div><strong>Emp. ID:</strong> ${safeRecipientEmpNo}</div>` : ''}
+      <div><strong>Department:</strong> ${safeRecipientDept}${safeRecipientDesig ? ` • <strong>Designation:</strong> ${safeRecipientDesig}` : ''}</div>
     </div>
 
-    <div class="subject-line">Subject: ${subject}</div>
+    <div class="subject-line">Subject: ${safeSubject}</div>
 
-    <div class="salutation">${salutation}</div>
+    <div class="salutation">${safeSalutation}</div>
 
     <div class="content-paragraphs">
       ${paragraphs}
@@ -602,8 +649,8 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
 
     ${letter.penalty_amount ? `
       <div class="penalty-box">
-        <strong>Monetary Penalty Ordered:</strong> ₹${Number(letter.penalty_amount).toLocaleString('en-IN')} 
-        ${letter.penalty_amount_words ? `(${letter.penalty_amount_words})` : ''}
+        <strong>Monetary Penalty Ordered:</strong> ₹${escapeHtml(Number(letter.penalty_amount).toLocaleString('en-IN'))} 
+        ${safePenaltyWords ? `(${safePenaltyWords})` : ''}
         <div style="font-size: 8pt; margin-top: 2px; color: #4c0519;">
           Recovery shall be processed through Accounts / Payroll as per hospital disciplinary regulations.
         </div>
@@ -618,12 +665,12 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
         <div style="font-size: 8.5pt; color: #475569; margin-top: 2px;">Jaiprakash Hospital and Research Centre Pvt. Ltd.</div>
 
         <div class="sign-off-names">
-          Drafted by: <strong>${drafterName}</strong><br/>
-          Approved by: <strong>${approverName}</strong>
+          Drafted by: <strong>${safeDrafterName}</strong><br/>
+          Approved by: <strong>${safeApproverName}</strong>
         </div>
 
         <div class="digital-approval-badge">
-          ✓ Digitally verified and approved via IMS on ${approvedAtStr} • Ref: ${refNumber}
+          ✓ Digitally verified and approved via IMS on ${safeApprovedAtStr} • Ref: ${safeRefNumber}
         </div>
       </div>
 
@@ -632,14 +679,14 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
         <div class="cc-container">
           <div class="cc-title">Copy Communicated for Information & Record To:</div>
           <ul class="cc-list">
-            ${ccList.map((cc, i) => `<li>${i + 1}. ${cc.label || cc.name || ''} (${cc.role || 'Member'})</li>`).join('')}
+            ${ccList.map((cc, i) => `<li>${i + 1}. ${escapeHtml(cc?.label || cc?.name || '')} (${escapeHtml(cc?.role || 'Member')})</li>`).join('')}
           </ul>
         </div>
 
-        ${qrCodeDataUrl ? `
+        ${safeQrDataUrl ? `
           <div class="qr-container">
-            <a href="${finalIncidentUrl || '#'}" target="_blank" rel="noopener noreferrer" class="qr-link" style="text-decoration: none; cursor: pointer; display: inline-block;">
-              <img class="qr-img" src="${qrCodeDataUrl}" alt="IMS Dossier QR" />
+            <a href="${safeIncidentUrl}" target="_blank" rel="noopener noreferrer" class="qr-link" style="text-decoration: none; cursor: pointer; display: inline-block;">
+              <img class="qr-img" src="${safeQrDataUrl}" alt="IMS Dossier QR" />
               <div class="qr-caption">Scan or click to verify authentic incident dossier</div>
             </a>
           </div>
@@ -657,10 +704,11 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
  * The official letterhead is attached as a signed A4 PDF
  */
 function buildEmailDispatchNoticeHtml({ letter, incident, portalUrl }) {
-  const refNumber = letter.reference_number || letter.ref_number || '';
-  const recipientName = letter.recipient_name || letter.employee_name || 'Staff Member';
-  const subject = letter.subject || 'Incident Management Notice';
-  const incRef = incident.reference_id || 'Incident';
+  const refNumber = escapeHtml(letter.reference_number || letter.ref_number || '');
+  const recipientName = escapeHtml(letter.recipient_name || letter.employee_name || 'Staff Member');
+  const subject = escapeHtml(letter.subject || 'Incident Management Notice');
+  const incRef = escapeHtml(incident.reference_id || 'Incident');
+  const safePortalUrl = sanitizeHttpUrl(portalUrl);
 
   return `
     <div style="max-width: 620px; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; background: #ffffff; color: #1e293b; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
@@ -699,7 +747,7 @@ function buildEmailDispatchNoticeHtml({ letter, incident, portalUrl }) {
         </p>
 
         <div style="text-align: center; margin: 24px 0 16px 0;">
-          <a href="${portalUrl}" target="_blank" style="display: inline-block; background: #146537; color: #ffffff; text-decoration: none; padding: 10px 22px; border-radius: 6px; font-size: 13px; font-weight: 600;">
+          <a href="${safePortalUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background: #146537; color: #ffffff; text-decoration: none; padding: 10px 22px; border-radius: 6px; font-size: 13px; font-weight: 600;">
             View Incident Record in IMS
           </a>
         </div>
@@ -714,6 +762,7 @@ function buildEmailDispatchNoticeHtml({ letter, incident, portalUrl }) {
 }
 
 module.exports = {
+  escapeHtml,
   loadLetterheadAssets,
   getHeaderTemplate,
   getFooterTemplate,

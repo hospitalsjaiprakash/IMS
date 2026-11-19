@@ -71,6 +71,23 @@ async function generateLetterPdf({ letter, incident = {}, approvers = {}, qrCode
   const page = await browser.newPage();
 
   try {
+    // Hardened headless Chromium sandbox:
+    // 1. Disable JavaScript execution completely inside rendered letter HTML
+    // 2. Intercept & abort ALL network/file requests except safe inline data: URIs and about:blank
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on('request', (interceptedRequest) => {
+      if (interceptedRequest.isInterceptResolutionHandled && interceptedRequest.isInterceptResolutionHandled()) {
+        return;
+      }
+      const reqUrl = interceptedRequest.url() || '';
+      if (reqUrl.startsWith('data:image/') || reqUrl === 'about:blank') {
+        interceptedRequest.continue();
+      } else {
+        interceptedRequest.abort('blockedbyclient');
+      }
+    });
+
     const htmlContent = buildLetterHtml({
       letter,
       incident,

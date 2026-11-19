@@ -10,6 +10,37 @@ const isGenericSystemAccount = (empId) => {
   return ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(String(empId || '').trim().toUpperCase());
 };
 
+// ─── Helper: Safe Registration Name Verification (prevents 1-2 char substring bypass) ─
+const isRegistrationNameMatch = (recordName, suppliedName) => {
+  const rec = String(recordName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const sup = String(suppliedName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!rec || !sup) return false;
+  if (sup.length < 3) {
+    return rec === sup;
+  }
+  return rec.includes(sup) || sup.includes(rec);
+};
+
+// ─── Helper: Password Complexity Policy (>=6 chars, letter + number or special char) ─
+const validatePasswordStrength = (password) => {
+  if (typeof password !== 'string' || password.length < 6) {
+    return {
+      valid: false,
+      error: 'Password must be at least 6 characters and include at least one letter and one number or special character.'
+    };
+  }
+  const hasLetter = /[A-Za-z]/.test(password);
+  const hasDigitOrSymbol = /[0-9]|[^A-Za-z0-9]/.test(password);
+  if (!hasLetter || !hasDigitOrSymbol) {
+    return {
+      valid: false,
+      error: 'Password must be at least 6 characters and include at least one letter and one number or special character.'
+    };
+  }
+  return { valid: true };
+};
+exports.validatePasswordStrength = validatePasswordStrength;
+
 // ─── Helper: Check HRMS lifecycle access (terminated / inactive / deleted / portalAccessDisableDate) ─
 const checkMasterLifecycleAccess = async (employeeId) => {
   const empCode = String(employeeId || '').trim().toUpperCase();
@@ -155,8 +186,9 @@ exports.requestRegistrationOtp = async (req, res) => {
     if (!fullName?.trim() || !employeeId?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ error: 'Full name, Employee ID, email, and password are required.' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    const pwCheck = validatePasswordStrength(password);
+    if (!pwCheck.valid) {
+      return res.status(400).json({ error: pwCheck.error, code: 'WEAK_PASSWORD' });
     }
 
     // Check if employee ID already has a password set (already registered)
@@ -189,8 +221,7 @@ exports.requestRegistrationOtp = async (req, res) => {
         });
       }
 
-      const nameMatch = dbUser.full_name.toLowerCase().includes(fullName.trim().toLowerCase()) ||
-                        fullName.trim().toLowerCase().includes(dbUser.full_name.toLowerCase());
+      const nameMatch = isRegistrationNameMatch(dbUser.full_name, fullName);
       if (!nameMatch) {
         return res.status(401).json({
           error: 'Name does not match our records for this Employee ID. Contact HR if you believe this is incorrect.',
@@ -227,8 +258,7 @@ exports.requestRegistrationOtp = async (req, res) => {
       }
 
       // Validate name from portal
-      const nameMatch = portalData.name?.toLowerCase().includes(fullName.trim().toLowerCase()) ||
-                        fullName.trim().toLowerCase().includes(portalData.name?.toLowerCase());
+      const nameMatch = isRegistrationNameMatch(portalData.name, fullName);
       if (!nameMatch) {
         return res.status(401).json({
           error: 'Name does not match portal records for this Employee ID.',
@@ -261,8 +291,9 @@ exports.register = async (req, res) => {
     if (!fullName?.trim() || !employeeId?.trim() || !email?.trim() || !password || !otp?.trim()) {
       return res.status(400).json({ error: 'Full name, Employee ID, email, password, and OTP are required.' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    const regPwCheck = validatePasswordStrength(password);
+    if (!regPwCheck.valid) {
+      return res.status(400).json({ error: regPwCheck.error, code: 'WEAK_PASSWORD' });
     }
 
     // Verify OTP first
@@ -293,16 +324,22 @@ exports.register = async (req, res) => {
       });
     }
 
-    // If user exists in DB (pre-seeded from office portal), validate name match
+    // If user exists in DB (pre-seeded from office portal / admin role assignment), validate status & name match
     if (existing.rows.length > 0) {
       const dbUser = existing.rows[0];
       // Get full record
       const fullRecord = await query('SELECT * FROM users WHERE id = $1', [dbUser.id]);
       const record = fullRecord.rows[0];
 
-      // Validate name matches (case-insensitive, partial OK)
-      const nameMatch = record.full_name.toLowerCase().includes(fullName.trim().toLowerCase()) ||
-                        fullName.trim().toLowerCase().includes(record.full_name.toLowerCase());
+      if (record.is_active === false) {
+        return res.status(403).json({
+          error: 'Account deactivated. Please contact the System Administrator or HR.',
+          code: 'ACCOUNT_DEACTIVATED'
+        });
+      }
+
+      // Validate name matches (case-insensitive, partial OK, >=3 chars required)
+      const nameMatch = isRegistrationNameMatch(record.full_name, fullName);
 
       if (!nameMatch) {
         return res.status(401).json({
@@ -311,7 +348,7 @@ exports.register = async (req, res) => {
         });
       }
 
-      // Hash password and update record
+      // Hash password and update record (preserve canonical HRMS full_name and any pre-assigned role/flags)
       const passwordHash = await bcrypt.hash(password, 12);
 
       const portalCheck = await query('SELECT phone FROM master_employees WHERE employee_id = $1', [record.employee_id]).catch(() => ({ rows: [] }));
@@ -321,7 +358,7 @@ exports.register = async (req, res) => {
         `UPDATE users SET
           password_hash = $1,
           email = COALESCE(NULLIF($2, ''), email),
-          full_name = COALESCE(NULLIF($3, ''), full_name),
+          full_name = COALESCE(NULLIF(full_name, ''), $3),
           phone = COALESCE(phone, $4),
           updated_at = NOW()
          WHERE id = $5
@@ -330,6 +367,7 @@ exports.register = async (req, res) => {
       );
 
       const user = updatedUser.rows[0];
+      await syncHodDepartment(user);
 
       // Send welcome email (fire and forget)
       if (user.email) {
@@ -369,8 +407,7 @@ exports.register = async (req, res) => {
     }
 
     // Validate name from portal
-    const nameMatch = portalData.name?.toLowerCase().includes(fullName.trim().toLowerCase()) ||
-                      fullName.trim().toLowerCase().includes(portalData.name?.toLowerCase());
+    const nameMatch = isRegistrationNameMatch(portalData.name, fullName);
     if (!nameMatch) {
       return res.status(401).json({
         error: 'Name does not match portal records for this Employee ID.',
@@ -524,11 +561,11 @@ exports.login = async (req, res) => {
 
     await syncHodDepartment(user);
 
-    // Generate JWT
+    // Generate JWT (strictly HS256)
     const token = jwt.sign(
       { userId: user.id, employeeId: user.employee_id, role: activeRole },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+      { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
     await auditLog(user.id, 'LOGIN', null, { role: activeRole }, req.ip);
@@ -685,17 +722,20 @@ exports.updateContactInfo = async (req, res) => {
 // =============================================
 // COMMITTEE LOGIN (IMC / Management / Admin)
 // =============================================
-const roleToGenericUser = {
+const roleToGenericUser = Object.assign(Object.create(null), {
   system_admin: '00000',
   imc: 'SYS_IMC',
   head_management: 'SYS_MGMT'
-};
+});
 
 exports.committeeLogin = async (req, res) => {
   try {
     const { username, password, targetRole } = req.body;
     if (!username || !password || !targetRole) {
       return res.status(400).json({ error: 'Username, password, and role are required' });
+    }
+    if (!roleToGenericUser[targetRole]) {
+      return res.status(400).json({ error: 'Invalid target role' });
     }
 
     const credRes = await query('SELECT * FROM role_credentials WHERE role = $1', [targetRole]);
@@ -726,7 +766,7 @@ exports.committeeLogin = async (req, res) => {
     const token = jwt.sign(
       { userId: user.id, employeeId: user.employee_id, role: targetRole },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+      { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
     await auditLog(user.id, 'COMMITTEE_LOGIN', null, { targetRole }, req.ip);
@@ -810,7 +850,7 @@ exports.switchRole = async (req, res) => {
     const token = jwt.sign(
       { userId: user.id, employeeId: user.employee_id, role: finalTargetRole },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+      { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
     await auditLog(user.id, 'ROLE_SWITCH', null, { targetRole: finalTargetRole }, req.ip);
@@ -851,13 +891,16 @@ exports.forgotPasswordRequest = async (req, res) => {
     if (!username || !targetRole) {
       return res.status(400).json({ error: 'Username and Role are required' });
     }
+    const genericEmpId = roleToGenericUser[targetRole];
+    if (!genericEmpId) {
+      return res.status(400).json({ error: 'Invalid target role' });
+    }
 
     const credRes = await query('SELECT * FROM role_credentials WHERE role = $1 AND username = $2', [targetRole, username]);
     if (credRes.rows.length === 0) {
       return res.status(404).json({ error: 'Invalid username for the selected role' });
     }
 
-    const genericEmpId = roleToGenericUser[targetRole];
     const userRes = await query('SELECT * FROM users WHERE employee_id = $1', [genericEmpId]);
     if (userRes.rows.length === 0) {
       return res.status(500).json({ error: 'System configuration error: Generic user missing' });
@@ -885,8 +928,15 @@ exports.resetPassword = async (req, res) => {
     if (!username || !targetRole || !otp || !newPassword) {
       return res.status(400).json({ error: 'All fields are required' });
     }
-
     const genericEmpId = roleToGenericUser[targetRole];
+    if (!genericEmpId) {
+      return res.status(400).json({ error: 'Invalid target role' });
+    }
+    const resetPwCheck = validatePasswordStrength(newPassword);
+    if (!resetPwCheck.valid) {
+      return res.status(400).json({ error: resetPwCheck.error, code: 'WEAK_PASSWORD' });
+    }
+
     const isValid = await verifyOtp(genericEmpId, 'password_reset', otp);
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid or expired OTP' });
@@ -897,7 +947,7 @@ exports.resetPassword = async (req, res) => {
       return res.status(400).json({ error: 'Invalid username' });
     }
 
-    const hash = await bcrypt.hash(newPassword, 10);
+    const hash = await bcrypt.hash(newPassword, 12);
     await query('UPDATE role_credentials SET password_hash = $1, updated_at = NOW() WHERE role = $2', [hash, targetRole]);
 
     const userRes = await query('SELECT id FROM users WHERE employee_id = $1', [genericEmpId]);
@@ -922,12 +972,30 @@ exports.requestEmployeePasswordReset = async (req, res) => {
       return res.status(400).json({ error: 'Employee ID and Email address are required.' });
     }
 
+    const lifecycle = await checkMasterLifecycleAccess(employeeId.trim());
+    if (!lifecycle.allowed) {
+      return res.status(403).json({ error: lifecycle.error, code: lifecycle.code });
+    }
+
     const result = await query('SELECT * FROM users WHERE employee_id = $1 AND LOWER(email) = LOWER($2)', [employeeId.trim(), email.trim()]);
     if (!result.rows.length) {
       return res.status(404).json({ error: 'No account found matching this Employee ID and Email address.' });
     }
 
     const user = result.rows[0];
+    if (user.is_active === false) {
+      return res.status(403).json({
+        error: 'Account deactivated. Please contact the System Administrator or HR.',
+        code: 'ACCOUNT_DEACTIVATED'
+      });
+    }
+    if (!user.password_hash) {
+      return res.status(400).json({
+        error: 'Account not yet activated. Please register first to set your password.',
+        code: 'NOT_REGISTERED'
+      });
+    }
+
     await sendOtp(employeeId.trim(), user.email, 'employee_password_reset');
     res.json({ success: true, message: 'OTP sent to your registered email address.' });
   } catch (error) {
@@ -957,8 +1025,35 @@ exports.resetEmployeePassword = async (req, res) => {
     if (!employeeId || !otp || !newPassword) {
       return res.status(400).json({ error: 'All fields are required.' });
     }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    const empResetPwCheck = validatePasswordStrength(newPassword);
+    if (!empResetPwCheck.valid) {
+      return res.status(400).json({ error: empResetPwCheck.error, code: 'WEAK_PASSWORD' });
+    }
+
+    const lifecycle = await checkMasterLifecycleAccess(employeeId.trim());
+    if (!lifecycle.allowed) {
+      return res.status(403).json({ error: lifecycle.error, code: lifecycle.code });
+    }
+
+    const existingUserRes = await query(
+      'SELECT id, is_active, password_hash FROM users WHERE employee_id = $1',
+      [employeeId.trim()]
+    );
+    if (!existingUserRes.rows.length) {
+      return res.status(404).json({ error: 'Employee not found.' });
+    }
+    const existingUser = existingUserRes.rows[0];
+    if (existingUser.is_active === false) {
+      return res.status(403).json({
+        error: 'Account deactivated. Please contact the System Administrator or HR.',
+        code: 'ACCOUNT_DEACTIVATED'
+      });
+    }
+    if (!existingUser.password_hash) {
+      return res.status(400).json({
+        error: 'Account not yet activated. Please register first to set your password.',
+        code: 'NOT_REGISTERED'
+      });
     }
 
     const isValid = await verifyOtp(employeeId.trim(), 'employee_password_reset', otp.trim());
@@ -1052,9 +1147,9 @@ exports.leaveRole = async (req, res) => {
 
     // Generate new token reflecting updated role
     const token = jwt.sign(
-      { id: updatedUser.id, role: updatedUser.role, employeeId: updatedUser.employee_id },
+      { userId: updatedUser.id, role: updatedUser.role, employeeId: updatedUser.employee_id },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+      { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
     res.json({

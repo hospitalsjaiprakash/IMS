@@ -8,6 +8,7 @@ const { recordEvent, linkAttachmentsToEvent, getNextRoundNo } = require('../util
 const { generateLetterPdf } = require('../services/pdfService');
 const { buildEmailDispatchNoticeHtml } = require('../templates/letterHtmlTemplate');
 const { isR2Configured, uploadToR2 } = require('../config/s3');
+const { canUserAccessIncident } = require('../utils/accessControl');
 
 // =============================================
 // GET PERSONAL TRAINER ASSIGNMENTS
@@ -43,6 +44,10 @@ exports.getMyTrainingAssignments = async (req, res) => {
 exports.getIncidentTrainers = async (req, res) => {
   try {
     const { id } = req.params;
+    const allowed = await canUserAccessIncident(req.user, id);
+    if (!allowed) {
+      return res.status(403).json({ error: 'Access denied: You are not authorized to view training assignments for this incident.' });
+    }
     const result = await query(
       `SELECT t.*,
               u_trainer.full_name as trainer_name,
@@ -398,7 +403,7 @@ exports.assignTrainer = async (req, res) => {
     }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: nextIncidentStatus });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({
@@ -592,7 +597,7 @@ exports.submitTrainerReport = async (req, res) => {
     }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'pending_imc_training_review' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({
@@ -681,7 +686,7 @@ exports.imcVerifyTraining = async (req, res) => {
       await auditLog(req.user.id, 'IMC_TRAINING_REWORK_REQUESTED', id, { assignmentId, reviewNotes }, req.ip);
 
       if (req.io) {
-        req.io.emit('incident_updated', { id, status: 'training_in_progress' });
+        req.io.emit('incident_updated', { id });
       }
 
       return res.json({ success: true, message: 'Returned to Trainer for follow-up session.' });
@@ -739,7 +744,7 @@ exports.imcVerifyTraining = async (req, res) => {
     }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'with_head_management' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({
@@ -837,7 +842,7 @@ exports.managementCloseTraining = async (req, res) => {
     }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'closed' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({

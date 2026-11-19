@@ -28,6 +28,75 @@ export default function LettersCard({
   const [isMgmtDeciding, setIsMgmtDeciding] = useState(false);
   const [mgmtRejectModal, setMgmtRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [loadingPdfId, setLoadingPdfId] = useState(null);
+
+  // Authenticated Blob PDF download/preview (never places Bearer JWT in URL query strings)
+  const handleLetterPdf = async (letter, mode = 'view') => {
+    if (!letter?.id || !incident?.id) return;
+    setLoadingPdfId(letter.id);
+
+    // Open blank tab synchronously during the click gesture for view mode so popup blockers
+    // do not block after the async PDF fetch, and avoid `noopener` returning null unconditionally.
+    let previewWin = null;
+    if (mode === 'view') {
+      previewWin = window.open('', '_blank');
+      if (previewWin) {
+        try {
+          previewWin.opener = null;
+        } catch {
+          // Ignore cross-origin opener restriction
+        }
+      }
+    }
+
+    try {
+      const response = await lettersApi.downloadPdf(incident.id, letter.id);
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+      const safeName = `${(letter.reference_number || letter.ref_number || 'letter').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+
+      if (mode === 'download') {
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = safeName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+      } else if (previewWin && !previewWin.closed) {
+        previewWin.location.href = blobUrl;
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      } else {
+        // Fallback to direct download only when browser genuinely blocked the popup
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = safeName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+      }
+    } catch (err) {
+      if (previewWin && !previewWin.closed) {
+        previewWin.close();
+      }
+      let message = 'Failed to load official PDF.';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed?.error) message = parsed.error;
+        } catch {
+          // Keep generic fallback message
+        }
+      } else if (err.response?.data?.error) {
+        message = err.response.data.error;
+      }
+      toast.error(message);
+    } finally {
+      setLoadingPdfId(null);
+    }
+  };
 
   const isImcLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.role === 'imc' || user?.is_system_admin || user?.role === 'system_admin');
   const isMgmtUser = Boolean(isManagement || user?.role === 'head_management' || user?.role === 'system_admin');
@@ -502,18 +571,15 @@ export default function LettersCard({
                       >
                         <Eye size={12} /> View Letterhead
                       </button>
-                      <a
-                        href={lettersApi.getPdfUrl(incident.id, letter.id)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => {
-                          e.currentTarget.href = lettersApi.getPdfUrl(incident.id, letter.id);
-                        }}
-                        className="text-emerald-700 hover:text-emerald-900 font-semibold flex items-center gap-1 text-[11px]"
+                      <button
+                        type="button"
+                        disabled={loadingPdfId === letter.id}
+                        onClick={() => handleLetterPdf(letter, 'view')}
+                        className="text-emerald-700 hover:text-emerald-900 font-semibold flex items-center gap-1 text-[11px] disabled:opacity-50"
                         title="Download or preview authentic letterhead PDF"
                       >
-                        <FileText size={12} /> PDF
-                      </a>
+                        <FileText size={12} /> {loadingPdfId === letter.id ? 'Loading...' : 'PDF'}
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-1.5">
@@ -559,22 +625,19 @@ export default function LettersCard({
                 Status: <strong className="uppercase">{(selectedViewLetter.status || 'drafted').replace('_', ' ')}</strong>
               </span>
               <div className="flex items-center gap-2">
-                <a
-                  href={lettersApi.getPdfUrl(incident.id, selectedViewLetter.id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => {
-                    e.currentTarget.href = lettersApi.getPdfUrl(incident.id, selectedViewLetter.id);
-                  }}
-                  download={`${(selectedViewLetter.reference_number || selectedViewLetter.ref_number || 'letter').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`}
-                  className="btn-primary text-xs flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white"
-                >
-                  <FileText size={14} /> Download Official PDF
-                </a>
                 <button
                   type="button"
-                  onClick={() => window.open(lettersApi.getPdfUrl(incident.id, selectedViewLetter.id), '_blank')}
-                  className="btn-secondary text-xs flex items-center gap-1.5"
+                  disabled={loadingPdfId === selectedViewLetter.id}
+                  onClick={() => handleLetterPdf(selectedViewLetter, 'download')}
+                  className="btn-primary text-xs flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white disabled:opacity-50"
+                >
+                  <FileText size={14} /> {loadingPdfId === selectedViewLetter.id ? 'Generating...' : 'Download Official PDF'}
+                </button>
+                <button
+                  type="button"
+                  disabled={loadingPdfId === selectedViewLetter.id}
+                  onClick={() => handleLetterPdf(selectedViewLetter, 'view')}
+                  className="btn-secondary text-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Printer size={14} /> Print / View PDF
                 </button>

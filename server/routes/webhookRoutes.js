@@ -1,13 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const officePortalService = require('../services/officePortalService');
+const { webhookLimiter } = require('../middleware/rateLimiter');
 
 /**
  * @route   POST /api/webhooks/officeportal (or /webhooks/officeportal)
  * @desc    Ingest real-time signed webhooks from OfficePortal HRMS Public API v1
  * @access  Public (Authenticated via HMAC-SHA256 signature in X-Awarious-Signature)
  */
-router.post('/officeportal', async (req, res) => {
+router.post('/officeportal', webhookLimiter, async (req, res) => {
   const signatureHeader = req.headers['x-awarious-signature'] || req.headers['X-Awarious-Signature'];
 
   if (!signatureHeader) {

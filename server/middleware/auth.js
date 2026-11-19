@@ -2,62 +2,99 @@ const jwt = require('jsonwebtoken');
 const { query } = require('../config/database');
 const { isEmployeeLockedOut } = require('../services/officePortalService');
 
+/**
+ * Verify a Bearer JWT (strictly HS256) and load the active user record from PostgreSQL,
+ * enforcing live HRMS lifecycle lockouts (terminated/inactive/deleted/portalAccessDisableDate).
+ * Shared by HTTP `authenticate` middleware and Socket.IO `io.use()` handshake authentication.
+ */
+const verifyJwtAndLoadActiveUser = async (token) => {
+  if (!token || typeof token !== 'string') {
+    const err = new Error('No token provided');
+    err.statusCode = 401;
+    err.code = 'NO_TOKEN';
+    throw err;
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+  } catch (jwtErr) {
+    const err = new Error(jwtErr.name === 'TokenExpiredError' ? 'Token expired' : 'Invalid token');
+    err.statusCode = 401;
+    err.code = jwtErr.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN';
+    throw err;
+  }
+
+  const userId = decoded.userId || decoded.id;
+  if (!userId) {
+    const err = new Error('Invalid token');
+    err.statusCode = 401;
+    err.code = 'INVALID_TOKEN';
+    throw err;
+  }
+
+  const result = await query(
+    `SELECT u.id, u.employee_id, u.full_name, u.email, u.role, u.department, u.designation,
+            u.is_active, u.is_imc_lead, u.is_imc_member, u.is_management_member, u.is_system_admin,
+            me.status AS hrms_status, me.portal_access_disable_date
+     FROM users u
+     LEFT JOIN master_employees me ON me.employee_id = u.employee_id
+     WHERE u.id = $1`,
+    [userId]
+  );
+
+  if (result.rows.length === 0) {
+    const err = new Error('User not found');
+    err.statusCode = 401;
+    err.code = 'USER_NOT_FOUND';
+    throw err;
+  }
+
+  const userRow = result.rows[0];
+  const empCodeUpper = String(userRow.employee_id || '').trim().toUpperCase();
+  const isGenericSystem = ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(empCodeUpper);
+
+  if (!isGenericSystem) {
+    const hrmsBlocked = isEmployeeLockedOut(
+      userRow.hrms_status,
+      userRow.portal_access_disable_date
+    );
+
+    if (userRow.is_active === false || hrmsBlocked) {
+      const err = new Error('Access denied. Your account has been disabled or deactivated in HRMS.');
+      err.statusCode = 403;
+      err.code = 'ACCOUNT_DISABLED';
+      throw err;
+    }
+  }
+
+  return userRow;
+};
+
 const authenticate = async (req, res, next) => {
   try {
+    // Strictly accept JWT via Authorization: Bearer <token> only (no ?token= query string leaks)
     let token = null;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
-      token = authHeader.split(' ')[1];
-    } else if (req.query && req.query.token) {
-      token = req.query.token;
+      token = authHeader.slice(7).trim();
     }
 
     if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const result = await query(
-      `SELECT u.id, u.employee_id, u.full_name, u.email, u.role, u.department, u.designation,
-              u.is_active, u.is_imc_lead, u.is_imc_member, u.is_management_member, u.is_system_admin,
-              me.status AS hrms_status, me.portal_access_disable_date
-       FROM users u
-       LEFT JOIN master_employees me ON me.employee_id = u.employee_id
-       WHERE u.id = $1`,
-      [decoded.userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'User not found' });
-    }
-
-    const userRow = result.rows[0];
-    const empCodeUpper = String(userRow.employee_id || '').trim().toUpperCase();
-    const isGenericSystem = ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(empCodeUpper);
-
-    if (!isGenericSystem) {
-      const hrmsBlocked = isEmployeeLockedOut(
-        userRow.hrms_status,
-        userRow.portal_access_disable_date
-      );
-
-      if (userRow.is_active === false || hrmsBlocked) {
-        return res.status(403).json({
-          error: 'Access denied. Your account has been disabled or deactivated in HRMS.',
-          code: 'ACCOUNT_DISABLED'
-        });
-      }
-    }
-
-    req.user = userRow;
+    req.user = await verifyJwtAndLoadActiveUser(token);
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token' });
+    if (error.statusCode === 401) {
+      return res.status(401).json({ error: error.message });
     }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+    if (error.statusCode === 403) {
+      return res.status(403).json({
+        error: error.message,
+        code: error.code || 'ACCOUNT_DISABLED'
+      });
     }
     next(error);
   }
@@ -97,4 +134,4 @@ const auditLog = async (userId, action, incidentId, details, ipAddress) => {
   }
 };
 
-module.exports = { authenticate, authorize, auditLog };
+module.exports = { authenticate, authorize, auditLog, verifyJwtAndLoadActiveUser };

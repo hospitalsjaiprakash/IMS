@@ -2,12 +2,9 @@ const { query } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 const { isEmployeeLockedOut, extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
-
-const SECRET_CONFIG_KEYS = new Set([
-  'officeportal_client_secret',
-  'officeportal_webhook_secret',
-  'officeportal_webhook_secret_previous'
-]);
+const { SECRET_CONFIG_KEYS, encryptSecret, assertAllowedOfficePortalUrl } = require('../utils/secretCrypto');
+const { isPrivilegedRole } = require('../utils/accessControl');
+const { escapeCsvField } = require('../utils/csvSanitizer');
 
 exports.getSystemConfig = async (req, res) => {
   try {
@@ -40,8 +37,10 @@ exports.updateSystemConfig = async (req, res) => {
   try {
     const updates = req.body || {};
     const sanitizedForAudit = {};
+    const validatedEntries = [];
     let touchedOfficePortal = false;
 
+    // Validate all URLs upfront before writing any config rows
     for (const [key, value] of Object.entries(updates)) {
       // Ignore synthetic masked indicator fields sent back from settings forms
       if (key.startsWith('has_') || key.endsWith('_masked')) continue;
@@ -49,19 +48,31 @@ exports.updateSystemConfig = async (req, res) => {
       if (SECRET_CONFIG_KEYS.has(key)) {
         // Never overwrite an existing secret with the UI mask placeholder
         if (value === '••••••••' || value === undefined) continue;
-        sanitizedForAudit[key] = value ? '[REDACTED]' : '[CLEARED]';
+        const plainVal = value === null ? '' : String(value).trim();
+        sanitizedForAudit[key] = plainVal ? '[REDACTED]' : '[CLEARED]';
+        const storedVal = plainVal ? encryptSecret(plainVal) : '';
+        validatedEntries.push([key, storedVal]);
       } else {
-        sanitizedForAudit[key] = value;
+        let normalizedVal = value === null || value === undefined ? '' : String(value);
+        if (key === 'officeportal_auth_url' && normalizedVal.trim()) {
+          normalizedVal = assertAllowedOfficePortalUrl(normalizedVal.trim(), 'auth');
+        } else if (key === 'officeportal_base_url' && normalizedVal.trim()) {
+          normalizedVal = assertAllowedOfficePortalUrl(normalizedVal.trim().replace(/\/+$/, ''), 'api');
+        }
+        sanitizedForAudit[key] = normalizedVal;
+        validatedEntries.push([key, normalizedVal]);
       }
 
       if (key.startsWith('officeportal_')) {
         touchedOfficePortal = true;
       }
+    }
 
+    for (const [key, storedValue] of validatedEntries) {
       await query(
         `INSERT INTO system_config (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW())
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-        [key, value === null ? '' : String(value), req.user.id]
+        [key, storedValue, req.user.id]
       );
     }
 
@@ -73,6 +84,12 @@ exports.updateSystemConfig = async (req, res) => {
     await auditLog(req.user.id, 'CONFIG_UPDATED', null, sanitizedForAudit, req.ip);
     res.json({ success: true });
   } catch (error) {
+    if (error.code === 'INVALID_OFFICEPORTAL_URL' || error.statusCode === 400) {
+      return res.status(400).json({
+        error: error.message,
+        code: error.code || 'INVALID_OFFICEPORTAL_URL'
+      });
+    }
     res.status(500).json({ error: 'Failed to update config' });
   }
 };
@@ -189,16 +206,16 @@ const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
 async function getOrCreateUserFromMaster(employeeId, initialRole = 'employee') {
   const empIdStr = String(employeeId).trim();
   const userResult = await query(
-    'SELECT * FROM users WHERE employee_id = $1 OR id::text = $1',
+    'SELECT * FROM users WHERE UPPER(employee_id) = UPPER($1) OR id::text = $1',
     [empIdStr]
   );
   if (userResult.rows.length > 0) {
     return userResult.rows[0];
   }
 
-  // Not found in users table, check master_employees
+  // Not found in users table, check master_employees (by employee_id case-insensitively or UUID)
   const masterRes = await query(
-    'SELECT * FROM master_employees WHERE employee_id = $1',
+    'SELECT * FROM master_employees WHERE UPPER(employee_id) = UPPER($1) OR id::text = $1',
     [empIdStr]
   );
   if (!masterRes.rows.length) {
@@ -208,10 +225,11 @@ async function getOrCreateUserFromMaster(employeeId, initialRole = 'employee') {
   const masterEmp = masterRes.rows[0];
   const shouldBeActive = !isEmployeeLockedOut(masterEmp.status, masterEmp.portal_access_disable_date);
 
-  const defaultHash = await bcrypt.hash('123456', 12);
+  // Provision skeleton account with password_hash = NULL so the employee must complete
+  // OTP self-registration before logging in (never assign a default/hardcoded password).
   const inserted = await query(
     `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
      ON CONFLICT (employee_id) DO UPDATE SET
        full_name = EXCLUDED.full_name,
        department = EXCLUDED.department,
@@ -224,8 +242,7 @@ async function getOrCreateUserFromMaster(employeeId, initialRole = 'employee') {
       masterEmp.department,
       masterEmp.designation,
       initialRole,
-      shouldBeActive,
-      defaultHash
+      shouldBeActive
     ]
   );
   return inserted.rows[0];
@@ -286,6 +303,11 @@ exports.assignUserRole = async (req, res) => {
     const { employeeId, targetRole, departmentId } = req.body;
     if (!employeeId || !targetRole) {
       return res.status(400).json({ error: 'Employee ID and Role are required.' });
+    }
+
+    const VALID_ASSIGNABLE_ROLES = ['employee', 'hod', 'imc', 'imc_convenor', 'head_management', 'system_admin'];
+    if (!VALID_ASSIGNABLE_ROLES.includes(targetRole)) {
+      return res.status(400).json({ error: 'Invalid target role.' });
     }
 
     if (String(employeeId).trim() === '00000' && targetRole !== 'system_admin') {
@@ -435,9 +457,18 @@ exports.exportAuditLogs = async (req, res) => {
       const actionStr = log.action || 'UNKNOWN';
       const refId = log.reference_id || 'N/A';
       const ip = log.ip_address || 'N/A';
-      const details = log.details ? JSON.stringify(log.details).replace(/"/g, '""') : '';
-      
-      csvContent += `"${date}","${time}","${user}","${empId}","${actionStr}","${refId}","${ip}","${details}"\n`;
+      const details = log.details ? JSON.stringify(log.details) : '';
+
+      csvContent += [
+        escapeCsvField(date),
+        escapeCsvField(time),
+        escapeCsvField(user),
+        escapeCsvField(empId),
+        escapeCsvField(actionStr),
+        escapeCsvField(refId),
+        escapeCsvField(ip),
+        escapeCsvField(details)
+      ].join(',') + '\n';
     });
 
     res.setHeader('Content-Type', 'text/csv');
@@ -738,14 +769,19 @@ exports.updateRoleCredentials = async (req, res) => {
       return res.status(400).json({ error: 'All fields are required.' });
     }
 
+    const { validatePasswordStrength } = require('./authController');
+    const pwCheck = validatePasswordStrength(newPassword);
+    if (!pwCheck.valid) {
+      return res.status(400).json({ error: pwCheck.error, code: 'WEAK_PASSWORD' });
+    }
+
     const userRes = await query('SELECT employee_id FROM users WHERE id = $1', [req.user.id]);
     const employeeId = userRes.rows[0].employee_id;
 
     const isValid = await verifyOtp(employeeId, 'admin_password_change', otp);
     if (!isValid) return res.status(400).json({ error: 'Invalid or expired OTP.' });
 
-    const bcrypt = require('bcryptjs');
-    const hash = await bcrypt.hash(newPassword, 10);
+    const hash = await bcrypt.hash(newPassword, 12);
 
     await query(
       'UPDATE role_credentials SET password_hash = $1, updated_at = NOW() WHERE role = $2',
@@ -998,7 +1034,9 @@ exports.searchEmployeeProfile = async (req, res) => {
       return res.status(400).json({ error: 'Search query is required' });
     }
 
-    const includeTerminated = req.query.include_terminated === 'true';
+    const isPrivileged = isPrivilegedRole(req.user);
+    // Strict least-privilege: only privileged governance/admin roles may query terminated staff
+    const includeTerminated = isPrivileged && req.query.include_terminated === 'true';
     const statusCondition = includeTerminated
       ? ''
       : "AND COALESCE(m.status, 'active') NOT IN ('terminated', 'inactive', 'deleted')";
@@ -1049,9 +1087,26 @@ exports.searchEmployeeProfile = async (req, res) => {
       return res.json({ employees: [], selectedEmployee: null });
     }
 
+    // Regular employees and HODs receive minimal directory fields only (no PII or incident history)
+    if (!isPrivileged) {
+      const minimalEmployees = userResult.rows.map((row) => ({
+        id: row.id,
+        employee_id: row.employee_id,
+        full_name: row.full_name,
+        department: row.department,
+        designation: row.designation,
+        status: row.status
+      }));
+
+      return res.json({
+        employees: minimalEmployees,
+        selectedEmployee: minimalEmployees[0] || null
+      });
+    }
+
     const user = userResult.rows[0];
 
-    // Fetch reported incidents if user exists in users table
+    // Fetch reported incidents if user exists in users table (privileged roles only)
     let recentIncidents = [];
     let totalIncidents = 0;
     if (user.id && user.is_registered) {
@@ -1211,38 +1266,48 @@ exports.broadcastNotification = async (req, res) => {
 
 exports.downloadBroadcastAttachment = async (req, res) => {
   try {
-    const { key } = req.query;
-    if (!key) return res.status(400).json({ error: 'Key is required' });
-
-    const { s3Client } = require('../config/s3');
-    if (s3Client && process.env.S3_BUCKET_NAME) {
-      const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-      const { GetObjectCommand } = require('@aws-sdk/client-s3');
-      const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
-        Bucket: process.env.S3_BUCKET_NAME,
-        Key: key,
-        ResponseContentDisposition: `attachment`,
-      }), { expiresIn: 60 });
-      return res.json({ url: signedUrl });
-    } else {
-      const path = require('path');
-      const fs = require('fs');
-      const uploadDir = path.resolve(process.env.UPLOAD_DIR || 'uploads');
-      const filePath = path.resolve(uploadDir, key);
-      
-      // If the file starts with "pending/broadcast/", that means S3 key logic was used but stored locally? 
-      // Actually, if local, it doesn't have "pending/broadcast/". It just has filename. 
-      // We will try to resolve exactly what was passed.
-      if (!fs.existsSync(filePath)) {
-        // sometimes if it's local, the key is just the filename, not in a folder
-        const fallbackPath = path.resolve(uploadDir, path.basename(key));
-        if (fs.existsSync(fallbackPath)) {
-          return res.json({ url: `/uploads/${path.basename(key)}` });
-        }
-        return res.status(404).json({ error: 'File not found on disk' });
-      }
-      return res.json({ url: `/uploads/${key}` });
+    const rawKey = req.query.key;
+    if (typeof rawKey !== 'string' || !rawKey.trim()) {
+      return res.status(400).json({ error: 'Key is required' });
     }
+
+    const key = rawKey.trim();
+
+    // Strict R2 key allowlist: broadcast/ or pending/broadcast/ only, zero path traversal or control chars
+    if (
+      key.includes('..') ||
+      key.includes('\\') ||
+      key.startsWith('/') ||
+      /[\x00-\x1f\x7f]/.test(key) ||
+      !/^(?:pending\/)?broadcast\/[a-zA-Z0-9._-]+$/.test(key)
+    ) {
+      return res.status(400).json({ error: 'Invalid broadcast attachment key.' });
+    }
+
+    // Verify the requested key actually belongs to a recorded broadcast notification
+    const broadcastCheck = await query(
+      `SELECT 1 FROM notifications
+       WHERE type = 'broadcast' AND attachment_url = $1
+       LIMIT 1`,
+      [key]
+    );
+    if (broadcastCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Broadcast attachment not found.' });
+    }
+
+    const { s3Client, isR2Configured } = require('../config/s3');
+    if (!isR2Configured() || !s3Client || !process.env.S3_BUCKET_NAME) {
+      return res.status(503).json({ error: 'Cloudflare R2 storage is not configured.' });
+    }
+
+    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+    const { GetObjectCommand } = require('@aws-sdk/client-s3');
+    const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: key,
+      ResponseContentDisposition: 'attachment',
+    }), { expiresIn: 60 });
+    return res.json({ url: signedUrl });
   } catch (error) {
     console.error('Failed to get broadcast attachment url:', error);
     res.status(500).json({ error: 'Failed to generate download link' });

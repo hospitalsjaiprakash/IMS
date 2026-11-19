@@ -104,6 +104,10 @@ export default function LoginPage() {
       setError('Full Name, Employee ID, Email, and Password are required.');
       return;
     }
+    if (regForm.password.length < 6 || !/[A-Za-z]/.test(regForm.password) || !/([0-9]|[^A-Za-z0-9])/.test(regForm.password)) {
+      setError('Password must be at least 6 characters and include at least one letter and one number or special character.');
+      return;
+    }
     const result = await requestRegistrationOtp(regForm);
     if (result.success) {
       setSuccessMsg(result.message || 'OTP sent to your email address.');
@@ -158,8 +162,8 @@ export default function LoginPage() {
       setError('Please enter the OTP and your new password.');
       return;
     }
-    if (forgotForm.newPassword.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (forgotForm.newPassword.length < 6 || !/[A-Za-z]/.test(forgotForm.newPassword) || !/([0-9]|[^A-Za-z0-9])/.test(forgotForm.newPassword)) {
+      setError('Password must be at least 6 characters and include at least one letter and one number or special character.');
       return;
     }
     setLocalLoading(true);
@@ -406,7 +410,7 @@ export default function LoginPage() {
                       type={showRegPassword ? 'text' : 'password'}
                       value={regForm.password}
                       onChange={handleRegChange}
-                      placeholder="Create a secure password"
+                      placeholder="Min 6 chars (letter + number/symbol)"
                       className="w-full px-4 py-2.5 pr-11 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                     />
                     <button

@@ -87,7 +87,8 @@ async function getPresignedDownloadUrl(key, downloadFilename = null, expiresIn =
   };
 
   if (downloadFilename) {
-    params.ResponseContentDisposition = `attachment; filename="${downloadFilename}"`;
+    const safeFilename = encodeURIComponent(String(downloadFilename).replace(/[\r\n"]/g, '_'));
+    params.ResponseContentDisposition = `attachment; filename="${safeFilename}"`;
   }
 
   const command = new GetObjectCommand(params);

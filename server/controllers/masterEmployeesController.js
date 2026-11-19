@@ -309,6 +309,7 @@ exports.bulkAddEmployees = async (req, res) => {
 
 const { getHrmsSyncStatus } = require('../services/hrmsSyncService');
 const officePortalService = require('../services/officePortalService');
+const { assertAllowedOfficePortalUrl } = require('../utils/secretCrypto');
 
 // POST on-demand sync from OfficePortal HRMS Public API v1
 exports.syncFromHrms = async (req, res) => {
@@ -403,12 +404,14 @@ exports.updateHrmsConfig = async (req, res) => {
       auditPayload.officeportal_client_id = clientId.trim();
     }
     if (typeof authUrl === 'string' && authUrl.trim()) {
-      updates.officeportal_auth_url = authUrl.trim();
-      auditPayload.officeportal_auth_url = authUrl.trim();
+      const safeAuthUrl = assertAllowedOfficePortalUrl(authUrl.trim(), 'auth');
+      updates.officeportal_auth_url = safeAuthUrl;
+      auditPayload.officeportal_auth_url = safeAuthUrl;
     }
     if (typeof baseUrl === 'string' && baseUrl.trim()) {
-      updates.officeportal_base_url = baseUrl.trim().replace(/\/+$/, '');
-      auditPayload.officeportal_base_url = updates.officeportal_base_url;
+      const safeBaseUrl = assertAllowedOfficePortalUrl(baseUrl.trim().replace(/\/+$/, ''), 'api');
+      updates.officeportal_base_url = safeBaseUrl;
+      auditPayload.officeportal_base_url = safeBaseUrl;
     }
     if (typeof clientSecret === 'string' && clientSecret.trim() && clientSecret.trim() !== '••••••••') {
       updates.officeportal_client_secret = clientSecret.trim();
@@ -437,6 +440,12 @@ exports.updateHrmsConfig = async (req, res) => {
       message: 'OfficePortal HRMS configuration saved successfully.'
     });
   } catch (error) {
+    if (error.code === 'INVALID_OFFICEPORTAL_URL' || error.statusCode === 400) {
+      return res.status(400).json({
+        error: error.message,
+        code: error.code || 'INVALID_OFFICEPORTAL_URL'
+      });
+    }
     console.error('[PUT /master-employees/hrms-config] error:', error.message);
     res.status(500).json({ error: 'Failed to save OfficePortal configuration.' });
   }

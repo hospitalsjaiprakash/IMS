@@ -1,5 +1,9 @@
 const path = require('path');
+const initialNodeEnv = process.env.NODE_ENV;
 require('dotenv').config({ path: path.resolve(__dirname, '.env'), override: true });
+if (initialNodeEnv === 'test') {
+  process.env.NODE_ENV = 'test';
+}
 
 if (!process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is required.");
@@ -9,26 +13,40 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const fs = require('fs');
 const { Server } = require('socket.io');
 const http = require('http');
 const AppError = require('./utils/AppError');
+const { verifyJwtAndLoadActiveUser } = require('./middleware/auth');
+const { apiLimiter } = require('./middleware/rateLimiter');
 // Only run cron on instance 0 in PM2 cluster to prevent duplicate execution (skip in test environment)
 if (process.env.NODE_ENV !== 'test' && (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0')) {
   require('./services/cronService'); // Initialize cron jobs
 }
 
-const allowedOrigins = [
+const isProduction = process.env.NODE_ENV === 'production';
+
+const devOnlyOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
+  'https://jpims.vercel.app'
+];
+
+const extraAllowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([
+  ...(isProduction ? [] : devOnlyOrigins),
   'https://ims.jaiprakashhospitals.com',
-  'https://jpims.vercel.app',
-  process.env.CLIENT_URL
-].filter(Boolean);
+  process.env.CLIENT_URL,
+  ...extraAllowedOrigins
+].filter(Boolean)));
 
 const app = express();
+app.disable('x-powered-by');
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -51,16 +69,53 @@ app.set('trust proxy', 1);
 
 // ─── MIDDLEWARE ───────────────────────────────────
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' }
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true
+  },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  frameguard: { action: 'sameorigin' }
 }));
 
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  credentials: true
+  credentials: true,
 }));
 
-app.use(morgan('combined'));
+// Redact sensitive query parameters before writing access logs
+morgan.token('safe-url', (req) => {
+  const raw = req.originalUrl || req.url || '';
+  const qIndex = raw.indexOf('?');
+  if (qIndex === -1) return raw;
+  const base = raw.slice(0, qIndex);
+  try {
+    const params = new URLSearchParams(raw.slice(qIndex + 1));
+    for (const k of Array.from(params.keys())) {
+      if (/^(token|key|secret|otp|password|access_token|auth)$/i.test(k)) {
+        params.set(k, '[REDACTED]');
+      }
+    }
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
+  } catch (_) {
+    return `${base}?[REDACTED]`;
+  }
+});
+
+app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"'));
+
+// Enforce strict 2 MB payload limit on public webhook endpoints before global JSON parser
+const webhookJsonParser = express.json({
+  limit: '2mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+});
+app.use('/webhooks', webhookJsonParser);
+app.use('/api/webhooks', webhookJsonParser);
+
 app.use(express.json({
   limit: '10mb',
   verify: (req, res, buf) => {
@@ -69,12 +124,8 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Uploads directory
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-app.use('/uploads', express.static(path.resolve(uploadDir)));
+// NOTE: Static /uploads mount is intentionally removed — Cloudflare R2 is mandatory and
+// all attachments are served exclusively via authorized short-lived presigned URLs.
 
 // ─── ROUTES ───────────────────────────────────────
 // Health check handler (verifies DB connection)
@@ -102,6 +153,11 @@ app.get('/health', healthHandler);
 app.get('/api/health', healthHandler);
 
 app.use('/webhooks', require('./routes/webhookRoutes'));
+// Global API rate limiter (300/min per IP); webhook routes use their own dedicated webhookLimiter
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/webhooks')) return next();
+  return apiLimiter(req, res, next);
+});
 app.use('/api', require('./routes/index'));
 
 // Root route for API ping
@@ -120,6 +176,10 @@ app.all('*', (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  // Handle oversized JSON/webhook payloads cleanly
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({ status: 'error', error: 'Request payload exceeds maximum allowed size.' });
+  }
   // Handle Multer upload errors
   if (err.name === 'MulterError') {
     if (err.code === 'LIMIT_FILE_SIZE') {
@@ -160,10 +220,28 @@ app.use((err, req, res, next) => {
 });
 
 // ─── START ────────────────────────────────────────
+// Authenticate every Socket.IO connection via verified HS256 JWT (never trust query.userId)
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth && typeof socket.handshake.auth.token === 'string'
+      ? socket.handshake.auth.token.trim()
+      : null;
+
+    if (!token) {
+      return next(new Error('UNAUTHORIZED'));
+    }
+
+    const user = await verifyJwtAndLoadActiveUser(token);
+    socket.user = user;
+    return next();
+  } catch (err) {
+    return next(new Error(err.code === 'ACCOUNT_DISABLED' ? 'ACCOUNT_DISABLED' : 'UNAUTHORIZED'));
+  }
+});
+
 io.on('connection', (socket) => {
-  const userId = socket.handshake.query.userId;
-  if (userId) {
-    socket.join(`user_${userId}`);
+  if (socket.user && socket.user.id) {
+    socket.join(`user_${socket.user.id}`);
   }
   socket.on('disconnect', () => {
   });

@@ -224,11 +224,35 @@ async function scheduleHrmsDeltaSync() {
   }
 }
 
+/**
+ * Nightly webhook PII retention job:
+ * - Redacts raw employee PII from PROCESSED hrms_webhook_events.payload older than 30 days
+ * - Prunes PROCESSED hrms_webhook_events rows older than 180 days
+ */
+async function runWebhookPiiRetention() {
+  try {
+    const { cleanupWebhookPiiRetention } = require('./officePortalService');
+    const result = await cleanupWebhookPiiRetention();
+    if (result.redactedCount > 0 || result.prunedCount > 0) {
+      console.log(`[CRON] Webhook PII retention complete: redacted ${result.redactedCount} payload(s), pruned ${result.prunedCount} old row(s).`);
+    }
+    return result;
+  } catch (err) {
+    console.error('[CRON] Error during webhook PII retention cleanup:', err.message);
+    return { redactedCount: 0, prunedCount: 0 };
+  }
+}
+
 // Start daily escalations cron job (Runs every day at 8:00 AM)
 cron.schedule('0 8 * * *', () => {
   processHodEscalations();
   checkAndAutoEscalate21Days();
 });
+
+// Nightly webhook PII retention job (Runs every day at 3:00 AM IST)
+cron.schedule('0 3 * * *', () => {
+  runWebhookPiiRetention();
+}, { timezone: process.env.APP_TIMEZONE || 'Asia/Kolkata' });
 
 // Change Feed delta sync every 4 hours (costing ~6 API calls/day on Production)
 if (String(process.env.HRMS_CRON_ENABLED || 'true').toLowerCase() !== 'false') {
@@ -238,6 +262,6 @@ if (String(process.env.HRMS_CRON_ENABLED || 'true').toLowerCase() !== 'false') {
   });
 }
 
-module.exports = { processHodEscalations, checkAndAutoEscalate21Days, scheduleHrmsDeltaSync };
+module.exports = { processHodEscalations, checkAndAutoEscalate21Days, scheduleHrmsDeltaSync, runWebhookPiiRetention };
 
 

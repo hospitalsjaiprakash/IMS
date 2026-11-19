@@ -16,6 +16,12 @@
 const axios = require('axios');
 const { createHmac, timingSafeEqual } = require('node:crypto');
 const { query, getClient } = require('../config/database');
+const {
+  SECRET_CONFIG_KEYS,
+  encryptSecret,
+  decryptSecret,
+  assertAllowedOfficePortalUrl
+} = require('../utils/secretCrypto');
 
 // Default Endpoints & Constants
 const DEFAULT_AUTH_URL = 'https://accounts.awarious.com/publicapi/connect/token';
@@ -37,6 +43,11 @@ const FATAL_API_ERROR_CODES = new Set([
   'FORBIDDEN'
 ]);
 
+// In-Memory Config Cache (60-second TTL so invalid webhooks do not query PostgreSQL)
+const CONFIG_CACHE_TTL_MS = 60 * 1000;
+let cachedConfig = null;
+let configExpiresAt = 0;
+
 // In-Memory Token Cache (L1 Cache)
 let cachedToken = null;
 let tokenExpiresAt = 0; // Unix timestamp in seconds
@@ -57,6 +68,8 @@ let webhookWorkerTail = Promise.resolve();
  * Clear in-memory caches (called on credential updates or tests)
  */
 function clearCaches() {
+  cachedConfig = null;
+  configExpiresAt = 0;
   cachedToken = null;
   tokenExpiresAt = 0;
   tokenLockPromise = null;
@@ -203,8 +216,15 @@ function sleep(ms) {
 
 /**
  * Get configured OfficePortal settings from environment or database system_config
+ * - Cached in memory for 60s (cleared immediately on setConfigValues / clearCaches)
+ * - Transparently decrypts AES-256-GCM secret values stored in system_config
  */
-async function getConfig() {
+async function getConfig(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedConfig && now < configExpiresAt) {
+    return cachedConfig;
+  }
+
   let dbConfig = {};
   try {
     const res = await query(`SELECT key, value FROM system_config WHERE key LIKE 'officeportal_%'`);
@@ -215,16 +235,21 @@ async function getConfig() {
     // system_config query failure is non-fatal
   }
 
+  // Decrypt secret rows outside the query try/catch so ciphertext tampering fails closed
+  const rawDbClientSecret = dbConfig['officeportal_client_secret'] ? decryptSecret(dbConfig['officeportal_client_secret']) : '';
+  const rawDbWebhookSecret = dbConfig['officeportal_webhook_secret'] ? decryptSecret(dbConfig['officeportal_webhook_secret']) : '';
+  const rawDbWebhookSecretPrev = dbConfig['officeportal_webhook_secret_previous'] ? decryptSecret(dbConfig['officeportal_webhook_secret_previous']) : '';
+
   const baseUrl = (process.env.OFFICEPORTAL_BASE_URL || dbConfig['officeportal_base_url'] || DEFAULT_BASE_URL).replace(/\/+$/, '');
   const authUrl = (process.env.OFFICEPORTAL_AUTH_URL || dbConfig['officeportal_auth_url'] || DEFAULT_AUTH_URL).trim();
 
-  return {
+  const resolved = {
     authUrl,
     baseUrl,
     clientId: (process.env.OFFICEPORTAL_CLIENT_ID || dbConfig['officeportal_client_id'] || '').trim(),
-    clientSecret: (process.env.OFFICEPORTAL_CLIENT_SECRET || process.env.OFFICEPORTAL_API_KEY || dbConfig['officeportal_client_secret'] || '').trim(),
-    webhookSecret: (process.env.OFFICEPORTAL_WEBHOOK_KEY || process.env.OFFICEPORTAL_WEBHOOK_SECRET || dbConfig['officeportal_webhook_secret'] || '').trim(),
-    webhookSecretPrevious: (process.env.OFFICEPORTAL_WEBHOOK_KEY_PREVIOUS || dbConfig['officeportal_webhook_secret_previous'] || '').trim(),
+    clientSecret: (process.env.OFFICEPORTAL_CLIENT_SECRET || process.env.OFFICEPORTAL_API_KEY || rawDbClientSecret || '').trim(),
+    webhookSecret: (process.env.OFFICEPORTAL_WEBHOOK_KEY || process.env.OFFICEPORTAL_WEBHOOK_SECRET || rawDbWebhookSecret || '').trim(),
+    webhookSecretPrevious: (process.env.OFFICEPORTAL_WEBHOOK_KEY_PREVIOUS || rawDbWebhookSecretPrev || '').trim(),
     syncCursor: dbConfig['officeportal_sync_cursor'] || '',
     lastChangedAt: dbConfig['officeportal_last_changed_at'] || dbConfig['officeportal_last_sync_timestamp'] || '',
     lastMasterSyncAt: dbConfig['officeportal_last_master_sync_at'] || '',
@@ -236,22 +261,48 @@ async function getConfig() {
     monthlyReset: dbConfig['officeportal_monthly_reset_time'] || null,
     syncStatus: dbConfig['officeportal_sync_status'] || 'READY',
   };
+
+  cachedConfig = resolved;
+  configExpiresAt = now + CONFIG_CACHE_TTL_MS;
+  return resolved;
 }
 
 /**
  * Persist key/value pairs in system_config
+ * - Enforces OfficePortal URL allowlist before writing URL keys
+ * - Encrypts secret keys at rest using AES-256-GCM
+ * - Immediately invalidates in-memory getConfig() cache
  */
 async function setConfigValues(entries, dbClient = null) {
   const runner = dbClient || { query };
+
+  // Validate all URL values upfront before persisting any changes
+  for (const [key, value] of Object.entries(entries)) {
+    if (value === undefined || value === null || String(value).trim() === '') continue;
+    if (key === 'officeportal_auth_url') {
+      assertAllowedOfficePortalUrl(String(value), 'auth');
+    } else if (key === 'officeportal_base_url') {
+      assertAllowedOfficePortalUrl(String(value), 'api');
+    }
+  }
+
   for (const [key, value] of Object.entries(entries)) {
     if (value === undefined) continue;
+    let storedValue = value === null ? '' : String(value);
+    if (SECRET_CONFIG_KEYS.has(key) && storedValue) {
+      storedValue = encryptSecret(storedValue);
+    }
     await runner.query(
       `INSERT INTO system_config (key, value, updated_at)
        VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-      [key, value === null ? '' : String(value)]
+      [key, storedValue]
     );
   }
+
+  // Invalidate config cache immediately so subsequent calls read fresh values
+  cachedConfig = null;
+  configExpiresAt = 0;
 }
 
 /**
@@ -336,6 +387,9 @@ async function getAccessToken(forceRefresh = false) {
         throw err;
       }
 
+      // SSRF / credential-exfiltration guard: verify authUrl against strict host allowlist
+      const safeAuthUrl = assertAllowedOfficePortalUrl(config.authUrl, 'auth');
+
       const params = new URLSearchParams({
         grant_type: 'client_credentials',
         client_id: config.clientId,
@@ -346,12 +400,13 @@ async function getAccessToken(forceRefresh = false) {
       let lastErr = null;
       for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
         try {
-          const res = await axios.post(config.authUrl, params.toString(), {
+          const res = await axios.post(safeAuthUrl, params.toString(), {
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
               'Accept': 'application/json'
             },
-            timeout: 15000
+            timeout: 15000,
+            maxRedirects: 0
           });
 
           if (!res.data || !res.data.access_token) {
@@ -421,7 +476,9 @@ async function updateQuotaMetadata(headers) {
  */
 async function requestWithRetry(path, options = {}) {
   const config = await getConfig();
-  const url = path.startsWith('http') ? path : `${config.baseUrl}${path}`;
+  const rawUrl = path.startsWith('http') ? path : `${config.baseUrl}${path}`;
+  // SSRF / Bearer-exfiltration guard: verify destination URL against strict host allowlist
+  const url = assertAllowedOfficePortalUrl(rawUrl, 'api');
   const timeout = options.timeout || 30000;
   const params = options.params || undefined;
 
@@ -436,7 +493,8 @@ async function requestWithRetry(path, options = {}) {
           Authorization: `Bearer ${token}`,
           Accept: 'application/json'
         },
-        timeout
+        timeout,
+        maxRedirects: 0
       });
 
       await updateQuotaMetadata(res.headers);
@@ -1676,6 +1734,41 @@ async function handleWebhookDelivery(headerSignature, rawBody, parsedPayload) {
   };
 }
 
+/**
+ * 30-day rolling PII retention & 180-day audit row pruning for hrms_webhook_events:
+ * 1. Redacts raw employee PII from `payload` on PROCESSED rows older than 30 days,
+ *    preserving non-PII audit metadata (eventId, deliveryId, eventType, employeeCode, occurredAt).
+ * 2. Deletes PROCESSED rows older than 180 days.
+ */
+async function cleanupWebhookPiiRetention() {
+  const redactRes = await query(
+    `UPDATE hrms_webhook_events
+     SET payload = jsonb_build_object(
+       'redacted', true,
+       'redactedAt', NOW(),
+       'eventId', event_id,
+       'deliveryId', delivery_id,
+       'eventType', event_type,
+       'occurredAt', occurred_at,
+       'employeeCode', COALESCE(payload->'data'->>'employeeCode', payload->>'employeeCode')
+     )
+     WHERE status = 'PROCESSED'
+       AND received_at < NOW() - INTERVAL '30 days'
+       AND COALESCE(payload->>'redacted', 'false') != 'true'`
+  );
+
+  const pruneRes = await query(
+    `DELETE FROM hrms_webhook_events
+     WHERE status = 'PROCESSED'
+       AND received_at < NOW() - INTERVAL '180 days'`
+  );
+
+  return {
+    redactedCount: redactRes.rowCount || 0,
+    prunedCount: pruneRes.rowCount || 0
+  };
+}
+
 module.exports = {
   isValidSignature,
   getAccessToken,
@@ -1703,5 +1796,6 @@ module.exports = {
   applyEmployeeDeletion,
   syncFullDirectory,
   syncDeltaChanges,
-  handleWebhookDelivery
+  handleWebhookDelivery,
+  cleanupWebhookPiiRetention
 };
