@@ -7,7 +7,8 @@ import {
   Search, Plus, ShieldCheck, UserMinus, AlertTriangle, ShieldX,
   Users, Award, Building2, CheckCircle2, Edit3, ShieldAlert,
   UserCheck, Briefcase, ChevronRight, Sparkles, Filter, Lock, Send, ArrowLeft,
-  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw, Trash2, UserX
+  Mail, Phone, User, FileText, AlertCircle, Building, RefreshCw, Trash2, UserX,
+  KeyRound, Copy, Activity, Webhook, CloudDownload, Check, PlugZap
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
@@ -49,11 +50,15 @@ export default function AdminUsersPage() {
   const [showRemoveLeaderModal, setShowRemoveLeaderModal] = useState(false);
   const [leaderToRemove, setLeaderToRemove] = useState(null);
 
-  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
-  const [newDeptForm, setNewDeptForm] = useState({ name: '', employeeId: '' });
-  const [newDeptSearchTerm, setNewDeptSearchTerm] = useState('');
-  const [showDeleteDeptModal, setShowDeleteDeptModal] = useState(false);
-  const [deptToDelete, setDeptToDelete] = useState(null);
+  const [hrmsConfigForm, setHrmsConfigForm] = useState({
+    clientId: '',
+    authUrl: '',
+    baseUrl: '',
+    clientSecret: '',
+    webhookSecret: '',
+    webhookSecretPrevious: ''
+  });
+  const [copiedWebhookUrl, setCopiedWebhookUrl] = useState(false);
 
   const [selectedProfileUser, setSelectedProfileUser] = useState(null);
   const [profileViewTab, setProfileViewTab] = useState('personal'); // 'personal' | 'department'
@@ -113,21 +118,69 @@ export default function AdminUsersPage() {
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to update user role'),
   });
 
-  const { data: syncStatusData } = useQuery({
+  const { data: syncStatusData, isLoading: isLoadingSyncStatus } = useQuery({
     queryKey: ['hrms-sync-status'],
     queryFn: () => masterEmployeesApi.getSyncStatus().then(r => r.data?.data || {}),
   });
 
+  const { data: webhookLogsData, isLoading: isLoadingWebhookLogs } = useQuery({
+    queryKey: ['hrms-webhook-logs'],
+    queryFn: () => adminApi.getWebhookLogs({ limit: 25 }).then(r => r.data),
+    enabled: activeCard === 'hrms',
+  });
+
+  useEffect(() => {
+    if (syncStatusData) {
+      setHrmsConfigForm(prev => ({
+        ...prev,
+        clientId: prev.clientId || syncStatusData.clientId || 'ext_c002bbe65e374675b8d4dc33fbf25dd1',
+        authUrl: prev.authUrl || syncStatusData.authUrl || 'https://accounts.awarious.com/publicapi/connect/token',
+        baseUrl: prev.baseUrl || syncStatusData.baseUrl || 'https://publicapi.officeportal.io/employee',
+      }));
+    }
+  }, [syncStatusData]);
+
   const syncHrmsMutation = useMutation({
-    mutationFn: () => masterEmployeesApi.syncHrms(),
+    mutationFn: (type = 'full') => masterEmployeesApi.syncHrms(type),
     onSuccess: (res) => {
       toast.success(res.data?.message || 'HRMS directory synchronized successfully!');
       qc.invalidateQueries({ queryKey: ['master-employees'] });
+      qc.invalidateQueries({ queryKey: ['departments'] });
+      qc.invalidateQueries({ queryKey: ['designations'] });
       qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
+      qc.invalidateQueries({ queryKey: ['hrms-webhook-logs'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.error || 'Failed to synchronize with OfficePortal HRMS API');
+    }
+  });
+
+  const testConnectionMutation = useMutation({
+    mutationFn: () => masterEmployeesApi.testConnection(),
+    onSuccess: (res) => {
+      toast.success(res.data?.message || 'OfficePortal connection verified!');
       qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
     },
     onError: (err) => {
-      toast.error(err.response?.data?.error || 'Failed to synchronize with HRMS API');
+      toast.error(err.response?.data?.error || 'Connection test failed');
+    }
+  });
+
+  const saveHrmsConfigMutation = useMutation({
+    mutationFn: (payload) => masterEmployeesApi.updateHrmsConfig(payload),
+    onSuccess: (res) => {
+      toast.success(res.data?.message || 'OfficePortal credentials saved!');
+      setHrmsConfigForm(prev => ({
+        ...prev,
+        clientSecret: '',
+        webhookSecret: '',
+        webhookSecretPrevious: ''
+      }));
+      qc.invalidateQueries({ queryKey: ['hrms-sync-status'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.error || 'Failed to save credentials');
     }
   });
 
@@ -177,31 +230,6 @@ export default function AdminUsersPage() {
       qc.invalidateQueries({ queryKey: ['role-audit'] });
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to remove department feedback staff'),
-  });
-
-  const createDeptMutation = useMutation({
-    mutationFn: (data) => adminApi.createDepartment(data),
-    onSuccess: (res) => {
-      toast.success(res?.data?.message || 'Department created successfully');
-      setShowAddDeptModal(false);
-      setNewDeptForm({ name: '', employeeId: '' });
-      setNewDeptSearchTerm('');
-      qc.invalidateQueries({ queryKey: ['departments'] });
-      qc.invalidateQueries({ queryKey: ['role-audit'] });
-    },
-    onError: (e) => toast.error(e.response?.data?.error || 'Failed to create department'),
-  });
-
-  const deleteDeptMutation = useMutation({
-    mutationFn: (id) => adminApi.deleteDepartment(id),
-    onSuccess: (res) => {
-      toast.success(res?.data?.message || 'Department deleted successfully');
-      setShowDeleteDeptModal(false);
-      setDeptToDelete(null);
-      qc.invalidateQueries({ queryKey: ['departments'] });
-      qc.invalidateQueries({ queryKey: ['role-audit'] });
-    },
-    onError: (e) => toast.error(e.response?.data?.error || 'Failed to delete department'),
   });
 
   const handleOpenMapModal = (departmentId = '', employeeId = '') => {
@@ -489,19 +517,37 @@ export default function AdminUsersPage() {
           >
             <Building2 size={14} /> Dept Mapping
           </button>
+          <button
+            onClick={() => { setActiveCard('hrms'); setTabSearch(''); }}
+            className={`flex-1 min-w-[140px] px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2 whitespace-nowrap ${activeCard === 'hrms'
+                ? 'bg-white text-emerald-700 shadow-sm border border-slate-200/50'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+              }`}
+          >
+            <Activity size={14} /> HRMS Sync &amp; API Health
+          </button>
         </div>
 
         {/* Action Buttons */}
         {activeCard === 'employee' && (
-          <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
             <button
-              onClick={() => syncHrmsMutation.mutate()}
+              onClick={() => syncHrmsMutation.mutate('delta')}
               disabled={syncHrmsMutation.isPending}
-              title={syncStatusData?.last_hrms_sync_at ? `Last synced: ${new Date(syncStatusData.last_hrms_sync_at).toLocaleString()}` : 'Sync all staff from HRMS directory'}
-              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+              title={syncStatusData?.lastOfficePortalSync?.completed_at ? `Last synced: ${formatDateTime(syncStatusData.lastOfficePortalSync.completed_at)}` : 'Fetch incremental changes from OfficePortal HRMS'}
+              className="px-3.5 py-2 rounded-lg bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-200 font-bold text-xs shadow-2xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-60"
             >
-              <RefreshCw size={14} className={syncHrmsMutation.isPending ? 'animate-spin' : ''} />
-              {syncHrmsMutation.isPending ? 'Syncing...' : 'Sync with HRMS'}
+              <RefreshCw size={13} className={syncHrmsMutation.isPending ? 'animate-spin' : ''} />
+              Delta Sync
+            </button>
+            <button
+              onClick={() => syncHrmsMutation.mutate('full')}
+              disabled={syncHrmsMutation.isPending}
+              title="Run full OfficePortal bootstrap sync (employees, departments, job titles, employment types)"
+              className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-60"
+            >
+              <CloudDownload size={13} />
+              {syncHrmsMutation.isPending ? 'Syncing...' : 'Full Sync'}
             </button>
           </div>
         )}
@@ -591,9 +637,9 @@ export default function AdminUsersPage() {
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
                       Showing {filteredPersonnel.length} personnel ({masterEmployees.length || 0} total staff)
-                      {syncStatusData?.last_hrms_sync_at && (
+                      {syncStatusData?.lastOfficePortalSync?.completed_at && (
                         <span className="ml-2 font-medium text-indigo-600">
-                          (HR Sheet last synced: {formatDateTime(syncStatusData.last_hrms_sync_at)})
+                          (OfficePortal last synced: {formatDateTime(syncStatusData.lastOfficePortalSync.completed_at)})
                         </span>
                       )}
                     </p>
@@ -638,6 +684,7 @@ export default function AdminUsersPage() {
                         <option value="all">All Statuses</option>
                         <option value="active">Active Staff</option>
                         <option value="noticePeriod">Notice Period</option>
+                        <option value="inactive">Inactive</option>
                         <option value="terminated">Terminated</option>
                       </select>
                     </div>
@@ -710,7 +757,14 @@ export default function AdminUsersPage() {
                                   <span className="bg-slate-100 px-2 py-1 rounded-md border border-slate-200">{u.employee_id}</span>
                                 </td>
                                 <td className="text-xs font-semibold text-slate-700 py-4">{u.department || '—'}</td>
-                                <td className="text-xs text-slate-600 py-4">{u.designation || '—'}</td>
+                                <td className="text-xs text-slate-600 py-4">
+                                  <div>{u.designation || '—'}</div>
+                                  {u.employment_type_name && (
+                                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                      {u.employment_type_name}
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="py-4">
                                   {u.is_registered ? (
                                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -741,12 +795,16 @@ export default function AdminUsersPage() {
                                 </td>
                                 <td className="py-4">
                                   <div className="flex flex-col gap-1 items-start">
-                                    {u.status === 'terminated' ? (
+                                    {u.status === 'terminated' || u.status === 'deleted' ? (
                                       <span
                                         title={u.termination_date ? `Terminated on ${formatDate(u.termination_date)}` : 'Terminated in HRMS'}
                                         className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200 shadow-2xs"
                                       >
-                                        ⛔ Terminated
+                                        ⛔ {u.status === 'deleted' ? 'Deleted' : 'Terminated'}
+                                      </span>
+                                    ) : u.status === 'inactive' ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300 shadow-2xs">
+                                        ⏸ Inactive
                                       </span>
                                     ) : u.status === 'noticePeriod' ? (
                                       <span
@@ -758,6 +816,11 @@ export default function AdminUsersPage() {
                                     ) : (
                                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                                         ✓ Active Staff
+                                      </span>
+                                    )}
+                                    {u.portal_access_disable_date && (
+                                      <span className="text-[10px] font-semibold text-rose-600">
+                                        Portal off: {formatDate(u.portal_access_disable_date)}
                                       </span>
                                     )}
 
@@ -775,9 +838,9 @@ export default function AdminUsersPage() {
                                   </div>
                                 </td>
                                 <td className="pr-6 py-4 text-right">
-                                  {u.status === 'terminated' ? (
+                                  {['terminated', 'inactive', 'deleted'].includes(u.status) ? (
                                     <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 inline-block">
-                                      Terminated in HRMS
+                                      {u.status === 'inactive' ? 'Inactive in HRMS' : 'Terminated in HRMS'}
                                     </span>
                                   ) : (
                                     <>
@@ -1103,7 +1166,7 @@ export default function AdminUsersPage() {
                       <h2 className="text-xl font-black text-slate-900">Department Feedback Mapping</h2>
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
-                      Designate the single employee authorized to submit incident feedback for each department. The same employee can be assigned to multiple departments.
+                      Designate the single employee authorized to submit incident feedback for each department. Departments are 100% synced directly from OfficePortal HRMS API (zero hardcoded departments).
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -1118,20 +1181,30 @@ export default function AdminUsersPage() {
                       />
                     </div>
                     <button
-                      onClick={() => {
-                        setNewDeptForm({ name: '', employeeId: '' });
-                        setNewDeptSearchTerm('');
-                        setShowAddDeptModal(true);
-                      }}
-                      className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-amber-500/20 transition-all"
+                      onClick={() => setActiveCard('hrms')}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all"
                     >
-                      <Plus size={16} /> Add Department
+                      <RefreshCw size={14} /> Sync from OfficePortal
                     </button>
                   </div>
                 </div>
 
                 {isLoadingDepts ? (
                   <div className="py-16 flex justify-center"><Spinner size={32} /></div>
+                ) : departments.length === 0 ? (
+                  <div className="py-14 px-6 text-center bg-slate-50 border border-dashed border-slate-300 rounded-2xl space-y-3">
+                    <Building2 size={36} className="mx-auto text-slate-400" />
+                    <h3 className="text-base font-bold text-slate-800">No OfficePortal Departments Synced Yet</h3>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      Hardcoded departments are disabled. Configure your OfficePortal API Key in the <strong>HRMS Sync &amp; API Health</strong> tab and run <strong>Full Bootstrap Sync</strong> to load live hospital departments.
+                    </p>
+                    <button
+                      onClick={() => setActiveCard('hrms')}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm"
+                    >
+                      <Activity size={14} /> Open HRMS Sync &amp; API Health
+                    </button>
+                  </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="table w-full">
@@ -1231,16 +1304,6 @@ export default function AdminUsersPage() {
                                     >
                                       <UserMinus size={12} /> Unassign
                                     </button>
-                                    <button
-                                      onClick={() => {
-                                        setDeptToDelete({ id: d.id, name: d.name, staffName });
-                                        setShowDeleteDeptModal(true);
-                                      }}
-                                      title="Delete Department"
-                                      className="p-1.5 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 border border-transparent hover:border-red-200 transition-all shadow-2xs inline-flex items-center justify-center"
-                                    >
-                                      <Trash2 size={13} />
-                                    </button>
                                   </div>
                                 ) : (
                                   <div className="flex items-center justify-end gap-1.5">
@@ -1249,16 +1312,6 @@ export default function AdminUsersPage() {
                                       className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-2xs inline-flex items-center gap-1.5"
                                     >
                                       <Plus size={12} /> Assign Staff
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setDeptToDelete({ id: d.id, name: d.name, staffName: null });
-                                        setShowDeleteDeptModal(true);
-                                      }}
-                                      title="Delete Department"
-                                      className="p-1.5 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 border border-transparent hover:border-red-200 transition-all shadow-2xs inline-flex items-center justify-center"
-                                    >
-                                      <Trash2 size={13} />
                                     </button>
                                   </div>
                                 )}
@@ -1270,6 +1323,320 @@ export default function AdminUsersPage() {
                     </table>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ─── TAB 6: HRMS SYNC & API HEALTH ─── */}
+            {activeCard === 'hrms' && (
+              <div className="space-y-6 animate-in fade-in duration-200">
+                {/* Configuration & Connection Test Card */}
+                <div className="rounded-2xl bg-white border border-slate-200/80 shadow-md p-6 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                    <div>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                          <KeyRound size={20} />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-black text-slate-900">OfficePortal Public API v1 Configuration</h2>
+                          <p className="text-xs text-slate-500">
+                            Credentials are stored server-side and masked. Login, signup, and pickers query the local PostgreSQL mirror (0 live API calls).
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => testConnectionMutation.mutate()}
+                        disabled={testConnectionMutation.isPending || !syncStatusData?.hasClientSecret}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      >
+                        {testConnectionMutation.isPending ? <Spinner size={14} className="text-white" /> : <PlugZap size={14} />}
+                        Test Connection &amp; Refresh Quota
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncHrmsMutation.mutate('delta')}
+                        disabled={syncHrmsMutation.isPending || !syncStatusData?.hasClientSecret}
+                        className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <RefreshCw size={14} className={syncHrmsMutation.isPending ? 'animate-spin' : ''} />
+                        Delta Sync (Changes)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncHrmsMutation.mutate('full')}
+                        disabled={syncHrmsMutation.isPending || !syncStatusData?.hasClientSecret}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      >
+                        <CloudDownload size={14} />
+                        Full Bootstrap Sync
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Quota & Synced Counts Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                      <p className="text-[11px] font-bold uppercase text-slate-500">Daily Quota Remaining</p>
+                      <p className="text-xl font-black text-slate-900 mt-1">
+                        {syncStatusData?.quota?.dailyRemaining ?? '—'} <span className="text-xs font-semibold text-slate-400">/ {syncStatusData?.quota?.dailyLimit ?? 500}</span>
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Rate limit: {syncStatusData?.quota?.perMinuteLimit ?? 30}/min</p>
+                    </div>
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                      <p className="text-[11px] font-bold uppercase text-slate-500">Monthly Quota Remaining</p>
+                      <p className="text-xl font-black text-slate-900 mt-1">
+                        {syncStatusData?.quota?.monthlyRemaining ?? '—'} <span className="text-xs font-semibold text-slate-400">/ {syncStatusData?.quota?.monthlyQuota ?? 5000}</span>
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {syncStatusData?.quota?.monthlyReset ? `Resets ${formatDate(syncStatusData.quota.monthlyReset)}` : 'Shared company quota'}
+                      </p>
+                    </div>
+                    <div className="p-3.5 rounded-xl bg-indigo-50/60 border border-indigo-200">
+                      <p className="text-[11px] font-bold uppercase text-indigo-700">API-Synced Departments</p>
+                      <p className="text-xl font-black text-indigo-900 mt-1">
+                        {syncStatusData?.syncedCounts?.departments ?? 0}
+                      </p>
+                      <p className="text-[10px] text-indigo-600 mt-0.5">100% API-driven · {syncStatusData?.syncedCounts?.jobTitles ?? 0} job titles</p>
+                    </div>
+                    <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                      <p className="text-[11px] font-bold uppercase text-emerald-700">Synced HRMS Staff</p>
+                      <p className="text-xl font-black text-emerald-900 mt-1">
+                        {syncStatusData?.syncedCounts?.employees ?? 0}
+                      </p>
+                      <p className="text-[10px] text-emerald-600 mt-0.5">
+                        Webhooks: {syncStatusData?.webhookStats?.processed_events ?? 0} processed / {syncStatusData?.webhookStats?.failed_events ?? 0} failed
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Webhook Endpoint URL Copy Box */}
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <Webhook size={14} className="text-indigo-600" /> Webhook Endpoint URL (Register in OfficePortal UI)
+                      </p>
+                      <p className="font-mono text-xs text-slate-600 mt-1 truncate">
+                        {syncStatusData?.webhookUrl || 'https://ims.jaiprakashhospitals.com/api/webhooks/officeportal'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = syncStatusData?.webhookUrl || 'https://ims.jaiprakashhospitals.com/api/webhooks/officeportal';
+                        navigator.clipboard?.writeText(url);
+                        setCopiedWebhookUrl(true);
+                        toast.success('Webhook URL copied to clipboard');
+                        setTimeout(() => setCopiedWebhookUrl(false), 2000);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0"
+                    >
+                      {copiedWebhookUrl ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                      {copiedWebhookUrl ? 'Copied' : 'Copy URL'}
+                    </button>
+                  </div>
+
+                  {/* Credentials Form */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const payload = {
+                        clientId: hrmsConfigForm.clientId,
+                        authUrl: hrmsConfigForm.authUrl,
+                        baseUrl: hrmsConfigForm.baseUrl,
+                      };
+                      if (hrmsConfigForm.clientSecret.trim()) payload.clientSecret = hrmsConfigForm.clientSecret.trim();
+                      if (hrmsConfigForm.webhookSecret.trim()) payload.webhookSecret = hrmsConfigForm.webhookSecret.trim();
+                      if (hrmsConfigForm.webhookSecretPrevious.trim()) payload.webhookSecretPrevious = hrmsConfigForm.webhookSecretPrevious.trim();
+                      saveHrmsConfigMutation.mutate(payload);
+                    }}
+                    className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2"
+                  >
+                    <div>
+                      <label className="field-label text-xs font-bold">Client ID</label>
+                      <input
+                        type="text"
+                        value={hrmsConfigForm.clientId}
+                        onChange={(e) => setHrmsConfigForm(f => ({ ...f, clientId: e.target.value }))}
+                        className="input font-mono text-xs"
+                        placeholder="ext_c002bbe65e374675b8d4dc33fbf25dd1"
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label text-xs font-bold flex items-center justify-between">
+                        <span>API Key (Key 1 / Key 2)</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${syncStatusData?.hasClientSecret ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                          {syncStatusData?.hasClientSecret ? '✓ Configured' : 'Not Set'}
+                        </span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={hrmsConfigForm.clientSecret}
+                        onChange={(e) => setHrmsConfigForm(f => ({ ...f, clientSecret: e.target.value }))}
+                        className="input font-mono text-xs"
+                        placeholder={syncStatusData?.hasClientSecret ? '•••••••• (leave blank to keep existing)' : 'Paste OfficePortal Key 1 here'}
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label text-xs font-bold flex items-center justify-between">
+                        <span>Webhook Signing Key (whsec_...)</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${syncStatusData?.hasWebhookSecret ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                          {syncStatusData?.hasWebhookSecret ? '✓ Configured' : 'Not Set'}
+                        </span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={hrmsConfigForm.webhookSecret}
+                        onChange={(e) => setHrmsConfigForm(f => ({ ...f, webhookSecret: e.target.value }))}
+                        className="input font-mono text-xs"
+                        placeholder={syncStatusData?.hasWebhookSecret ? '•••••••• (leave blank to keep existing)' : 'whsec_...'}
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label text-xs font-bold flex items-center justify-between">
+                        <span>Previous Webhook Key (Key Rotation, Optional)</span>
+                        <span className="flex items-center gap-1.5">
+                          {syncStatusData?.hasWebhookSecretPrevious && (
+                            <button
+                              type="button"
+                              onClick={() => saveHrmsConfigMutation.mutate({ webhookSecretPrevious: '' })}
+                              disabled={saveHrmsConfigMutation.isPending}
+                              className="text-[10px] text-rose-600 hover:text-rose-800 font-bold underline"
+                            >
+                              Clear
+                            </button>
+                          )}
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${syncStatusData?.hasWebhookSecretPrevious ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                            {syncStatusData?.hasWebhookSecretPrevious ? '✓ Set' : 'Optional'}
+                          </span>
+                        </span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={hrmsConfigForm.webhookSecretPrevious}
+                        onChange={(e) => setHrmsConfigForm(f => ({ ...f, webhookSecretPrevious: e.target.value }))}
+                        className="input font-mono text-xs"
+                        placeholder="whsec_... (previous key during rotation)"
+                      />
+                    </div>
+                    <div className="md:col-span-2 flex items-center justify-between pt-2">
+                      <p className="text-[11px] text-slate-500">
+                        Checkpoint: <span className="font-mono">{syncStatusData?.lastChangedAt || '2000-01-01T00:00:00Z'}</span>
+                      </p>
+                      <button
+                        type="submit"
+                        disabled={saveHrmsConfigMutation.isPending}
+                        className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-2 shadow-sm disabled:opacity-50"
+                      >
+                        {saveHrmsConfigMutation.isPending ? <Spinner size={14} className="text-white" /> : <KeyRound size={14} />}
+                        Save OfficePortal Credentials
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Recent Sync Logs */}
+                <div className="rounded-2xl bg-white border border-slate-200/80 shadow-md overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                    <h3 className="text-sm font-black text-slate-900">Recent Synchronization Runs</h3>
+                    <span className="text-xs text-slate-500">Auto-sync: Every 4 hours on Production</span>
+                  </div>
+                  {isLoadingSyncStatus ? (
+                    <div className="py-10 flex justify-center"><Spinner size={24} /></div>
+                  ) : (syncStatusData?.recentSyncLogs || []).length === 0 ? (
+                    <p className="py-10 text-center text-xs text-slate-400">No OfficePortal sync runs recorded yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="table w-full text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-[11px] uppercase text-slate-500 border-b border-slate-200">
+                            <th className="py-3 pl-6">Type</th>
+                            <th className="py-3">Status</th>
+                            <th className="py-3">Fetched</th>
+                            <th className="py-3">Inserted / Updated</th>
+                            <th className="py-3">Deactivated</th>
+                            <th className="py-3">Completed</th>
+                            <th className="py-3 pr-6">Error</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(syncStatusData?.recentSyncLogs || []).map((log) => (
+                            <tr key={log.id} className="hover:bg-slate-50/70">
+                              <td className="py-3 pl-6 font-bold uppercase text-slate-700">{log.sync_type}</td>
+                              <td className="py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  log.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                  log.status === 'FAILED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                                  'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}>
+                                  {log.status}
+                                </span>
+                              </td>
+                              <td className="py-3 font-mono">{log.records_fetched ?? 0}</td>
+                              <td className="py-3 font-mono">{log.records_inserted ?? 0} / {log.records_updated ?? 0}</td>
+                              <td className="py-3 font-mono">{log.records_deactivated ?? 0}</td>
+                              <td className="py-3 text-slate-500">{log.completed_at ? formatDateTime(log.completed_at) : 'In progress'}</td>
+                              <td className="py-3 pr-6 text-rose-600 max-w-xs truncate" title={log.error_message || ''}>{log.error_message || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Incoming Webhook Deliveries */}
+                <div className="rounded-2xl bg-white border border-slate-200/80 shadow-md overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                    <h3 className="text-sm font-black text-slate-900">Incoming OfficePortal Webhook Events</h3>
+                    <span className="text-xs text-slate-500">HMAC-SHA256 Verified (whsec_*)</span>
+                  </div>
+                  {isLoadingWebhookLogs ? (
+                    <div className="py-10 flex justify-center"><Spinner size={24} /></div>
+                  ) : (webhookLogsData?.logs || []).length === 0 ? (
+                    <p className="py-10 text-center text-xs text-slate-400">No webhook deliveries received yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="table w-full text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-[11px] uppercase text-slate-500 border-b border-slate-200">
+                            <th className="py-3 pl-6">Event Type(s)</th>
+                            <th className="py-3">Employee</th>
+                            <th className="py-3">Status</th>
+                            <th className="py-3">Occurred At</th>
+                            <th className="py-3 pr-6">Received At</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(webhookLogsData?.logs || []).map((wh) => (
+                            <tr key={wh.id} className="hover:bg-slate-50/70">
+                              <td className="py-3 pl-6 font-mono text-[11px] text-slate-700 max-w-xs truncate" title={wh.event_type}>{wh.event_type}</td>
+                              <td className="py-3 font-medium text-slate-800">
+                                {wh.full_name ? `${wh.full_name} (${wh.employee_code || '—'})` : (wh.employee_code || '—')}
+                              </td>
+                              <td className="py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  wh.status === 'PROCESSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                  wh.status === 'FAILED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                                  'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}>
+                                  {wh.status}
+                                </span>
+                              </td>
+                              <td className="py-3 text-slate-500">{wh.occurred_at ? formatDateTime(wh.occurred_at) : '—'}</td>
+                              <td className="py-3 pr-6 text-slate-500">{wh.received_at ? formatDateTime(wh.received_at) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </>
@@ -1535,200 +1902,6 @@ export default function AdminUsersPage() {
                 </p>
                 <p className="mt-2 text-red-700">
                   This department will not have anyone authorized to submit feedback on incidents until a new staff member is assigned.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* ─── ADD DEPARTMENT MODAL ─── */}
-      <Modal
-        open={showAddDeptModal}
-        onClose={() => {
-          if (!createDeptMutation.isPending) {
-            setShowAddDeptModal(false);
-          }
-        }}
-        title="Add New Hospital Department"
-        footer={
-          <>
-            <button
-              onClick={() => setShowAddDeptModal(false)}
-              disabled={createDeptMutation.isPending}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => createDeptMutation.mutate(newDeptForm)}
-              disabled={!newDeptForm.name.trim() || createDeptMutation.isPending}
-              className="btn-primary"
-            >
-              {createDeptMutation.isPending ? <Spinner size={15} className="text-white" /> : <Plus size={15} />}
-              Create Department
-            </button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <Alert
-            type="info"
-            message="Add a hospital department to the system directory. You can optionally designate an employee authorized to provide incident feedback."
-          />
-
-          <div>
-            <label className="field-label field-required font-bold">Department Name</label>
-            <input
-              type="text"
-              placeholder="e.g. Cardiology, Radiology, Pharmacy..."
-              value={newDeptForm.name}
-              onChange={(e) => setNewDeptForm((f) => ({ ...f, name: e.target.value }))}
-              className="input font-bold text-sm w-full"
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <label className="field-label font-bold">Assign Initial Feedback Staff (Optional)</label>
-            {!newDeptForm.employeeId ? (
-              <div className="relative mt-1">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={newDeptSearchTerm}
-                  onChange={(e) => setNewDeptSearchTerm(e.target.value)}
-                  placeholder="Search by staff name, ID, or department..."
-                  className="input pl-9 text-xs font-semibold w-full"
-                />
-                {newDeptSearchTerm.trim() && (
-                  <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-slate-100">
-                    {(() => {
-                      const term = newDeptSearchTerm.toLowerCase().trim();
-                      const matches = (masterEmployees || []).filter((e) => {
-                        const fullName = String(e.full_name || e.name || '').toLowerCase();
-                        const empId = String(e.employee_id || '').toLowerCase();
-                        const dept = String(e.department || '').toLowerCase();
-                        return fullName.includes(term) || empId.includes(term) || dept.includes(term);
-                      }).slice(0, 30);
-
-                      if (matches.length === 0) {
-                        return (
-                          <div className="p-3 text-xs text-slate-500 text-center font-medium">
-                            No employees found matching &quot;{newDeptSearchTerm}&quot;
-                          </div>
-                        );
-                      }
-
-                      return matches.map((emp) => (
-                        <div
-                          key={emp.employee_id || emp.id}
-                          className="p-2.5 hover:bg-amber-50 cursor-pointer transition-colors"
-                          onClick={() => {
-                            setNewDeptForm((f) => ({ ...f, employeeId: String(emp.employee_id) }));
-                            setNewDeptSearchTerm('');
-                          }}
-                        >
-                          <div className="flex items-center justify-between">
-                            <p className="font-bold text-xs text-slate-800">{emp.full_name || emp.name}</p>
-                            <span className="text-[10px] font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded font-bold">
-                              ID: {emp.employee_id}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-slate-400 mt-0.5">
-                            {emp.designation || 'Staff'} · {emp.department || 'Hospital Personnel'}
-                          </p>
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div>
-                {(() => {
-                  const emp = (masterEmployees || []).find((e) => String(e.employee_id) === String(newDeptForm.employeeId));
-                  return (
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between mt-1">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-extrabold text-xs flex items-center justify-center flex-shrink-0">
-                          {(emp?.full_name || emp?.name || 'E').charAt(0)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-slate-800 truncate">{emp?.full_name || emp?.name || newDeptForm.employeeId}</p>
-                          <p className="text-[10px] font-mono text-slate-500">ID: {newDeptForm.employeeId}</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setNewDeptForm((f) => ({ ...f, employeeId: '' }))}
-                        className="text-xs text-slate-600 hover:text-slate-900 font-bold px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors"
-                      >
-                        Change
-                      </button>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-        </div>
-      </Modal>
-
-      {/* ─── DELETE DEPARTMENT CONFIRMATION MODAL ─── */}
-      <Modal
-        open={showDeleteDeptModal}
-        onClose={() => {
-          if (!deleteDeptMutation.isPending) {
-            setShowDeleteDeptModal(false);
-            setDeptToDelete(null);
-          }
-        }}
-        title="Delete Hospital Department"
-        footer={
-          <>
-            <button
-              onClick={() => {
-                setShowDeleteDeptModal(false);
-                setDeptToDelete(null);
-              }}
-              disabled={deleteDeptMutation.isPending}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (deptToDelete?.id) {
-                  deleteDeptMutation.mutate(deptToDelete.id);
-                }
-              }}
-              disabled={deleteDeptMutation.isPending}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-red-500/20 transition-all disabled:opacity-60"
-            >
-              {deleteDeptMutation.isPending ? <Spinner size={14} className="text-white" /> : <Trash2 size={14} />}
-              Confirm Deletion
-            </button>
-          </>
-        }
-      >
-        {deptToDelete && (
-          <div className="space-y-4">
-            <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
-              <AlertTriangle className="text-red-600 mt-0.5 flex-shrink-0" size={20} />
-              <div className="text-xs text-red-900 leading-relaxed">
-                <p className="font-bold text-sm mb-1 text-red-950">
-                  Delete &quot;{deptToDelete.name}&quot;?
-                </p>
-                <p>
-                  Are you sure you want to permanently delete <strong className="font-extrabold">{deptToDelete.name}</strong> from the hospital department directory?
-                </p>
-                {deptToDelete.staffName && (
-                  <p className="mt-1 text-red-800">
-                    Currently assigned feedback staff ({deptToDelete.staffName}) will also be unmapped.
-                  </p>
-                )}
-                <p className="mt-2 text-red-700">
-                  Note: If this department has recorded incidents or historical feedback, deletion is prevented by system integrity rules to preserve audit trails.
                 </p>
               </div>
             </div>

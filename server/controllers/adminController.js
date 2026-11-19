@@ -1,12 +1,35 @@
 const { query } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
+const { isEmployeeLockedOut, extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
+
+const SECRET_CONFIG_KEYS = new Set([
+  'officeportal_client_secret',
+  'officeportal_webhook_secret',
+  'officeportal_webhook_secret_previous'
+]);
 
 exports.getSystemConfig = async (req, res) => {
   try {
     const result = await query('SELECT * FROM system_config ORDER BY key');
     const config = {};
-    result.rows.forEach(row => { config[row.key] = row.value; });
+    result.rows.forEach(row => {
+      if (SECRET_CONFIG_KEYS.has(row.key)) {
+        const hasVal = Boolean(row.value && String(row.value).trim());
+        if (row.key === 'officeportal_client_secret') {
+          config.has_client_secret = hasVal;
+          config.client_secret_masked = hasVal ? '••••••••' : '';
+        } else if (row.key === 'officeportal_webhook_secret') {
+          config.has_webhook_secret = hasVal;
+          config.webhook_secret_masked = hasVal ? '••••••••' : '';
+        } else if (row.key === 'officeportal_webhook_secret_previous') {
+          config.has_webhook_secret_previous = hasVal;
+          config.webhook_secret_previous_masked = hasVal ? '••••••••' : '';
+        }
+      } else {
+        config[row.key] = row.value;
+      }
+    });
     res.json(config);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch config' });
@@ -15,15 +38,39 @@ exports.getSystemConfig = async (req, res) => {
 
 exports.updateSystemConfig = async (req, res) => {
   try {
-    const updates = req.body;
+    const updates = req.body || {};
+    const sanitizedForAudit = {};
+    let touchedOfficePortal = false;
+
     for (const [key, value] of Object.entries(updates)) {
+      // Ignore synthetic masked indicator fields sent back from settings forms
+      if (key.startsWith('has_') || key.endsWith('_masked')) continue;
+
+      if (SECRET_CONFIG_KEYS.has(key)) {
+        // Never overwrite an existing secret with the UI mask placeholder
+        if (value === '••••••••' || value === undefined) continue;
+        sanitizedForAudit[key] = value ? '[REDACTED]' : '[CLEARED]';
+      } else {
+        sanitizedForAudit[key] = value;
+      }
+
+      if (key.startsWith('officeportal_')) {
+        touchedOfficePortal = true;
+      }
+
       await query(
         `INSERT INTO system_config (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW())
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-        [key, String(value), req.user.id]
+        [key, value === null ? '' : String(value), req.user.id]
       );
     }
-    await auditLog(req.user.id, 'CONFIG_UPDATED', null, updates, req.ip);
+
+    if (touchedOfficePortal) {
+      const officePortalService = require('../services/officePortalService');
+      officePortalService.clearCaches();
+    }
+
+    await auditLog(req.user.id, 'CONFIG_UPDATED', null, sanitizedForAudit, req.ip);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update config' });
@@ -159,15 +206,16 @@ async function getOrCreateUserFromMaster(employeeId, initialRole = 'employee') {
   }
 
   const masterEmp = masterRes.rows[0];
+  const shouldBeActive = !isEmployeeLockedOut(masterEmp.status, masterEmp.portal_access_disable_date);
+
   const defaultHash = await bcrypt.hash('123456', 12);
   const inserted = await query(
     `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (employee_id) DO UPDATE SET
        full_name = EXCLUDED.full_name,
        department = EXCLUDED.department,
-       designation = EXCLUDED.designation,
-       is_active = TRUE
+       designation = EXCLUDED.designation
      RETURNING *`,
     [
       masterEmp.employee_id,
@@ -176,6 +224,7 @@ async function getOrCreateUserFromMaster(employeeId, initialRole = 'employee') {
       masterEmp.department,
       masterEmp.designation,
       initialRole,
+      shouldBeActive,
       defaultHash
     ]
   );
@@ -521,6 +570,27 @@ exports.toggleUserActiveStatus = async (req, res) => {
 
     const newStatus = !userRes.rows[0].is_active;
 
+    if (newStatus === true) {
+      const hrmsRes = await query(
+        `SELECT status, portal_access_disable_date FROM master_employees WHERE employee_id = $1 LIMIT 1`,
+        [userRes.rows[0].employee_id]
+      );
+      if (hrmsRes.rows.length > 0) {
+        const { status, portal_access_disable_date } = hrmsRes.rows[0];
+        const disableDateStr = extractCalendarDate(portal_access_disable_date);
+        if (['terminated', 'inactive', 'deleted'].includes(status)) {
+          return res.status(400).json({
+            error: `Cannot activate user: HRMS status is currently "${status}". Update employment status in OfficePortal first.`
+          });
+        }
+        if (disableDateStr && disableDateStr <= getTodayDateString()) {
+          return res.status(400).json({
+            error: `Cannot activate user: OfficePortal portal access was disabled on ${disableDateStr}.`
+          });
+        }
+      }
+    }
+
     await query('UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2', [newStatus, id]);
 
     await auditLog(req.user.id, 'USER_STATUS_TOGGLED', null, { targetUser: id, newStatus }, req.ip);
@@ -803,55 +873,10 @@ exports.removeDepartmentLeader = async (req, res) => {
 };
 
 exports.createDepartment = async (req, res) => {
-  try {
-    const { name, employeeId } = req.body;
-    if (!name || !name.trim()) {
-      return res.status(400).json({ error: 'Department name is required.' });
-    }
-    const trimmedName = name.trim();
-
-    // Check duplicate department name case-insensitively
-    const dupCheck = await query(
-      `SELECT id FROM departments WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))`,
-      [trimmedName]
-    );
-    if (dupCheck.rows.length > 0) {
-      return res.status(400).json({ error: `A department named "${trimmedName}" already exists.` });
-    }
-
-    let assignedUserId = null;
-    let assignedStaff = null;
-    if (employeeId && String(employeeId).trim()) {
-      assignedStaff = await getOrCreateUserFromMaster(String(employeeId).trim(), 'employee');
-      if (assignedStaff) {
-        assignedUserId = assignedStaff.id;
-      }
-    }
-
-    const insertRes = await query(
-      `INSERT INTO departments (name, assigned_user_id, hod_user_id)
-       VALUES ($1, $2, $2)
-       RETURNING *`,
-      [trimmedName, assignedUserId]
-    );
-    const newDept = insertRes.rows[0];
-
-    await auditLog(req.user.id, 'DEPARTMENT_CREATED', null, {
-      departmentId: newDept.id,
-      departmentName: newDept.name,
-      assignedUserId,
-      assignedEmployeeId: assignedStaff?.employee_id || null
-    }, req.ip);
-
-    res.json({
-      success: true,
-      message: `Department "${trimmedName}" created successfully.`,
-      department: newDept
-    });
-  } catch (error) {
-    console.error('Error in createDepartment:', error);
-    res.status(500).json({ error: 'Failed to create department.' });
-  }
+  return res.status(405).json({
+    error: 'Manual department creation is disabled. Departments are synchronized exclusively from OfficePortal HRMS API.',
+    code: 'HRMS_MANAGED_READ_ONLY'
+  });
 };
 
 exports.deleteDepartment = async (req, res) => {
@@ -861,9 +886,15 @@ exports.deleteDepartment = async (req, res) => {
       return res.status(400).json({ error: 'Department ID is required.' });
     }
 
-    const deptRes = await query(`SELECT id, name FROM departments WHERE id = $1`, [departmentId]);
+    const deptRes = await query(`SELECT id, name, is_hrms_synced FROM departments WHERE id = $1`, [departmentId]);
     if (!deptRes.rows.length) {
       return res.status(404).json({ error: 'Department not found.' });
+    }
+    if (deptRes.rows[0].is_hrms_synced) {
+      return res.status(405).json({
+        error: 'Departments synchronized from OfficePortal HRMS cannot be deleted manually. Manage departments in OfficePortal HRMS.',
+        code: 'HRMS_MANAGED_READ_ONLY'
+      });
     }
     const deptName = deptRes.rows[0].name;
 
@@ -933,17 +964,27 @@ exports.getSystemHealth = async (req, res) => {
 
 exports.getMasterData = async (req, res) => {
   try {
-    const [depts, mainLocs, subLocs, desigs] = await Promise.all([
-      query('SELECT * FROM departments ORDER BY name'),
+    const [depts, mainLocs, subLocs, desigs, empTypes] = await Promise.all([
+      query('SELECT * FROM departments WHERE is_hrms_synced = TRUE ORDER BY name'),
       query('SELECT * FROM main_locations ORDER BY name'),
       query('SELECT * FROM sub_locations ORDER BY name'),
-      query('SELECT * FROM designations ORDER BY title')
+      query(`
+        SELECT DISTINCT name AS title
+        FROM (
+          SELECT TRIM(name) AS name FROM hrms_job_titles WHERE name IS NOT NULL AND TRIM(name) != ''
+          UNION
+          SELECT TRIM(designation) AS name FROM master_employees WHERE designation IS NOT NULL AND TRIM(designation) != '' AND office_portal_id IS NOT NULL
+        ) t
+        ORDER BY title ASC
+      `),
+      query('SELECT employment_type_id, name FROM hrms_employment_types WHERE name IS NOT NULL ORDER BY name ASC')
     ]);
     res.json({
       departments: depts.rows,
       mainLocations: mainLocs.rows,
       subLocations: subLocs.rows,
-      designations: desigs.rows
+      designations: desigs.rows,
+      employmentTypes: empTypes.rows
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch master data' });
@@ -958,36 +999,47 @@ exports.searchEmployeeProfile = async (req, res) => {
     }
 
     const includeTerminated = req.query.include_terminated === 'true';
-    const statusCondition = includeTerminated ? '' : "AND COALESCE(m.status, 'active') != 'terminated'";
+    const statusCondition = includeTerminated
+      ? ''
+      : "AND COALESCE(m.status, 'active') NOT IN ('terminated', 'inactive', 'deleted')";
 
-    // Search both master_employees and users using pg_trgm and indexes
+    // Search both master_employees and users using pg_trgm and indexes, prioritizing exact employee_id match
     const userResult = await query(
-      `SELECT DISTINCT ON (COALESCE(u.employee_id, m.employee_id))
-         COALESCE(u.id::text, m.id::text) as id,
-         COALESCE(u.employee_id, m.employee_id) as employee_id,
-         COALESCE(u.full_name, m.name) as full_name,
-         COALESCE(u.email, m.email) as email,
-         COALESCE(u.phone, m.phone) as phone,
-         COALESCE(u.department, m.department) as department,
-         COALESCE(u.designation, m.designation) as designation,
-         COALESCE(u.role, m.role, 'employee') as role,
-         COALESCE(m.status, 'active') as status,
-         m.office_location,
-         m.notice_period_end_date,
-         COALESCE(u.is_imc_member, false) as is_imc_member,
-         COALESCE(u.is_imc_lead, false) as is_imc_lead,
-         CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered
-       FROM master_employees m
-       FULL OUTER JOIN users u ON u.employee_id = m.employee_id
-       WHERE (
-         COALESCE(u.employee_id, m.employee_id) ILIKE $1 
-         OR COALESCE(u.full_name, m.name) ILIKE $2
-         OR COALESCE(u.department, m.department) ILIKE $3
-       )
-       ${statusCondition}
-       ORDER BY COALESCE(u.employee_id, m.employee_id), COALESCE(u.full_name, m.name) ASC
+      `SELECT * FROM (
+         SELECT DISTINCT ON (COALESCE(u.employee_id, m.employee_id))
+           COALESCE(u.id::text, m.id::text) as id,
+           COALESCE(u.employee_id, m.employee_id) as employee_id,
+           COALESCE(u.full_name, m.name) as full_name,
+           COALESCE(u.email, m.email) as email,
+           COALESCE(u.phone, m.phone) as phone,
+           COALESCE(u.department, m.department) as department,
+           COALESCE(u.designation, m.designation) as designation,
+           COALESCE(u.role, m.role, 'employee') as role,
+           COALESCE(m.status, 'active') as status,
+           m.office_location,
+           m.employment_type_name,
+           m.manager_id,
+           mgr.name as manager_name,
+           mgr.employee_id as manager_employee_id,
+           m.notice_period_end_date,
+           m.portal_access_disable_date,
+           COALESCE(u.is_imc_member, false) as is_imc_member,
+           COALESCE(u.is_imc_lead, false) as is_imc_lead,
+           CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered
+         FROM master_employees m
+         FULL OUTER JOIN users u ON u.employee_id = m.employee_id
+         LEFT JOIN master_employees mgr ON m.manager_id IS NOT NULL AND mgr.office_portal_id = m.manager_id::text
+         WHERE (
+           COALESCE(u.employee_id, m.employee_id) ILIKE $1 
+           OR COALESCE(u.full_name, m.name) ILIKE $2
+           OR COALESCE(u.department, m.department) ILIKE $3
+         )
+         ${statusCondition}
+         ORDER BY COALESCE(u.employee_id, m.employee_id), COALESCE(u.full_name, m.name) ASC
+       ) sub
+       ORDER BY (LOWER(sub.employee_id) = LOWER($4)) DESC, sub.full_name ASC
        LIMIT 20`,
-      [`%${term}%`, `%${term}%`, `%${term}%`]
+      [`%${term}%`, `%${term}%`, `%${term}%`, term]
     );
 
     if (userResult.rows.length === 0) {
@@ -1347,10 +1399,10 @@ exports.getWebhookLogs = async (req, res) => {
     const offset = parseInt(req.query.offset || '0', 10);
 
     const result = await query(`
-      SELECT id, event_id, event_type, signature_verified, status, error_message, processed_at, received_at,
-             payload->'events'->0->>'occurredAt' as occurred_at,
-             payload->'events'->0->'data'->>'employeeCode' as employee_code,
-             payload->'events'->0->'data'->>'fullName' as full_name
+      SELECT id, event_id, delivery_id, event_type, signature_verified, status, error_message, processed_at, received_at,
+             COALESCE(occurred_at, (payload->>'occurredAt')::timestamptz, (payload->'events'->0->>'occurredAt')::timestamptz) as occurred_at,
+             COALESCE(payload->'data'->>'employeeCode', payload->'events'->0->'data'->>'employeeCode') as employee_code,
+             COALESCE(payload->'data'->>'fullName', payload->'events'->0->'data'->>'fullName') as full_name
       FROM hrms_webhook_events
       ORDER BY received_at DESC
       LIMIT $1 OFFSET $2

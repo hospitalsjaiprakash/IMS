@@ -204,19 +204,23 @@ async function checkAndAutoEscalate21Days() {
 }
 
 /**
- * Scheduled HRMS delta reconciliation cron (runs every hour at minute 0)
+ * Scheduled HRMS delta reconciliation cron (default: every 4 hours on Production;
+ * disabled when HRMS_CRON_ENABLED=false such as on Staging to conserve shared quota)
  */
 async function scheduleHrmsDeltaSync() {
+  if (String(process.env.HRMS_CRON_ENABLED || 'true').toLowerCase() === 'false') {
+    return;
+  }
   try {
     const { syncDeltaChanges, getConfig } = require('./officePortalService');
     const config = await getConfig();
     if (config.clientId && config.clientSecret) {
-      console.log('[CRON] Executing hourly HRMS delta change feed sync...');
+      console.log('[CRON] Executing scheduled HRMS delta change feed sync...');
       const result = await syncDeltaChanges();
       console.log(`[CRON] HRMS delta sync completed: fetched ${result.totalFetched}, inserted ${result.totalInserted}, updated ${result.totalUpdated}, deactivated ${result.totalDeactivated}`);
     }
   } catch (err) {
-    console.error('[CRON] Error during hourly HRMS delta sync:', err.message);
+    console.error('[CRON] Error during scheduled HRMS delta sync:', err.message);
   }
 }
 
@@ -226,10 +230,13 @@ cron.schedule('0 8 * * *', () => {
   checkAndAutoEscalate21Days();
 });
 
-// Hourly Change Feed delta sync at minute 0 of every hour
-cron.schedule('0 * * * *', () => {
-  scheduleHrmsDeltaSync();
-});
+// Change Feed delta sync every 4 hours (costing ~6 API calls/day on Production)
+if (String(process.env.HRMS_CRON_ENABLED || 'true').toLowerCase() !== 'false') {
+  const hrmsSchedule = process.env.HRMS_SYNC_CRON || '0 */4 * * *';
+  cron.schedule(hrmsSchedule, () => {
+    scheduleHrmsDeltaSync();
+  });
+}
 
 module.exports = { processHodEscalations, checkAndAutoEscalate21Days, scheduleHrmsDeltaSync };
 

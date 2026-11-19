@@ -6,36 +6,6 @@ const { sendEmail, templates } = require('../utils/emailService');
 const { checkAndAutoEscalate21Days } = require('../services/cronService');
 const { recordEvent, linkAttachmentsToEvent } = require('../utils/incidentEvents');
 
-const categoryDepartmentMapping = {
-  'Asset Related': 'Asset',
-  'Billing Related': 'Finance and Accounts',
-  'Security Related': 'Security Services',
-  'Biomedical Related': 'Bio-Medical',
-  'Blood Bank Related': 'Blood Centre',
-  'Facility Related': 'Facility',
-  'Doctor Related': 'Medical Services',
-  'Consent Related': 'Medical Services',
-  'CSSD Related': 'Nursing Services',
-  'Food and Beverages': 'Food and Beverages',
-  'General Maintenance related': 'General Maintenance',
-  'Hospital Emergency Codes Related': 'Medical Services',
-  'HR Related': 'Human Resource',
-  'Housekeeping Related': 'Housekeeping',
-  'Infection Control Related': 'Infection Control and Microbiology',
-  'Lab Related': 'Lab Medicine',
-  'Laundry and Linen related': 'Linen and Laundry',
-  'Medication Related': 'Medical Services',
-  'Nursing Care Related': 'Nursing Services',
-  'Purchase Related': 'Purchase',
-  'Radiology Related': 'Radiology',
-  'Store Related': 'Stores',
-  'Software/Hardware Related': 'Digital Communications',
-  'Surgery or Procedure Related': 'Medical Services',
-  'Nursing Document Related': 'Nursing Services',
-  'Vehicle and Ambulance Related': 'Ambulance / Travel / Transport',
-  'Accommodation Related': 'Facility'
-};
-
 // =============================================
 // CREATE INCIDENT
 // =============================================
@@ -45,7 +15,7 @@ exports.createIncident = async (req, res) => {
     await client.query('BEGIN');
 
     let {
-      departmentIds, incidentDate, incidentTime,
+      departmentIds, derivedDepartments, incidentDate, incidentTime,
       mainLocationId, subLocationText,
       occurredTo, incidentCategory, incidentType, description,
       hasResponsiblePerson, responsiblePersonName, incidentCategories
@@ -92,22 +62,43 @@ exports.createIncident = async (req, res) => {
     }
 
     if (typeof departmentIds === 'string') departmentIds = JSON.parse(departmentIds);
+    if (typeof derivedDepartments === 'string') derivedDepartments = JSON.parse(derivedDepartments);
     if (typeof incidentCategories === 'string') incidentCategories = JSON.parse(incidentCategories);
     hasResponsiblePerson = hasResponsiblePerson === 'true' || hasResponsiblePerson === true;
 
-    // Automatically derive departmentIds if missing
-    if (!departmentIds || departmentIds.length === 0) {
-      const catsToMap = incidentCategories && incidentCategories.length > 0 ? incidentCategories : (incidentCategory ? [incidentCategory] : []);
-      const deptNames = [...new Set(catsToMap.map(c => categoryDepartmentMapping[c]).filter(Boolean))];
-      
-      if (deptNames.length > 0) {
-        const deptQuery = await client.query('SELECT id FROM departments WHERE name = ANY($1)', [deptNames]);
-        departmentIds = deptQuery.rows.map(r => r.id);
+    // STRICT 100% API-driven departments: resolve ONLY against HRMS-synced departments (zero hardcoded map)
+    let resolvedDeptIds = [];
+    if (Array.isArray(departmentIds) && departmentIds.length > 0) {
+      const numericIds = departmentIds.map((id) => parseInt(id, 10)).filter((n) => Number.isInteger(n) && n > 0);
+      if (numericIds.length > 0) {
+        const deptQuery = await client.query(
+          `SELECT id FROM departments WHERE id = ANY($1::int[]) AND is_hrms_synced = TRUE`,
+          [numericIds]
+        );
+        resolvedDeptIds = deptQuery.rows.map((r) => r.id);
       }
     }
 
+    // Fallback: resolve by exact API-synced department names if caller supplied derivedDepartments
+    if (resolvedDeptIds.length === 0 && Array.isArray(derivedDepartments) && derivedDepartments.length > 0) {
+      const cleanNames = [...new Set(derivedDepartments.map((d) => String(d || '').trim().toLowerCase()).filter(Boolean))];
+      if (cleanNames.length > 0) {
+        const deptQuery = await client.query(
+          `SELECT id FROM departments WHERE LOWER(TRIM(name)) = ANY($1::text[]) AND is_hrms_synced = TRUE`,
+          [cleanNames]
+        );
+        resolvedDeptIds = deptQuery.rows.map((r) => r.id);
+      }
+    }
+
+    departmentIds = resolvedDeptIds;
+
     if (!departmentIds || !departmentIds.length) {
-      return res.status(400).json({ error: 'Could not determine the responsible department for the selected categories.' });
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Please select at least one valid OfficePortal HRMS department for this incident.',
+        code: 'DEPARTMENT_REQUIRED'
+      });
     }
 
     // Generate reference ID

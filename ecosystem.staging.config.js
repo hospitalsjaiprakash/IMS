@@ -12,6 +12,7 @@ module.exports = {
         NODE_ENV: 'staging',
         PORT: 5002,
         HOST: '127.0.0.1',
+        HRMS_CRON_ENABLED: 'false',
       },
       watch: false,
       max_memory_restart: '300M',

@@ -44,6 +44,12 @@ const migrations = [
   '029_incident_events_journal.sql',
   '030_responsible_employee_training_columns.sql',
   '031_hrms_integration_and_department_reviewers.sql',
+  '032_cluster_safe_otps.sql',
+  '033_hrms_trigram_and_vendor_columns.sql',
+  '034_admin_and_workflow_fixes.sql',
+  '035_allow_any_employee_reviewer.sql',
+  '036_hrms_v1_complete_integration.sql',
+  '037_hrms_v1_text_columns_hardening.sql',
 ];
 
 function splitSqlStatements(sql) {

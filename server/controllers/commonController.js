@@ -21,7 +21,7 @@ exports.getLocations = async (req, res) => {
 };
 
 /**
- * Get departments with leaders
+ * Get departments with leaders (STRICT: 100% API-driven — returns ONLY departments fetched via OfficePortal HRMS API)
  */
 exports.getDepartments = async (req, res) => {
   try {
@@ -42,12 +42,52 @@ exports.getDepartments = async (req, res) => {
        LEFT JOIN users u1 ON u1.id = d.hod_user_id
        LEFT JOIN users u2 ON u2.id = d.incharge_user_id
        LEFT JOIN users u3 ON u3.id = d.asst_coo_user_id
+       WHERE d.is_hrms_synced = TRUE
        ORDER BY d.name`
     );
     res.json(result.rows);
   } catch (e) {
     console.error('[GET /departments] error:', e);
     res.status(500).json({ error: 'Failed to retrieve departments' });
+  }
+};
+
+/**
+ * Get designations / job titles exclusively from synced OfficePortal HRMS records
+ */
+exports.getDesignations = async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT DISTINCT name
+      FROM (
+        SELECT TRIM(name) AS name FROM hrms_job_titles WHERE name IS NOT NULL AND TRIM(name) != ''
+        UNION
+        SELECT TRIM(designation) AS name FROM master_employees WHERE designation IS NOT NULL AND TRIM(designation) != '' AND office_portal_id IS NOT NULL
+      ) t
+      ORDER BY name ASC
+    `);
+    res.json(result.rows.map((r) => r.name));
+  } catch (e) {
+    console.error('[GET /departments/designations] error:', e);
+    res.status(500).json({ error: 'Failed to retrieve designations' });
+  }
+};
+
+/**
+ * Get employment types synced from OfficePortal HRMS API
+ */
+exports.getEmploymentTypes = async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT employment_type_id, name, synced_at
+       FROM hrms_employment_types
+       WHERE name IS NOT NULL AND TRIM(name) != ''
+       ORDER BY name ASC`
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('[GET /departments/employment-types] error:', e);
+    res.status(500).json({ error: 'Failed to retrieve employment types' });
   }
 };
 

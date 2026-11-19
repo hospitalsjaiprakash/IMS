@@ -3,10 +3,49 @@ const bcrypt = require('bcryptjs');
 const { query } = require('../config/database');
 const { auditLog } = require('../middleware/auth');
 const { sendEmail } = require('../utils/emailService');
+const { extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
 
 // ─── Helper: Check if account is a generic system account (not an employee) ─
 const isGenericSystemAccount = (empId) => {
   return ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(String(empId || '').trim().toUpperCase());
+};
+
+// ─── Helper: Check HRMS lifecycle access (terminated / inactive / deleted / portalAccessDisableDate) ─
+const checkMasterLifecycleAccess = async (employeeId) => {
+  const empCode = String(employeeId || '').trim().toUpperCase();
+  if (!empCode || isGenericSystemAccount(empCode)) {
+    return { allowed: true };
+  }
+  try {
+    const res = await query(
+      `SELECT status, portal_access_disable_date FROM master_employees WHERE employee_id = $1 LIMIT 1`,
+      [empCode]
+    );
+    if (!res.rows.length) return { allowed: true };
+    const { status, portal_access_disable_date } = res.rows[0];
+    if (['terminated', 'inactive', 'deleted'].includes(status)) {
+      const label = status === 'inactive' ? 'inactive' : 'terminated';
+      return {
+        allowed: false,
+        code: status === 'inactive' ? 'EMPLOYEE_INACTIVE' : 'EMPLOYEE_TERMINATED',
+        error: `Access denied. This employee record is marked as ${label} in HRMS.`
+      };
+    }
+    if (portal_access_disable_date) {
+      const disableDate = extractCalendarDate(portal_access_disable_date);
+      const today = getTodayDateString();
+      if (disableDate && disableDate <= today) {
+        return {
+          allowed: false,
+          code: 'PORTAL_ACCESS_DISABLED',
+          error: 'Access denied. Portal access for this employee has been disabled in HRMS.'
+        };
+      }
+    }
+    return { allowed: true };
+  } catch (err) {
+    return { allowed: true };
+  }
 };
 
 // ─── Helper: Check if user is HOD based on role or designation ──────────────
@@ -122,7 +161,7 @@ exports.requestRegistrationOtp = async (req, res) => {
 
     // Check if employee ID already has a password set (already registered)
     const existing = await query(
-      'SELECT id, employee_id, password_hash, full_name FROM users WHERE employee_id = $1',
+      'SELECT id, employee_id, password_hash, full_name, is_active FROM users WHERE employee_id = $1',
       [employeeId.trim()]
     );
 
@@ -133,14 +172,20 @@ exports.requestRegistrationOtp = async (req, res) => {
       });
     }
 
-    // If user exists in DB (pre-seeded from office portal), validate name match
+    // If user exists in DB (pre-seeded from office portal), validate lifecycle & name match
     if (existing.rows.length > 0) {
       const dbUser = existing.rows[0];
-      const masterCheck = await query('SELECT status FROM master_employees WHERE employee_id = $1', [employeeId.trim()]).catch(() => ({ rows: [] }));
-      if (masterCheck.rows[0]?.status === 'terminated') {
+      const lifecycle = await checkMasterLifecycleAccess(employeeId.trim());
+      if (!lifecycle.allowed) {
         return res.status(403).json({
-          error: 'Registration is not permitted. This employee record is marked as terminated.',
-          code: 'EMPLOYEE_TERMINATED'
+          error: lifecycle.error,
+          code: lifecycle.code
+        });
+      }
+      if (dbUser.is_active === false) {
+        return res.status(403).json({
+          error: 'Account deactivated. Please contact the System Administrator or HR.',
+          code: 'ACCOUNT_DEACTIVATED'
         });
       }
 
@@ -157,15 +202,16 @@ exports.requestRegistrationOtp = async (req, res) => {
       let portalData = null;
       try {
         const masterRes = await query(
-          'SELECT employee_id, name, status FROM master_employees WHERE employee_id = $1',
+          'SELECT employee_id, name, status, portal_access_disable_date FROM master_employees WHERE employee_id = $1',
           [employeeId.trim()]
         );
         if (masterRes.rows.length > 0) {
           portalData = masterRes.rows[0];
-          if (portalData.status === 'terminated') {
+          const lifecycle = await checkMasterLifecycleAccess(employeeId.trim());
+          if (!lifecycle.allowed) {
             return res.status(403).json({
-              error: 'Registration is not permitted. This employee record is marked as terminated.',
-              code: 'EMPLOYEE_TERMINATED'
+              error: lifecycle.error,
+              code: lifecycle.code
             });
           }
         }
@@ -223,6 +269,15 @@ exports.register = async (req, res) => {
     const isValid = await verifyOtp(employeeId.trim(), 'registration', otp.trim());
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid or expired OTP.' });
+    }
+
+    // Lifecycle check before completing registration
+    const regLifecycle = await checkMasterLifecycleAccess(employeeId.trim());
+    if (!regLifecycle.allowed) {
+      return res.status(403).json({
+        error: regLifecycle.error,
+        code: regLifecycle.code
+      });
     }
 
     // Check if employee ID already has a password set (already registered)
@@ -390,16 +445,12 @@ exports.login = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      // Check if employee exists in HRMS master records
-      const masterCheck = await query(
-        'SELECT status, termination_date FROM master_employees WHERE employee_id = $1',
-        [employeeId.trim()]
-      ).catch(() => ({ rows: [] }));
-
-      if (masterCheck.rows[0]?.status === 'terminated') {
+      // Check if employee exists in HRMS master records with blocked lifecycle state
+      const lifecycle = await checkMasterLifecycleAccess(employeeId.trim());
+      if (!lifecycle.allowed) {
         return res.status(403).json({
-          error: 'Access denied. Your employment status is recorded as terminated.',
-          code: 'EMPLOYEE_TERMINATED'
+          error: lifecycle.error,
+          code: lifecycle.code
         });
       }
 
@@ -411,20 +462,21 @@ exports.login = async (req, res) => {
 
     const user = result.rows[0];
 
-    // Check if account is active
-    if (user.is_active === false) {
-      return res.status(401).json({
-        error: 'Account deactivated. Please contact Digital Communications department.',
-        code: 'ACCOUNT_DEACTIVATED'
+    // Lifecycle check FIRST: block login with accurate 403 HRMS reason if employee is terminated,
+    // inactive, deleted, or portalAccessDisableDate <= today (hospital local date)
+    const loginLifecycle = await checkMasterLifecycleAccess(user.employee_id);
+    if (!loginLifecycle.allowed) {
+      return res.status(403).json({
+        error: loginLifecycle.error,
+        code: loginLifecycle.code
       });
     }
 
-    // Lifecycle check: block login if employee status is marked as terminated in master records
-    const masterCheck = await query('SELECT status FROM master_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
-    if (masterCheck.rows[0]?.status === 'terminated') {
-      return res.status(403).json({
-        error: 'Access denied. Your employment status is recorded as terminated.',
-        code: 'EMPLOYEE_TERMINATED'
+    // Check if account was manually deactivated by System Admin
+    if (user.is_active === false) {
+      return res.status(401).json({
+        error: 'Account deactivated. Please contact the System Administrator or HR.',
+        code: 'ACCOUNT_DEACTIVATED'
       });
     }
 

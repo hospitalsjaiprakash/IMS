@@ -12,6 +12,11 @@ types.setTypeParser(1114, function(stringValue) {
   return new Date(stringValue + 'Z');
 });
 
+// Keep PostgreSQL DATE (OID 1082) as raw 'YYYY-MM-DD' calendar strings to avoid IST/UTC 1-day shifts
+types.setTypeParser(1082, function(stringValue) {
+  return stringValue;
+});
+
 const poolConfig = {
   max: 20,
   idleTimeoutMillis: 30000,
@@ -67,12 +72,14 @@ const query = async (text, params) => {
 
 const getClient = () => pool.connect();
 
-// Auto-check schema enhancements for department mappings & phone columns
+// Auto-check schema enhancements for department mappings & HRMS v1 columns (idempotent, no duplicate constraints)
 pool.query(`
   ALTER TABLE departments
-  ADD COLUMN IF NOT EXISTS incharge_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS asst_coo_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS assigned_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS incharge_user_id UUID,
+  ADD COLUMN IF NOT EXISTS asst_coo_user_id UUID,
+  ADD COLUMN IF NOT EXISTS assigned_user_id UUID,
+  ADD COLUMN IF NOT EXISTS office_portal_department_id UUID,
+  ADD COLUMN IF NOT EXISTS is_hrms_synced BOOLEAN NOT NULL DEFAULT FALSE;
 
   UPDATE departments
   SET assigned_user_id = COALESCE(hod_user_id, incharge_user_id)
@@ -83,15 +90,34 @@ pool.query(`
 
   ALTER TABLE master_employees
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20),
-  ADD COLUMN IF NOT EXISTS office_portal_id VARCHAR(64) UNIQUE,
+  ADD COLUMN IF NOT EXISTS office_portal_id VARCHAR(64),
   ADD COLUMN IF NOT EXISTS first_name VARCHAR(100),
   ADD COLUMN IF NOT EXISTS last_name VARCHAR(100),
   ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'active',
   ADD COLUMN IF NOT EXISTS office_location VARCHAR(128),
   ADD COLUMN IF NOT EXISTS date_of_joining DATE,
   ADD COLUMN IF NOT EXISTS termination_date DATE,
+  ADD COLUMN IF NOT EXISTS department_id UUID,
+  ADD COLUMN IF NOT EXISTS job_title_id INTEGER,
+  ADD COLUMN IF NOT EXISTS office_location_id INTEGER,
+  ADD COLUMN IF NOT EXISTS employment_type_id INTEGER,
+  ADD COLUMN IF NOT EXISTS employment_type_name VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS manager_id UUID,
+  ADD COLUMN IF NOT EXISTS portal_access_disable_date DATE,
   ADD COLUMN IF NOT EXISTS raw_payload JSONB,
   ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+  CREATE TABLE IF NOT EXISTS hrms_job_titles (
+    job_title_id INTEGER PRIMARY KEY,
+    name TEXT,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS hrms_employment_types (
+    employment_type_id INTEGER PRIMARY KEY,
+    name TEXT,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  );
 
   CREATE TABLE IF NOT EXISTS department_reviewers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -108,7 +134,9 @@ pool.query(`
   CREATE TABLE IF NOT EXISTS hrms_webhook_events (
     id SERIAL PRIMARY KEY,
     event_id VARCHAR(128) UNIQUE NOT NULL,
-    event_type VARCHAR(64) NOT NULL,
+    event_type TEXT NOT NULL,
+    delivery_id VARCHAR(128),
+    occurred_at TIMESTAMP WITH TIME ZONE,
     payload JSONB NOT NULL,
     signature_verified BOOLEAN NOT NULL DEFAULT false,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
@@ -121,7 +149,8 @@ pool.query(`
     id SERIAL PRIMARY KEY,
     sync_type VARCHAR(32) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'IN_PROGRESS',
-    delta_cursor VARCHAR(255),
+    delta_cursor TEXT,
+    last_changed_at TIMESTAMP WITH TIME ZONE,
     records_fetched INTEGER DEFAULT 0,
     records_inserted INTEGER DEFAULT 0,
     records_updated INTEGER DEFAULT 0,

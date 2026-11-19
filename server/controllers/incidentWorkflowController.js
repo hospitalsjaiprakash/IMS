@@ -23,6 +23,13 @@ function formatProposedOutcome(outcome) {
   return String(outcome);
 }
 
+const { isEmployeeLockedOut } = require('../services/officePortalService');
+
+function isMasterEmployeeActive(m) {
+  if (!m) return false;
+  return !isEmployeeLockedOut(m.status, m.portal_access_disable_date);
+}
+
 async function resolveEmployeeUserId(emp, client) {
   if (!emp) return null;
   const candidates = [
@@ -44,7 +51,7 @@ async function resolveEmployeeUserId(emp, client) {
     }
   }
 
-  // 2. Check master_employees and provision if needed
+  // 2. Check master_employees and provision skeleton record preserving HRMS active status
   for (const candidate of candidates) {
     const mRes = await client.query(
       `SELECT * FROM master_employees WHERE id::text = $1 OR employee_id = $1 LIMIT 1`,
@@ -52,12 +59,13 @@ async function resolveEmployeeUserId(emp, client) {
     );
     if (mRes.rows.length > 0) {
       const m = mRes.rows[0];
+      const shouldBeActive = isMasterEmployeeActive(m);
       const nu = await client.query(
         `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-         VALUES ($1, $2, $3, $4, $5, 'employee', TRUE, NULL)
+         VALUES ($1, $2, $3, $4, $5, 'employee', $6, NULL)
          ON CONFLICT (employee_id) DO UPDATE SET full_name = EXCLUDED.full_name
          RETURNING id`,
-        [m.employee_id, m.name, m.email || `${m.employee_id}@jphrc.org`, m.department, m.designation]
+        [m.employee_id, m.name, m.email || `${m.employee_id}@jphrc.org`, m.department, m.designation, shouldBeActive]
       );
       if (nu.rows.length > 0) {
         return nu.rows[0].id;
@@ -1205,14 +1213,14 @@ async function resolveAndValidateInvestigators(investigatorIds, queryFn = query)
     );
     if (mRes.rows.length) {
       const mEmp = mRes.rows[0];
+      const shouldBeActive = isMasterEmployeeActive(mEmp);
       const newUserRes = await queryFn(
         `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, TRUE, NULL)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
          ON CONFLICT (employee_id) DO UPDATE SET
            full_name = EXCLUDED.full_name,
            department = EXCLUDED.department,
-           designation = EXCLUDED.designation,
-           is_active = TRUE
+           designation = EXCLUDED.designation
          RETURNING id, full_name, email, role, is_imc_member, is_imc_lead`,
         [
           mEmp.employee_id,
@@ -1220,7 +1228,8 @@ async function resolveAndValidateInvestigators(investigatorIds, queryFn = query)
           mEmp.email || `${mEmp.employee_id}@jphrc.org`,
           mEmp.department,
           mEmp.designation,
-          mEmp.role || 'employee'
+          mEmp.role || 'employee',
+          shouldBeActive
         ]
       );
       if (newUserRes.rows.length) {

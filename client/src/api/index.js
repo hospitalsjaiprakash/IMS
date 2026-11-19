@@ -28,11 +28,13 @@ authApi_axios.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 globally — clear token and redirect to login
+// Handle 401 and 403 ACCOUNT_DISABLED globally — clear token and redirect to login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status;
+    const code = err.response?.data?.code;
+    if (status === 401 || (status === 403 && code === 'ACCOUNT_DISABLED')) {
       const url = err.config?.url || '';
       if (
         url.includes('/auth/login') ||
@@ -117,16 +119,12 @@ export const notificationsApi = {
   markRead: (id) => api.put(`/notifications/${id}/read`),
 };
 
-// ── Locations, Departments ────────────────────────
+// ── Locations, Departments (100% HRMS API-driven) ──
 export const metaApi = {
   locations: () => api.get('/locations'),
   departments: () => api.get('/departments'),
-  designations: () => Promise.resolve({ data: [
-    'Medical Officer', 'Nursing Staff', 'Pharmacist', 'Lab Technician',
-    'Radiologist', 'Administrative Officer', 'Finance Officer', 'HR Manager',
-    'Security Officer', 'Housekeeping Staff', 'HOD', 'Senior Coordinator',
-    'Junior Coordinator', 'Supervisor', 'Consultant', 'Intern'
-  ] }),
+  designations: () => api.get('/departments/designations'),
+  employmentTypes: () => api.get('/departments/employment-types'),
 };
 
 // ── IMC ───────────────────────────────────────────
@@ -185,7 +183,9 @@ export const attachmentsApi = {
 // ── Master Employees & HRMS Sync ───────────────────
 export const masterEmployeesApi = {
   list: (params) => api.get('/master-employees', { params }),
-  syncHrms: (type = 'full') => api.post('/master-employees/sync-hrms', { type }),
+  syncHrms: (type = 'full') => api.post('/master-employees/sync-hrms', { type }, { timeout: 120000 }),
+  testConnection: () => api.post('/master-employees/test-connection'),
+  updateHrmsConfig: (data) => api.put('/master-employees/hrms-config', data),
   getSyncStatus: () => api.get('/master-employees/sync-status'),
 };
 
@@ -217,7 +217,7 @@ export const trainersApi = {
 
 // ── Employee Search & Directory ───────────────────
 export const employeeApi = {
-  search: (query) => api.get('/employee/search', { params: { query, q: query } }),
+  search: (query, extraParams = {}) => api.get('/employee/search', { params: { query, q: query, ...extraParams } }),
   directory: () => api.get('/employees/directory'),
 };
 

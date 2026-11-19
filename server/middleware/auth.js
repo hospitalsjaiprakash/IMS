@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { query } = require('../config/database');
+const { isEmployeeLockedOut } = require('../services/officePortalService');
 
 const authenticate = async (req, res, next) => {
   try {
@@ -18,7 +19,12 @@ const authenticate = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await query(
-      'SELECT id, employee_id, full_name, email, role, department, designation, is_imc_lead, is_imc_member, is_management_member, is_system_admin FROM users WHERE id = $1',
+      `SELECT u.id, u.employee_id, u.full_name, u.email, u.role, u.department, u.designation,
+              u.is_active, u.is_imc_lead, u.is_imc_member, u.is_management_member, u.is_system_admin,
+              me.status AS hrms_status, me.portal_access_disable_date
+       FROM users u
+       LEFT JOIN master_employees me ON me.employee_id = u.employee_id
+       WHERE u.id = $1`,
       [decoded.userId]
     );
 
@@ -26,7 +32,25 @@ const authenticate = async (req, res, next) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    req.user = result.rows[0];
+    const userRow = result.rows[0];
+    const empCodeUpper = String(userRow.employee_id || '').trim().toUpperCase();
+    const isGenericSystem = ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(empCodeUpper);
+
+    if (!isGenericSystem) {
+      const hrmsBlocked = isEmployeeLockedOut(
+        userRow.hrms_status,
+        userRow.portal_access_disable_date
+      );
+
+      if (userRow.is_active === false || hrmsBlocked) {
+        return res.status(403).json({
+          error: 'Access denied. Your account has been disabled or deactivated in HRMS.',
+          code: 'ACCOUNT_DISABLED'
+        });
+      }
+    }
+
+    req.user = userRow;
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {

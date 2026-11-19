@@ -77,15 +77,23 @@ exports.getAllEmployees = async (req, res) => {
     const baseQuery = `
       SELECT 
         m.id as master_id, 
+        m.office_portal_id,
         m.employee_id, 
         m.name as full_name, 
         m.department, 
         m.designation, 
         m.office_location,
+        m.employment_type_id,
+        m.employment_type_name,
+        m.manager_id,
+        mgr.name as manager_name,
+        mgr.employee_id as manager_employee_id,
         COALESCE(m.status, 'active') as status,
         m.date_of_joining,
         m.termination_date,
+        m.notice_period_start_date,
         m.notice_period_end_date,
+        m.portal_access_disable_date,
         m.role as master_role,
         m.phone as phone,
         CASE WHEN u.id IS NOT NULL THEN true ELSE false END as is_registered,
@@ -99,17 +107,18 @@ exports.getAllEmployees = async (req, res) => {
         u.is_management_member
       FROM master_employees m
       LEFT JOIN users u ON m.employee_id = u.employee_id
+      LEFT JOIN master_employees mgr ON m.manager_id IS NOT NULL AND mgr.office_portal_id = m.manager_id::text
       ${whereClause}
     `;
 
-    // Distinct departments for filter dropdown
+    // STRICT 100% API-driven departments list for filter dropdown
     const deptResult = await query(`
-      SELECT DISTINCT department 
-      FROM master_employees 
-      WHERE department IS NOT NULL AND TRIM(department) != '' 
-      ORDER BY department ASC
+      SELECT name
+      FROM departments
+      WHERE is_hrms_synced = TRUE
+      ORDER BY name ASC
     `);
-    const departments = deptResult.rows.map(r => r.department);
+    const departments = deptResult.rows.map(r => r.name);
 
     // If caller requests all without pagination (e.g. for user mapping dropdowns)
     if (all === 'true' && !page) {
@@ -298,84 +307,207 @@ exports.bulkAddEmployees = async (req, res) => {
   }
 };
 
-const { syncEmployeesFromHrms, getHrmsSyncStatus } = require('../services/hrmsSyncService');
+const { getHrmsSyncStatus } = require('../services/hrmsSyncService');
 const officePortalService = require('../services/officePortalService');
 
-// POST on-demand sync from HRMS (OfficePortal or Google Sheet fallback)
+// POST on-demand sync from OfficePortal HRMS Public API v1
 exports.syncFromHrms = async (req, res) => {
   try {
     const config = await officePortalService.getConfig();
     const isOfficePortal = Boolean(config.clientId && config.clientSecret);
 
-    let result;
-    if (isOfficePortal) {
-      const syncType = req.body?.type === 'delta' ? 'delta' : 'full';
-      if (syncType === 'delta') {
-        result = await officePortalService.syncDeltaChanges();
-      } else {
-        result = await officePortalService.syncFullDirectory();
-      }
-      await auditLog(req.user.id, 'OFFICEPORTAL_SYNC_PERFORMED', null, result, req.ip);
-      return res.json({
-        success: true,
-        source: 'OfficePortal HRMS Public API v1',
-        syncType,
-        message: `Successfully synchronized ${result.totalFetched} employees from OfficePortal HRMS.`,
-        data: result
+    if (!isOfficePortal) {
+      return res.status(400).json({
+        error: 'OfficePortal API Key (Client Secret) is not configured yet. Please enter your API Key in the HRMS Sync & API Health tab first.',
+        code: 'OFFICEPORTAL_NOT_CONFIGURED'
       });
     }
 
-    // Fallback to legacy Google Sheet if OfficePortal credentials are not yet configured
-    result = await syncEmployeesFromHrms();
-    await auditLog(req.user.id, 'HRMS_SHEET_SYNC_PERFORMED', null, result, req.ip);
+    const syncType = req.body?.type === 'delta' ? 'delta' : 'full';
+    const result = syncType === 'delta'
+      ? await officePortalService.syncDeltaChanges()
+      : await officePortalService.syncFullDirectory();
 
-    res.json({
+    await auditLog(req.user.id, 'OFFICEPORTAL_SYNC_PERFORMED', null, {
+      syncType,
+      totalFetched: result.totalFetched,
+      totalInserted: result.totalInserted,
+      totalUpdated: result.totalUpdated,
+      totalDeactivated: result.totalDeactivated,
+      masterSummary: result.masterSummary || null
+    }, req.ip);
+
+    return res.json({
       success: true,
-      source: 'Google Sheets (Legacy Fallback)',
-      message: `Successfully synchronized ${result.totalFetched} employees from HRMS Google Sheet.`,
+      source: 'OfficePortal HRMS Public API v1',
+      syncType,
+      message: syncType === 'delta'
+        ? `Delta sync complete: fetched ${result.totalFetched} change(s) (${result.totalInserted} inserted, ${result.totalUpdated} updated, ${result.totalDeactivated} deactivated).`
+        : `Full bootstrap sync complete: fetched ${result.totalFetched} employee(s) and ${result.masterSummary?.departments ?? 0} department(s) from OfficePortal HRMS.`,
       data: result
     });
   } catch (error) {
-    console.error('[POST /master-employees/sync-hrms] error:', error);
-    res.status(500).json({
-      error: error.message || 'Failed to synchronize employees from HRMS API.'
+    console.error('[POST /master-employees/sync-hrms] error:', error.message);
+    const status = error.code === 'CREDENTIALS_MISSING' ? 400 : 500;
+    res.status(status).json({
+      error: error.message || 'Failed to synchronize employees from OfficePortal HRMS API.',
+      code: error.code || 'SYNC_FAILED'
     });
   }
 };
 
-// GET sync status and logs
+// POST test OfficePortal OAuth connection & refresh live quota telemetry
+exports.testConnection = async (req, res) => {
+  try {
+    const result = await officePortalService.testConnection();
+    await auditLog(req.user.id, 'OFFICEPORTAL_CONNECTION_TESTED', null, {
+      connected: result.connected,
+      requestsToday: result.usage?.requestsToday,
+      dailyRequestsRemaining: result.usage?.dailyRequestsRemaining,
+      requestsRemaining: result.usage?.requestsRemaining
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: 'Connected to OfficePortal Public API v1 successfully and refreshed live quota.',
+      data: result
+    });
+  } catch (error) {
+    console.error('[POST /master-employees/test-connection] error:', error.message);
+    const status = error.code === 'CREDENTIALS_MISSING' ? 400 : 502;
+    res.status(status).json({
+      success: false,
+      error: error.message || 'Failed to connect to OfficePortal API.',
+      code: error.code || 'CONNECTION_FAILED'
+    });
+  }
+};
+
+// PUT update/rotate OfficePortal credentials & webhook signing keys securely
+exports.updateHrmsConfig = async (req, res) => {
+  try {
+    const {
+      clientId,
+      authUrl,
+      baseUrl,
+      clientSecret,
+      webhookSecret,
+      webhookSecretPrevious
+    } = req.body || {};
+
+    const updates = {};
+    const auditPayload = {};
+
+    if (typeof clientId === 'string' && clientId.trim()) {
+      updates.officeportal_client_id = clientId.trim();
+      auditPayload.officeportal_client_id = clientId.trim();
+    }
+    if (typeof authUrl === 'string' && authUrl.trim()) {
+      updates.officeportal_auth_url = authUrl.trim();
+      auditPayload.officeportal_auth_url = authUrl.trim();
+    }
+    if (typeof baseUrl === 'string' && baseUrl.trim()) {
+      updates.officeportal_base_url = baseUrl.trim().replace(/\/+$/, '');
+      auditPayload.officeportal_base_url = updates.officeportal_base_url;
+    }
+    if (typeof clientSecret === 'string' && clientSecret.trim() && clientSecret.trim() !== '••••••••') {
+      updates.officeportal_client_secret = clientSecret.trim();
+      auditPayload.officeportal_client_secret = '[REDACTED]';
+    }
+    if (typeof webhookSecret === 'string' && webhookSecret.trim() && webhookSecret.trim() !== '••••••••') {
+      updates.officeportal_webhook_secret = webhookSecret.trim();
+      auditPayload.officeportal_webhook_secret = '[REDACTED]';
+    }
+    if (typeof webhookSecretPrevious === 'string' && webhookSecretPrevious.trim() !== '••••••••') {
+      updates.officeportal_webhook_secret_previous = webhookSecretPrevious.trim();
+      auditPayload.officeportal_webhook_secret_previous = webhookSecretPrevious.trim() ? '[REDACTED]' : '[CLEARED]';
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No valid HRMS configuration changes provided.' });
+    }
+
+    await officePortalService.setConfigValues(updates);
+    officePortalService.clearCaches();
+
+    await auditLog(req.user.id, 'OFFICEPORTAL_CONFIG_UPDATED', null, auditPayload, req.ip);
+
+    res.json({
+      success: true,
+      message: 'OfficePortal HRMS configuration saved successfully.'
+    });
+  } catch (error) {
+    console.error('[PUT /master-employees/hrms-config] error:', error.message);
+    res.status(500).json({ error: 'Failed to save OfficePortal configuration.' });
+  }
+};
+
+// GET sync status, masked config, counts, and quota telemetry
 exports.getSyncStatus = async (req, res) => {
   try {
     const config = await officePortalService.getConfig();
     const isOfficePortal = Boolean(config.clientId && config.clientSecret);
 
-    // Fetch recent OfficePortal sync logs
-    const syncLogsRes = await query(`
-      SELECT id, sync_type, status, delta_cursor, records_fetched, records_inserted,
-             records_updated, records_deactivated, error_message, started_at, completed_at
-      FROM hrms_sync_logs
-      ORDER BY started_at DESC
-      LIMIT 10
-    `).catch(() => ({ rows: [] }));
+    const [syncLogsRes, webhookStatsRes, countsRes, sheetStatus] = await Promise.all([
+      query(`
+        SELECT id, sync_type, status, delta_cursor, last_changed_at, records_fetched, records_inserted,
+               records_updated, records_deactivated, error_message, started_at, completed_at
+        FROM hrms_sync_logs
+        ORDER BY started_at DESC
+        LIMIT 15
+      `).catch(() => ({ rows: [] })),
+      query(`
+        SELECT 
+          COUNT(*) as total_events,
+          COUNT(CASE WHEN status = 'PROCESSED' THEN 1 END) as processed_events,
+          COUNT(CASE WHEN status = 'FAILED' THEN 1 END) as failed_events,
+          COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_events
+        FROM hrms_webhook_events
+      `).catch(() => ({ rows: [{ total_events: 0, processed_events: 0, failed_events: 0, pending_events: 0 }] })),
+      query(`
+        SELECT
+          (SELECT COUNT(*) FROM master_employees WHERE office_portal_id IS NOT NULL) AS synced_employees,
+          (SELECT COUNT(*) FROM departments WHERE is_hrms_synced = TRUE) AS synced_departments,
+          (SELECT COUNT(*) FROM hrms_job_titles) AS synced_job_titles,
+          (SELECT COUNT(*) FROM hrms_employment_types) AS synced_employment_types
+      `).catch(() => ({ rows: [{ synced_employees: 0, synced_departments: 0, synced_job_titles: 0, synced_employment_types: 0 }] })),
+      getHrmsSyncStatus().catch(() => ({}))
+    ]);
 
-    // Fetch webhook stats
-    const webhookStatsRes = await query(`
-      SELECT 
-        COUNT(*) as total_events,
-        COUNT(CASE WHEN status = 'PROCESSED' THEN 1 END) as processed_events,
-        COUNT(CASE WHEN status = 'FAILED' THEN 1 END) as failed_events,
-        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_events
-      FROM hrms_webhook_events
-    `).catch(() => ({ rows: [{ total_events: 0, processed_events: 0, failed_events: 0, pending_events: 0 }] }));
+    const publicBase = (process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+    const webhookUrl = `${publicBase}/api/webhooks/officeportal`;
 
-    // Fallback sheet status
-    const sheetStatus = await getHrmsSyncStatus().catch(() => ({ lastSync: null }));
-
+    const counts = countsRes.rows[0] || {};
     res.json({
       success: true,
       data: {
         isOfficePortalConfigured: isOfficePortal,
+        clientId: config.clientId,
+        authUrl: config.authUrl,
         officePortalBaseUrl: config.baseUrl,
+        baseUrl: config.baseUrl,
+        webhookUrl,
+        hasClientSecret: Boolean(config.clientSecret),
+        hasWebhookSecret: Boolean(config.webhookSecret),
+        hasWebhookSecretPrevious: Boolean(config.webhookSecretPrevious),
+        lastChangedAt: config.lastChangedAt || null,
+        syncCursor: config.syncCursor || null,
+        syncStatus: config.syncStatus || 'READY',
+        quota: {
+          dailyLimit: Number(config.dailyLimit) || 500,
+          dailyRemaining: config.dailyRemaining !== null ? Number(config.dailyRemaining) : null,
+          dailyReset: config.dailyReset || null,
+          monthlyQuota: Number(config.monthlyQuota) || 5000,
+          monthlyRemaining: config.monthlyRemaining !== null ? Number(config.monthlyRemaining) : null,
+          monthlyReset: config.monthlyReset || null,
+          perMinuteLimit: 30
+        },
+        syncedCounts: {
+          employees: parseInt(counts.synced_employees || '0', 10),
+          departments: parseInt(counts.synced_departments || '0', 10),
+          jobTitles: parseInt(counts.synced_job_titles || '0', 10),
+          employmentTypes: parseInt(counts.synced_employment_types || '0', 10)
+        },
         lastOfficePortalSync: syncLogsRes.rows[0] || null,
         recentSyncLogs: syncLogsRes.rows,
         webhookStats: webhookStatsRes.rows[0],

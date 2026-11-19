@@ -33,9 +33,9 @@ router.post('/officeportal', async (req, res) => {
     });
   } catch (err) {
     console.error('[OfficePortal Webhook] Processing failed:', err.message);
-    const status = err.statusCode || 401;
+    const status = err.statusCode === 401 ? 401 : 500;
     return res.status(status).json({
-      error: err.message
+      error: status === 401 ? err.message : 'Internal webhook processing error'
     });
   }
 });
