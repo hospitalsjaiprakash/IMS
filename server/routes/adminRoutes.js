@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const adminController = require('../controllers/adminController');
 const { setUploadStage, uploadSingle } = require('../middleware/upload');
+const { otpLimiter } = require('../middleware/rateLimiter');
 
 // Broadcast notifications
 router.post(
@@ -27,7 +28,7 @@ router.get('/config', authenticate, authorize('system_admin'), adminController.g
 router.put('/config', authenticate, authorize('system_admin'), adminController.updateSystemConfig);
 
 // Role Credentials & OTP
-router.post('/role-credentials/otp', authenticate, authorize('system_admin'), adminController.requestPasswordChangeOtp);
+router.post('/role-credentials/otp', authenticate, authorize('system_admin'), otpLimiter, adminController.requestPasswordChangeOtp);
 router.put('/role-credentials', authenticate, authorize('system_admin'), adminController.updateRoleCredentials);
 
 // IMC Members Management

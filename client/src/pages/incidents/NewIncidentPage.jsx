@@ -121,9 +121,9 @@ export default function NewIncidentPage() {
     queryFn: () => metaApi.locations().then(r => r.data),
   });
 
-  const { data: departmentsData } = useQuery({
+  const { data: departmentsData, isLoading: isLoadingDepts } = useQuery({
     queryKey: ['departments'],
-    queryFn: () => metaApi.departments().then(r => r.data),
+    queryFn: () => metaApi.departments().then(r => r.data || []),
   });
   const departmentOptions = (departmentsData || []).map(d => d.name);
 
@@ -153,8 +153,12 @@ export default function NewIncidentPage() {
 
   const validate = () => {
     const e = {};
-    if (step === 1 && form.selectedCategories.length === 0)
-      e.selectedCategories = 'Select at least one incident category';
+    if (step === 1) {
+      if (form.selectedCategories.length === 0)
+        e.selectedCategories = 'Select at least one incident category';
+      if (form.selectedDepartments.length === 0)
+        e.selectedDepartments = 'Select at least one concerned department';
+    }
 
     if (step === 2) {
       form.selectedCategories.forEach(cat => {
@@ -222,10 +226,15 @@ export default function NewIncidentPage() {
     formData.append('hasResponsiblePerson', form.hasResponsiblePerson);
     formData.append('responsiblePersonName', form.responsiblePersonName);
     
+    // Resolve real API-synced department IDs from selected department names (100% HRMS API-driven)
+    const selectedDeptIds = (departmentsData || [])
+      .filter(d => form.selectedDepartments.includes(d.name))
+      .map(d => d.id);
+
     // Arrays need to be stringified for FormData if parsing as strings on backend
     formData.append('incidentCategories', JSON.stringify(categories));
     formData.append('incidentTypes', JSON.stringify(types));
-    formData.append('departmentIds', JSON.stringify([]));
+    formData.append('departmentIds', JSON.stringify(selectedDeptIds));
     formData.append('derivedDepartments', JSON.stringify(form.selectedDepartments));
 
     // Append attachments
@@ -282,38 +291,66 @@ export default function NewIncidentPage() {
 
         <div className="p-5 space-y-5">
 
-          {/* ── STEP 1: Incident Category ── */}
+          {/* ── STEP 1: Incident Category & Concerned Department(s) ── */}
           {step === 1 && (
-            <div>
-              <label className="field-label field-required">Incident Category</label>
-              <p className="text-xs text-slate-500 mb-3">
-                Search and select all categories that apply. You will choose a specific type for each in the next step.
-              </p>
-              <SearchableMultiSelect
-                options={INCIDENT_CATEGORIES}
-                value={form.selectedCategories}
-                onChange={(cats) => {
-                  // Remove type entries for deselected categories
-                  const newTypes = { ...form.selectedTypes };
-                  Object.keys(newTypes).forEach(k => { if (!cats.includes(k)) delete newTypes[k]; });
-                  setForm(f => ({ ...f, selectedCategories: cats, selectedTypes: newTypes }));
-                }}
-                placeholder="Click to search & select categories…"
-                error={!!errors.selectedCategories}
-              />
-              {errors.selectedCategories && <p className="field-error">{errors.selectedCategories}</p>}
+            <div className="space-y-6">
+              <div>
+                <label className="field-label field-required">Incident Category</label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Search and select all categories that apply. You will choose a specific type for each in the next step.
+                </p>
+                <SearchableMultiSelect
+                  options={INCIDENT_CATEGORIES}
+                  value={form.selectedCategories}
+                  onChange={(cats) => {
+                    // Remove type entries for deselected categories
+                    const newTypes = { ...form.selectedTypes };
+                    Object.keys(newTypes).forEach(k => { if (!cats.includes(k)) delete newTypes[k]; });
+                    setForm(f => ({ ...f, selectedCategories: cats, selectedTypes: newTypes }));
+                  }}
+                  placeholder="Click to search & select categories…"
+                  error={!!errors.selectedCategories}
+                />
+                {errors.selectedCategories && <p className="field-error">{errors.selectedCategories}</p>}
 
-              {/* Preview of selected */}
-              {form.selectedCategories.length > 0 && (
-                <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                  <p className="text-xs font-medium text-slate-500 mb-2">{form.selectedCategories.length} categor{form.selectedCategories.length === 1 ? 'y' : 'ies'} selected — you will pick a type for each on the next step</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {form.selectedCategories.map(cat => (
-                      <span key={cat} className="badge badge-blue">{cat}</span>
-                    ))}
+                {/* Preview of selected */}
+                {form.selectedCategories.length > 0 && (
+                  <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-medium text-slate-500 mb-2">{form.selectedCategories.length} categor{form.selectedCategories.length === 1 ? 'y' : 'ies'} selected — you will pick a type for each on the next step</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {form.selectedCategories.map(cat => (
+                        <span key={cat} className="badge badge-blue">{cat}</span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+
+              {/* Concerned Department(s) — 100% OfficePortal HRMS API-driven */}
+              <div className="pt-4 border-t border-slate-200">
+                <label className="field-label field-required">Concerned Department(s)</label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Select the hospital department(s) involved in this incident. Departments are synced live from OfficePortal HRMS.
+                </p>
+                {!isLoadingDepts && departmentOptions.length === 0 ? (
+                  <Alert
+                    type="warning"
+                    title="No OfficePortal Departments Synced Yet"
+                    message="Departments are 100% API-driven (zero hardcoded departments). Please ask your System Administrator to run OfficePortal Full Bootstrap Sync before reporting an incident."
+                  />
+                ) : (
+                  <>
+                    <SearchableMultiSelect
+                      options={departmentOptions}
+                      value={form.selectedDepartments}
+                      onChange={(depts) => setForm(f => ({ ...f, selectedDepartments: depts }))}
+                      placeholder={isLoadingDepts ? 'Loading departments…' : 'Click to search & select concerned department(s)…'}
+                      error={!!errors.selectedDepartments}
+                    />
+                    {errors.selectedDepartments && <p className="field-error">{errors.selectedDepartments}</p>}
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -780,6 +817,11 @@ export default function NewIncidentPage() {
               <Alert type="info" title="Review Before Submitting" message="Please verify all details. Once submitted, the incident cannot be edited." />
 
               <div className="space-y-3 divide-y divide-slate-100">
+                {/* Concerned Departments */}
+                <ReviewRow
+                  label="Concerned Dept(s)"
+                  value={form.selectedDepartments.join(', ') || '—'}
+                />
                 {/* Categories & types */}
                 <div className="flex gap-4 py-2.5 first:pt-0">
                   <span className="text-xs font-medium text-slate-500 w-36 flex-shrink-0 pt-0.5">Categories & Types</span>

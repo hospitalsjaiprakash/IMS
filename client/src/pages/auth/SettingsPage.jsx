@@ -85,8 +85,8 @@ export default function SettingsPage() {
       setCpError('Please enter OTP and new password.');
       return;
     }
-    if (cpNewPassword.length < 6) {
-      setCpError('Password must be at least 6 characters.');
+    if (cpNewPassword.length < 6 || !/[A-Za-z]/.test(cpNewPassword) || !/([0-9]|[^A-Za-z0-9])/.test(cpNewPassword)) {
+      setCpError('Password must be at least 6 characters and include at least one letter and one number or special character.');
       return;
     }
     if (cpConfirmPassword && cpNewPassword !== cpConfirmPassword) {
@@ -374,7 +374,7 @@ export default function SettingsPage() {
                     type={showPwd ? 'text' : 'password'}
                     value={cpNewPassword}
                     onChange={(e) => setCpNewPassword(e.target.value)}
-                    placeholder="Min 6 characters"
+                    placeholder="Min 6 chars (letter + number/symbol)"
                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none text-sm pr-10"
                   />
                   <button

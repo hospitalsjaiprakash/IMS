@@ -1,13 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const officePortalService = require('../services/officePortalService');
+const { webhookLimiter } = require('../middleware/rateLimiter');
 
 /**
  * @route   POST /api/webhooks/officeportal (or /webhooks/officeportal)
  * @desc    Ingest real-time signed webhooks from OfficePortal HRMS Public API v1
  * @access  Public (Authenticated via HMAC-SHA256 signature in X-Awarious-Signature)
  */
-router.post('/officeportal', async (req, res) => {
+router.post('/officeportal', webhookLimiter, async (req, res) => {
   const signatureHeader = req.headers['x-awarious-signature'] || req.headers['X-Awarious-Signature'];
 
   if (!signatureHeader) {
@@ -33,9 +34,9 @@ router.post('/officeportal', async (req, res) => {
     });
   } catch (err) {
     console.error('[OfficePortal Webhook] Processing failed:', err.message);
-    const status = err.statusCode || 401;
+    const status = err.statusCode === 401 ? 401 : 500;
     return res.status(status).json({
-      error: err.message
+      error: status === 401 ? err.message : 'Internal webhook processing error'
     });
   }
 });

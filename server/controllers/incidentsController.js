@@ -5,36 +5,13 @@ const { generateReferenceId } = require('../utils/referenceId');
 const { sendEmail, templates } = require('../utils/emailService');
 const { checkAndAutoEscalate21Days } = require('../services/cronService');
 const { recordEvent, linkAttachmentsToEvent } = require('../utils/incidentEvents');
-
-const categoryDepartmentMapping = {
-  'Asset Related': 'Asset',
-  'Billing Related': 'Finance and Accounts',
-  'Security Related': 'Security Services',
-  'Biomedical Related': 'Bio-Medical',
-  'Blood Bank Related': 'Blood Centre',
-  'Facility Related': 'Facility',
-  'Doctor Related': 'Medical Services',
-  'Consent Related': 'Medical Services',
-  'CSSD Related': 'Nursing Services',
-  'Food and Beverages': 'Food and Beverages',
-  'General Maintenance related': 'General Maintenance',
-  'Hospital Emergency Codes Related': 'Medical Services',
-  'HR Related': 'Human Resource',
-  'Housekeeping Related': 'Housekeeping',
-  'Infection Control Related': 'Infection Control and Microbiology',
-  'Lab Related': 'Lab Medicine',
-  'Laundry and Linen related': 'Linen and Laundry',
-  'Medication Related': 'Medical Services',
-  'Nursing Care Related': 'Nursing Services',
-  'Purchase Related': 'Purchase',
-  'Radiology Related': 'Radiology',
-  'Store Related': 'Stores',
-  'Software/Hardware Related': 'Digital Communications',
-  'Surgery or Procedure Related': 'Medical Services',
-  'Nursing Document Related': 'Nursing Services',
-  'Vehicle and Ambulance Related': 'Ambulance / Travel / Transport',
-  'Accommodation Related': 'Facility'
-};
+const {
+  isPrivilegedRole,
+  canUserAccessIncident,
+  getUserManagedDepartmentsForIncident,
+  canNonPrivilegedUserViewLetter,
+  filterIncidentEventsForUser
+} = require('../utils/accessControl');
 
 // =============================================
 // CREATE INCIDENT
@@ -45,7 +22,7 @@ exports.createIncident = async (req, res) => {
     await client.query('BEGIN');
 
     let {
-      departmentIds, incidentDate, incidentTime,
+      departmentIds, derivedDepartments, incidentDate, incidentTime,
       mainLocationId, subLocationText,
       occurredTo, incidentCategory, incidentType, description,
       hasResponsiblePerson, responsiblePersonName, incidentCategories
@@ -92,22 +69,43 @@ exports.createIncident = async (req, res) => {
     }
 
     if (typeof departmentIds === 'string') departmentIds = JSON.parse(departmentIds);
+    if (typeof derivedDepartments === 'string') derivedDepartments = JSON.parse(derivedDepartments);
     if (typeof incidentCategories === 'string') incidentCategories = JSON.parse(incidentCategories);
     hasResponsiblePerson = hasResponsiblePerson === 'true' || hasResponsiblePerson === true;
 
-    // Automatically derive departmentIds if missing
-    if (!departmentIds || departmentIds.length === 0) {
-      const catsToMap = incidentCategories && incidentCategories.length > 0 ? incidentCategories : (incidentCategory ? [incidentCategory] : []);
-      const deptNames = [...new Set(catsToMap.map(c => categoryDepartmentMapping[c]).filter(Boolean))];
-      
-      if (deptNames.length > 0) {
-        const deptQuery = await client.query('SELECT id FROM departments WHERE name = ANY($1)', [deptNames]);
-        departmentIds = deptQuery.rows.map(r => r.id);
+    // STRICT 100% API-driven departments: resolve ONLY against HRMS-synced departments (zero hardcoded map)
+    let resolvedDeptIds = [];
+    if (Array.isArray(departmentIds) && departmentIds.length > 0) {
+      const numericIds = departmentIds.map((id) => parseInt(id, 10)).filter((n) => Number.isInteger(n) && n > 0);
+      if (numericIds.length > 0) {
+        const deptQuery = await client.query(
+          `SELECT id FROM departments WHERE id = ANY($1::int[]) AND is_hrms_synced = TRUE`,
+          [numericIds]
+        );
+        resolvedDeptIds = deptQuery.rows.map((r) => r.id);
       }
     }
 
+    // Fallback: resolve by exact API-synced department names if caller supplied derivedDepartments
+    if (resolvedDeptIds.length === 0 && Array.isArray(derivedDepartments) && derivedDepartments.length > 0) {
+      const cleanNames = [...new Set(derivedDepartments.map((d) => String(d || '').trim().toLowerCase()).filter(Boolean))];
+      if (cleanNames.length > 0) {
+        const deptQuery = await client.query(
+          `SELECT id FROM departments WHERE LOWER(TRIM(name)) = ANY($1::text[]) AND is_hrms_synced = TRUE`,
+          [cleanNames]
+        );
+        resolvedDeptIds = deptQuery.rows.map((r) => r.id);
+      }
+    }
+
+    departmentIds = resolvedDeptIds;
+
     if (!departmentIds || !departmentIds.length) {
-      return res.status(400).json({ error: 'Could not determine the responsible department for the selected categories.' });
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Please select at least one valid OfficePortal HRMS department for this incident.',
+        code: 'DEPARTMENT_REQUIRED'
+      });
     }
 
     // Generate reference ID
@@ -259,14 +257,9 @@ exports.createIncident = async (req, res) => {
       referenceId: refId.referenceId, severity, incidentType
     }, req.ip);
 
-    // Emit socket event for real-time updates
+    // Emit lightweight socket invalidation signal (no incident PII/department payload)
     if (req.io) {
-      req.io.emit('incident_created', {
-        id: incident.id,
-        referenceId: incident.reference_id,
-        status: incident.status,
-        departmentIds
-      });
+      req.io.emit('incident_created', { id: incident.id });
     }
 
     res.status(201).json({
@@ -622,8 +615,28 @@ exports.exportIncidents = async (req, res) => {
     `;
 
     const result = await query(exportQuery, params);
+    const { sanitizeCsvCell } = require('../utils/csvSanitizer');
 
-    let incidentsList = result.rows;
+    // Neutralize potential spreadsheet formula injection in exported text cells
+    const incidentsList = result.rows.map((row) => ({
+      ...row,
+      reference_id: sanitizeCsvCell(row.reference_id),
+      incident_category: sanitizeCsvCell(row.incident_category),
+      incident_type: sanitizeCsvCell(row.incident_type),
+      occurred_to: sanitizeCsvCell(row.occurred_to),
+      description: sanitizeCsvCell(row.description),
+      reporter_name: sanitizeCsvCell(row.reporter_name),
+      reporter_employee_id: sanitizeCsvCell(row.reporter_employee_id),
+      reporter_department: sanitizeCsvCell(row.reporter_department),
+      main_location_name: sanitizeCsvCell(row.main_location_name),
+      sub_location_name: sanitizeCsvCell(row.sub_location_name),
+      departments: Array.isArray(row.departments)
+        ? row.departments.map((d) => sanitizeCsvCell(d))
+        : row.departments,
+      hod_feedback: row.hod_feedback ? sanitizeCsvCell(row.hod_feedback) : row.hod_feedback,
+      imc_feedback: row.imc_feedback ? sanitizeCsvCell(row.imc_feedback) : row.imc_feedback,
+      mgmt_feedback: row.mgmt_feedback ? sanitizeCsvCell(row.mgmt_feedback) : row.mgmt_feedback
+    }));
 
     res.json({
       success: true,
@@ -663,28 +676,10 @@ exports.getIncident = async (req, res) => {
 
     const incident = result.rows[0];
 
-    // Access control for employees - can see own incident, if assigned as investigator, or if assigned HOD staff
-    if (role === 'employee' && incident.reporter_id !== userId) {
-      const isAuthorizedEmployee = await query(
-        `SELECT 1 FROM incidents i
-         WHERE i.id = $1 AND (
-           i.reporter_id = $2
-           OR i.redirect_requested_by_user_id = $2
-           OR EXISTS (SELECT 1 FROM investigators inv WHERE inv.incident_id = i.id AND inv.investigator_id = $2)
-           OR EXISTS (
-             SELECT 1 FROM incident_departments id2
-             JOIN departments d ON d.id = id2.department_id
-             WHERE id2.incident_id = i.id AND (
-               d.assigned_user_id = $2 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $2)
-               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true)
-             )
-           )
-         )`,
-        [incident.id, userId]
-      );
-      if (isAuthorizedEmployee.rows.length === 0) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
+    // Centralized object-level authorization across all non-privileged roles (employees & HODs)
+    const allowed = await canUserAccessIncident(req.user, incident.id);
+    if (!allowed) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     // Get departments with per-department feedback status
@@ -801,6 +796,8 @@ exports.getIncident = async (req, res) => {
               l.body_text as body_content,
               l.cc_recipients as cc_list,
               l.qr_code_url as qr_code_data,
+              u_recip.employee_id as user_employee_id,
+              u_recip.department as user_department,
               u_draft.full_name as created_by_name,
               u_app.full_name as approved_by_name
        FROM incident_letters l
@@ -811,6 +808,14 @@ exports.getIncident = async (req, res) => {
        ORDER BY l.created_at ASC`,
       [incident.id]
     );
+
+    let visibleLetters = lettersRes.rows;
+    if (!isPrivilegedRole(req.user)) {
+      const managedDepts = await getUserManagedDepartmentsForIncident(req.user, incident.id);
+      visibleLetters = visibleLetters.filter((letter) =>
+        canNonPrivilegedUserViewLetter(req.user, letter, managedDepts)
+      );
+    }
 
     // Get training assignments and reports
     const trainersRes = await query(
@@ -903,6 +908,8 @@ exports.getIncident = async (req, res) => {
       [incident.id]
     );
 
+    const visibleEvents = filterIncidentEventsForUser(req.user, eventsRes.rows);
+
     res.json({
       incident: {
         ...incident,
@@ -916,10 +923,10 @@ exports.getIncident = async (req, res) => {
       feedbacks: feedbacks.rows,
       attachments: attachments.rows,
       finalReport: finalReport.rows[0] || null,
-      letters: lettersRes.rows,
+      letters: visibleLetters,
       trainers: trainersRes.rows,
       timelineEvents: auditLogsRes.rows,
-      events: eventsRes.rows
+      events: visibleEvents
     });
 
   } catch (error) {
@@ -1189,8 +1196,10 @@ exports.getHodTeam = async (req, res) => {
 
     if (deptCheck.rows.length > 0) {
       deptNames = deptCheck.rows.map(r => r.name);
-    } else if (department) {
-      deptNames = [department];
+    } else if (isPrivilegedRole(req.user) || req.user.role === 'hod') {
+      if (department) deptNames = [department];
+    } else {
+      return res.status(403).json({ error: 'Access denied. Only designated department leaders or reviewers can view department team contacts.' });
     }
 
     if (deptNames.length === 0) {

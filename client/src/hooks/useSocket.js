@@ -12,22 +12,30 @@ const SOCKET_URL = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.r
 export function useSocket() {
   const socketRef = useRef(null);
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const { token } = useAuthStore();
 
   useEffect(() => {
-    socketRef.current = io(SOCKET_URL, {
-      query: { userId: user?.id },
+    // Only connect when an authenticated Bearer JWT is present; pass via handshake auth (never query string)
+    if (!token) {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      return undefined;
+    }
+
+    const socket = io(SOCKET_URL, {
+      auth: { token },
       withCredentials: true,
       transports: ['websocket', 'polling']
     });
-
-    const socket = socketRef.current;
+    socketRef.current = socket;
 
     socket.on('connect', () => {
     });
 
     // When an incident is created, invalidate the incident list to trigger a refetch
-    socket.on('incident_created', (data) => {
+    socket.on('incident_created', () => {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
       queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
@@ -56,11 +64,12 @@ export function useSocket() {
     });
 
     return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
+      socket.disconnect();
+      if (socketRef.current === socket) {
+        socketRef.current = null;
       }
     };
-  }, [queryClient, user?.id]);
+  }, [queryClient, token]);
 
   return socketRef.current;
 }

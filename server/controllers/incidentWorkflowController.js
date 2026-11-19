@@ -3,6 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
 const { recordEvent, getNextRoundNo } = require('../utils/incidentEvents');
+const { isPrivilegedRole } = require('../utils/accessControl');
 const bcrypt = require('bcryptjs');
 
 function formatProposedOutcome(outcome) {
@@ -21,6 +22,13 @@ function formatProposedOutcome(outcome) {
     return trimmed;
   }
   return String(outcome);
+}
+
+const { isEmployeeLockedOut } = require('../services/officePortalService');
+
+function isMasterEmployeeActive(m) {
+  if (!m) return false;
+  return !isEmployeeLockedOut(m.status, m.portal_access_disable_date);
 }
 
 async function resolveEmployeeUserId(emp, client) {
@@ -44,7 +52,7 @@ async function resolveEmployeeUserId(emp, client) {
     }
   }
 
-  // 2. Check master_employees and provision if needed
+  // 2. Check master_employees and provision skeleton record preserving HRMS active status
   for (const candidate of candidates) {
     const mRes = await client.query(
       `SELECT * FROM master_employees WHERE id::text = $1 OR employee_id = $1 LIMIT 1`,
@@ -52,12 +60,13 @@ async function resolveEmployeeUserId(emp, client) {
     );
     if (mRes.rows.length > 0) {
       const m = mRes.rows[0];
+      const shouldBeActive = isMasterEmployeeActive(m);
       const nu = await client.query(
         `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-         VALUES ($1, $2, $3, $4, $5, 'employee', TRUE, NULL)
+         VALUES ($1, $2, $3, $4, $5, 'employee', $6, NULL)
          ON CONFLICT (employee_id) DO UPDATE SET full_name = EXCLUDED.full_name
          RETURNING id`,
-        [m.employee_id, m.name, m.email || `${m.employee_id}@jphrc.org`, m.department, m.designation]
+        [m.employee_id, m.name, m.email || `${m.employee_id}@jphrc.org`, m.department, m.designation, shouldBeActive]
       );
       if (nu.rows.length > 0) {
         return nu.rows[0].id;
@@ -85,6 +94,7 @@ exports.submitHodFeedback = async (req, res) => {
     );
 
     if (!incidentResult.rows.length) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Incident not found' });
     }
 
@@ -96,6 +106,7 @@ exports.submitHodFeedback = async (req, res) => {
       [id]
     );
     if (imcCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Cannot submit HOD feedback because IMC has already submitted quality review feedback.' });
     }
 
@@ -103,7 +114,11 @@ exports.submitHodFeedback = async (req, res) => {
     const deptResult = await client.query(
       `SELECT DISTINCT d.id, d.name FROM departments d
        LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
-       WHERE d.assigned_user_id = $1 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1) OR dr.id IS NOT NULL`,
+       WHERE d.assigned_user_id = $1
+          OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1)
+          OR d.incharge_user_id = $1
+          OR d.asst_coo_user_id = $1
+          OR dr.id IS NOT NULL`,
       [req.user.id]
     );
 
@@ -111,7 +126,14 @@ exports.submitHodFeedback = async (req, res) => {
     let deptId = null;
 
     if (req.body.department_id && userDeptIds.includes(parseInt(req.body.department_id, 10))) {
-      deptId = parseInt(req.body.department_id, 10);
+      // Ensure the requested department is actually targeted by this incident
+      const explicitTarget = await client.query(
+        'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = $2',
+        [id, parseInt(req.body.department_id, 10)]
+      );
+      if (explicitTarget.rows.length) {
+        deptId = explicitTarget.rows[0].department_id;
+      }
     } else if (userDeptIds.length > 0) {
       // Check if any of HOD's departments is targeted by this incident
       const targetCheck = await client.query(
@@ -123,8 +145,8 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    // If user requested redirect for this incident, allow them to submit on the incident's department
-    if (!deptId && (incident.redirect_requested_by_user_id === req.user.id || req.user.role === 'hod')) {
+    // Only allow fallback for privileged admins or the verified redirect requester (never arbitrary HODs of unrelated departments)
+    if (!deptId && (incident.redirect_requested_by_user_id === req.user.id || isPrivilegedRole(req.user))) {
       const incDepts = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1 LIMIT 1', [id]);
       if (incDepts.rows.length) {
         deptId = incDepts.rows[0].department_id;
@@ -134,6 +156,7 @@ exports.submitHodFeedback = async (req, res) => {
     }
 
     if (!deptId) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'This incident is not targeted at your department.' });
     }
 
@@ -146,6 +169,7 @@ exports.submitHodFeedback = async (req, res) => {
     );
 
     if (existingFb.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Feedback has already been submitted for your department. You can edit your existing feedback.' });
     }
 
@@ -252,7 +276,7 @@ exports.submitHodFeedback = async (req, res) => {
 
     if (req.io) {
       const currentStatus = redirectToImc ? 'redirect_requested' : (allResponded ? (incident.status === 'with_hod_and_imc' ? 'with_hod_and_imc' : 'with_imc') : incident.status);
-      req.io.emit('incident_updated', { id, status: currentStatus });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true, allResponded });
@@ -559,7 +583,7 @@ exports.submitImcFeedback = async (req, res) => {
     await auditLog(req.user.id, 'IMC_FEEDBACK_SUBMITTED', id, { forwardToMd }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: forwardToMd ? 'with_head_management' : incident.status });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true });
@@ -686,7 +710,7 @@ exports.submitManagementAction = async (req, res) => {
       }
 
       if (req.io) {
-        req.io.emit('incident_updated', { id, status: nextStatus });
+        req.io.emit('incident_updated', { id });
       }
 
       return res.json({ success: true, message: 'Reverted to IMC.' });
@@ -1015,7 +1039,7 @@ exports.submitManagementAction = async (req, res) => {
     await auditLog(req.user.id, 'MANAGEMENT_DECISION', id, { decision, nextStatus }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: nextStatus });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true, message: returnMessage, nextStatus });
@@ -1124,7 +1148,7 @@ exports.generateImcReport = async (req, res) => {
     await auditLog(req.user.id, 'IMC_REPORT_GENERATED', id, {}, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: newStatus });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true, message: 'IMC Report generated successfully.' });
@@ -1171,7 +1195,7 @@ exports.closeIncident = async (req, res) => {
     await auditLog(req.user.id, 'INCIDENT_CLOSED', id, {}, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'closed' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true, message: 'Incident officially closed.' });
@@ -1205,14 +1229,14 @@ async function resolveAndValidateInvestigators(investigatorIds, queryFn = query)
     );
     if (mRes.rows.length) {
       const mEmp = mRes.rows[0];
+      const shouldBeActive = isMasterEmployeeActive(mEmp);
       const newUserRes = await queryFn(
         `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, password_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, TRUE, NULL)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
          ON CONFLICT (employee_id) DO UPDATE SET
            full_name = EXCLUDED.full_name,
            department = EXCLUDED.department,
-           designation = EXCLUDED.designation,
-           is_active = TRUE
+           designation = EXCLUDED.designation
          RETURNING id, full_name, email, role, is_imc_member, is_imc_lead`,
         [
           mEmp.employee_id,
@@ -1220,7 +1244,8 @@ async function resolveAndValidateInvestigators(investigatorIds, queryFn = query)
           mEmp.email || `${mEmp.employee_id}@jphrc.org`,
           mEmp.department,
           mEmp.designation,
-          mEmp.role || 'employee'
+          mEmp.role || 'employee',
+          shouldBeActive
         ]
       );
       if (newUserRes.rows.length) {
@@ -1408,7 +1433,7 @@ exports.submitInvestigatorReport = async (req, res) => {
     }
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'with_imc_review' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({
@@ -1532,7 +1557,7 @@ exports.rejectInvestigatorReport = async (req, res) => {
     }
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'with_investigator' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true, message: 'Incident successfully scheduled for reinvestigation.' });
@@ -1601,7 +1626,7 @@ exports.reopenIncident = async (req, res) => {
     await auditLog(req.user.id, 'INCIDENT_REOPENED', id, { reason: reason.trim(), prevStatus }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'with_imc' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({ success: true, message: 'Incident successfully reopened and moved to IMC queue.' });

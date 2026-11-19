@@ -3,6 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
 const { recordEvent } = require('../utils/incidentEvents');
+const { isPrivilegedRole, getUserManagedDepartmentsForIncident } = require('../utils/accessControl');
 
 // ── UPDATE INCIDENT (employee, while submitted) ────────────────────────────
 exports.updateIncident = async (req, res) => {
@@ -128,7 +129,10 @@ exports.requestRedirect = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
 
-    if (!reason?.trim()) return res.status(400).json({ error: 'Redirect reason is required.' });
+    if (!reason?.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Redirect reason is required.' });
+    }
 
     const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
@@ -139,16 +143,29 @@ exports.requestRedirect = async (req, res) => {
       return res.status(400).json({ error: 'Incident is not in HOD review status.' });
     }
 
-    // Get assigned department for user
-    const deptRes = await client.query(`
-      SELECT d.name FROM departments d
-      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
-      WHERE d.assigned_user_id = $1 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1)
-         OR dr.id IS NOT NULL
-         OR (LOWER(d.name) = LOWER($2) AND $2 != '')
+    // Object-level authorization: only assigned HOD/reviewer for a department targeted by THIS incident (or privileged role)
+    const incidentDeptRes = await client.query(`
+      SELECT d.id, d.name
+      FROM incident_departments idp
+      JOIN departments d ON d.id = idp.department_id
+      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true
+      WHERE idp.incident_id = $1
+        AND (
+          d.assigned_user_id = $2
+          OR d.hod_user_id = $2
+          OR d.incharge_user_id = $2
+          OR d.asst_coo_user_id = $2
+          OR dr.id IS NOT NULL
+        )
       LIMIT 1
-    `, [req.user.id, (req.user.department || '').trim()]);
-    const deptName = deptRes.rows[0]?.name || req.user.department || 'Unknown';
+    `, [id, req.user.id]);
+
+    if (!isPrivilegedRole(req.user) && incidentDeptRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied: You are not assigned as HOD or reviewer for this incident.' });
+    }
+
+    const deptName = incidentDeptRes.rows[0]?.name || req.user.department || 'Unknown';
 
     await client.query(
       `UPDATE incidents SET 
@@ -469,20 +486,33 @@ exports.verifyEmployeeTraining = async (req, res) => {
     }
     const emp = empCheck.rows[0];
 
-    // Verify HOD access
-    // Verify HOD / reviewer access
-    if (req.user.role === 'hod' || req.user.role === 'employee') {
-      const deptRes = await client.query(`
-        SELECT d.*, dr.id as reviewer_mapping_id FROM departments d
-        LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true
-        WHERE d.id = $1
-      `, [emp.department_id, req.user.id]);
-      if (deptRes.rows.length) {
-        const d = deptRes.rows[0];
-        if (d.assigned_user_id !== req.user.id && d.hod_user_id !== req.user.id && !d.reviewer_mapping_id) {
-           await client.query('ROLLBACK');
-           return res.status(403).json({ error: 'You are not the designated feedback staff for this employee’s department.' });
+    // Verify HOD / reviewer access (fail closed)
+    if (!isPrivilegedRole(req.user)) {
+      let authorized = false;
+      if (emp.department_id) {
+        const deptRes = await client.query(`
+          SELECT d.*, dr.id as reviewer_mapping_id FROM departments d
+          LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true
+          WHERE d.id = $1
+        `, [emp.department_id, req.user.id]);
+        if (deptRes.rows.length) {
+          const d = deptRes.rows[0];
+          authorized = Boolean(
+            d.assigned_user_id === req.user.id ||
+            d.hod_user_id === req.user.id ||
+            d.incharge_user_id === req.user.id ||
+            d.asst_coo_user_id === req.user.id ||
+            d.reviewer_mapping_id
+          );
         }
+      } else {
+        const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
+        authorized = managedDepts.size > 0;
+      }
+
+      if (!authorized) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'You are not the designated feedback staff for this employee’s department.' });
       }
     }
 
@@ -540,6 +570,14 @@ exports.verifyTraining = async (req, res) => {
     const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
     const incident = incResult.rows[0];
+
+    if (!isPrivilegedRole(req.user)) {
+      const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
+      if (managedDepts.size === 0) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Access denied: You are not assigned to any department for this incident.' });
+      }
+    }
 
     if (incident.status !== 'pending_training') {
       await client.query('ROLLBACK');

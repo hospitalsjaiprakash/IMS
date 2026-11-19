@@ -9,6 +9,12 @@ const { recordEvent, recordLetterVersion, getNextRoundNo } = require('../utils/i
 const { generateLetterPdf } = require('../services/pdfService');
 const { buildEmailDispatchNoticeHtml } = require('../templates/letterHtmlTemplate');
 const { isR2Configured, uploadToR2, downloadFromR2 } = require('../config/s3');
+const {
+  isPrivilegedRole,
+  canUserAccessIncident,
+  getUserManagedDepartmentsForIncident,
+  canNonPrivilegedUserViewLetter
+} = require('../utils/accessControl');
 
 /**
  * Helper to normalize template keys between frontend and database check constraints
@@ -45,6 +51,12 @@ function normalizeTemplateType(t) {
 exports.getIncidentLetters = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const allowed = await canUserAccessIncident(req.user, id);
+    if (!allowed) {
+      return res.status(403).json({ error: 'Access denied: You are not authorized to view letters for this incident.' });
+    }
+
     const result = await query(
       `SELECT l.*,
               l.recipient_name as employee_name,
@@ -60,6 +72,8 @@ exports.getIncidentLetters = async (req, res) => {
               l.body_text as body_content,
               l.cc_recipients as cc_list,
               l.qr_code_url as qr_code_data,
+              u_recip.employee_id as user_employee_id,
+              u_recip.department as user_department,
               u_draft.full_name as drafted_by_name,
               u_app.full_name as approved_by_name
        FROM incident_letters l
@@ -72,8 +86,16 @@ exports.getIncidentLetters = async (req, res) => {
       [id]
     );
 
+    let visibleRows = result.rows;
+    if (!isPrivilegedRole(req.user)) {
+      const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
+      visibleRows = visibleRows.filter((letter) =>
+        canNonPrivilegedUserViewLetter(req.user, letter, managedDepts)
+      );
+    }
+
     // Ensure qr_code_url is fresh/valid for each letter
-    const lettersWithQr = await Promise.all(result.rows.map(async (letter) => {
+    const lettersWithQr = await Promise.all(visibleRows.map(async (letter) => {
       if (!letter.qr_code_url) {
         letter.qr_code_url = await generateIncidentQrCode(id);
       }
@@ -95,6 +117,11 @@ exports.getLetterPdf = async (req, res) => {
   try {
     const { id, letterId } = req.params;
 
+    const allowed = await canUserAccessIncident(req.user, id);
+    if (!allowed) {
+      return res.status(403).json({ error: 'Access denied: You are not authorized to access this letter PDF.' });
+    }
+
     const letterRes = await query(
       `SELECT l.*,
               COALESCE(
@@ -103,6 +130,7 @@ exports.getLetterPdf = async (req, res) => {
                 l.recipient_emp_no
               ) as employee_code,
               u_recip.employee_id as user_employee_id,
+              u_recip.department as user_department,
               u_draft.full_name as drafted_by_name,
               u_app.full_name as approved_by_name
        FROM incident_letters l
@@ -119,12 +147,26 @@ exports.getLetterPdf = async (req, res) => {
 
     const letter = letterRes.rows[0];
     const isApproved = ['approved', 'dispatched'].includes(letter.status);
+    const privileged = isPrivilegedRole(req.user);
+
+    // Non-privileged users cannot access draft/pending letters or letters addressed to unrelated staff
+    if (!privileged) {
+      if (!isApproved) {
+        return res.status(403).json({ error: 'Access denied: Draft or pending letters are restricted to IMC and Management.' });
+      }
+      const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
+      if (!canNonPrivilegedUserViewLetter(req.user, letter, managedDepts)) {
+        return res.status(403).json({ error: 'Access denied: You are not authorized to access this formal letter.' });
+      }
+    }
+
+    const safeRefName = String(letter.reference_number || 'letter').replace(/[^a-zA-Z0-9._-]/g, '_');
 
     // If letter is already approved and has frozen PDF in R2, stream from R2
     if (isApproved && letter.pdf_storage_path && isR2Configured()) {
       try {
         const buffer = await downloadFromR2(letter.pdf_storage_path);
-        const filename = `${letter.reference_number || 'letter'}.pdf`;
+        const filename = `${safeRefName}.pdf`;
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
         return res.end(Buffer.from(buffer));
@@ -150,7 +192,7 @@ exports.getLetterPdf = async (req, res) => {
       incidentUrl: getIncidentUrl(id)
     });
 
-    const filename = `${letter.reference_number || 'letter'}${!isApproved ? '_DRAFT' : ''}.pdf`;
+    const filename = `${safeRefName}${!isApproved ? '_DRAFT' : ''}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     return res.end(Buffer.from(pdfBuffer));
@@ -165,6 +207,9 @@ exports.getLetterPdf = async (req, res) => {
 // =============================================
 exports.getLetterTemplateDefaults = async (req, res) => {
   try {
+    if (!isPrivilegedRole(req.user)) {
+      return res.status(403).json({ error: 'Access denied. Insufficient permissions.' });
+    }
     const { id } = req.params;
     const employeeId = req.query.employeeId;
     const rawType = req.query.templateType || req.query.letterType;
@@ -212,8 +257,13 @@ exports.getLetterTemplateDefaults = async (req, res) => {
     let empPenaltyAmount = null;
     if (emp) {
       const respEmp = await query(
-        `SELECT penalty_amount FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2`,
-        [id, emp.id]
+        `SELECT r.penalty_amount
+         FROM incident_responsible_employees r
+         LEFT JOIN users u ON u.id = r.employee_id
+         WHERE r.incident_id = $1
+           AND (r.employee_id::text = $2::text OR u.employee_id = $3)
+         LIMIT 1`,
+        [id, String(emp.id), emp.employee_id || '']
       );
       if (respEmp.rows.length && respEmp.rows[0].penalty_amount) {
         empPenaltyAmount = respEmp.rows[0].penalty_amount;
@@ -588,7 +638,7 @@ exports.submitLettersToManagement = async (req, res) => {
     }, req.ip);
 
     if (req.io) {
-      req.io.emit('incident_updated', { id, status: 'pending_management_letter_approval' });
+      req.io.emit('incident_updated', { id });
     }
 
     res.json({
@@ -701,7 +751,7 @@ exports.submitManagementLetterDecision = async (req, res) => {
       await auditLog(req.user.id, 'LETTERS_REJECTED_FOR_REVISION', id, { revisionNotes: rawNotes }, req.ip);
 
       if (req.io) {
-        req.io.emit('incident_updated', { id, status: 'pending_letter_generation' });
+        req.io.emit('incident_updated', { id });
       }
 
       return res.json({ success: true, message: 'Returned to IMC for letter revision.' });
@@ -936,7 +986,7 @@ exports.submitManagementLetterDecision = async (req, res) => {
       }, req.ip);
 
       if (req.io) {
-        req.io.emit('incident_updated', { id, status: nextStatus });
+        req.io.emit('incident_updated', { id });
       }
     } catch (bgErr) {
       console.warn('[ManagementLetterDecision] Background notifications warning:', bgErr.message);

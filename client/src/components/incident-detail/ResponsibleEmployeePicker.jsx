@@ -68,7 +68,8 @@ export default function ResponsibleEmployeePicker({
         .then(res => {
           if (!active) return;
           const data = res.data;
-          const list = Array.isArray(data) ? data : (data?.employees || []);
+          const list = (Array.isArray(data) ? data : (data?.employees || []))
+            .filter(emp => !['terminated', 'inactive', 'deleted'].includes(emp?.status));
           setResults(list);
         })
         .catch(() => {
@@ -173,6 +174,11 @@ export default function ResponsibleEmployeePicker({
                           {empCode && (
                             <span className="text-[10px] font-mono px-1.5 py-0.5 bg-indigo-50 text-indigo-700 font-semibold rounded border border-indigo-100">
                               {empCode}
+                            </span>
+                          )}
+                          {emp.status === 'noticePeriod' && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-800 font-bold rounded border border-amber-300">
+                              ⚠️ Notice Period{emp.notice_period_end_date ? ` (Ends: ${String(emp.notice_period_end_date).slice(0, 10)})` : ''}
                             </span>
                           )}
                         </div>
@@ -295,11 +301,16 @@ export default function ResponsibleEmployeePicker({
                       {(emp.full_name || emp.name || 'E').charAt(0).toUpperCase()}
                     </div>
                     <div className="text-left text-xs">
-                      <div className="font-semibold text-slate-800">
-                        {emp.full_name || emp.name}
+                      <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                        <span>{emp.full_name || emp.name}</span>
                         {empCode && (
-                          <span className="text-slate-500 font-mono ml-1 text-[11px]">
+                          <span className="text-slate-500 font-mono text-[11px]">
                             ({empCode})
+                          </span>
+                        )}
+                        {emp.status === 'noticePeriod' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-800 font-bold rounded border border-amber-300">
+                            ⚠️ Notice Period{emp.notice_period_end_date ? ` (Ends: ${String(emp.notice_period_end_date).slice(0, 10)})` : ''}
                           </span>
                         )}
                       </div>
@@ -378,11 +389,16 @@ export default function ResponsibleEmployeePicker({
                           {(emp.full_name || emp.name || 'E').charAt(0).toUpperCase()}
                         </div>
                         <div className="truncate">
-                          <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 flex-wrap">
                             <span className="truncate">{emp.full_name || emp.name}</span>
                             {emp.employee_id && (
                               <span className="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
                                 {emp.employee_id}
+                              </span>
+                            )}
+                            {emp.status === 'noticePeriod' && (
+                              <span className="text-[10px] px-1.5 py-0.2 bg-amber-100 text-amber-800 border border-amber-300 rounded font-bold">
+                                ⚠️ Notice Period{emp.notice_period_end_date ? ` (Ends: ${String(emp.notice_period_end_date).slice(0, 10)})` : ''}
                               </span>
                             )}
                           </div>

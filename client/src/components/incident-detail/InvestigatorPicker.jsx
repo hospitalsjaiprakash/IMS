@@ -90,8 +90,10 @@ export default function InvestigatorPicker({
   const suggestions = React.useMemo(() => {
     const q = term.trim().toLowerCase();
     if (!q) return [];
+    const isBlockedStatus = (e) => ['terminated', 'inactive', 'deleted'].includes(e?.status);
     if (mode === 'imc') {
       return imcMembers.filter(m => {
+        if (isBlockedStatus(m)) return false;
         const mId = m.id;
         const mCode = (m.employee_id || '').toLowerCase();
         if (mId && takenIds.has(mId)) return false;
@@ -100,6 +102,7 @@ export default function InvestigatorPicker({
       }).slice(0, 20);
     }
     return remoteResults.filter(emp => {
+      if (isBlockedStatus(emp)) return false;
       const empId = emp.id;
       const empCode = (emp.employee_id || '').toLowerCase();
       if (empId && takenIds.has(empId)) return false;
@@ -184,6 +187,11 @@ export default function InvestigatorPicker({
                         Unregistered
                       </span>
                     )}
+                    {emp.status === 'noticePeriod' && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.2 rounded font-bold">
+                        ⚠️ Notice Period{emp.notice_period_end_date ? ` (Ends: ${String(emp.notice_period_end_date).slice(0, 10)})` : ''}
+                      </span>
+                    )}
                   </div>
                   <p className="text-[11px] text-slate-500 truncate">
                     {[emp.designation, emp.department].filter(Boolean).join(' • ') || '—'}
@@ -197,18 +205,28 @@ export default function InvestigatorPicker({
       </div>
 
       {selected.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {selected.map(emp => (
-            <span
-              key={emp.id || emp.employee_id}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 border rounded-full text-xs font-medium ${chipClass}`}
-            >
-              <span>{emp.full_name || emp.name}{emp.employee_id ? ` (${emp.employee_id})` : ''}</span>
-              <button type="button" onClick={() => remove(emp.id || emp.employee_id)} className="hover:text-red-600" aria-label="Remove">
-                <X size={12} />
-              </button>
-            </span>
-          ))}
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {selected.map(emp => (
+              <span
+                key={emp.id || emp.employee_id}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 border rounded-full text-xs font-medium ${emp.status === 'noticePeriod' ? 'bg-amber-50 border-amber-300 text-amber-900' : chipClass}`}
+              >
+                <span>{emp.full_name || emp.name}{emp.employee_id ? ` (${emp.employee_id})` : ''}</span>
+                {emp.status === 'noticePeriod' && (
+                  <span className="text-[10px] font-bold text-amber-700">⚠️ Notice</span>
+                )}
+                <button type="button" onClick={() => remove(emp.id || emp.employee_id)} className="hover:text-red-600" aria-label="Remove">
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+          {selected.some(e => e.status === 'noticePeriod') && (
+            <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-medium">
+              ⚠️ One or more selected investigators are currently serving their <strong>Notice Period</strong> in HRMS. Consider assigning a co-investigator to ensure continuity.
+            </div>
+          )}
         </div>
       )}
     </div>

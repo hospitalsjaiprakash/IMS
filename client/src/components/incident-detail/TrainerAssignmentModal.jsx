@@ -214,6 +214,12 @@ export default function TrainerAssignmentModal({
             onChange={(list) => setSelectedTrainer(list.slice(-1))} // Single trainer
             placeholder="Search educator, senior consultant, coordinator, or trainer name..."
           />
+          {selectedTrainer[0]?.status === 'noticePeriod' && (
+            <div className="mt-2 p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900 font-medium">
+              ⚠️ <strong>Notice Period Warning:</strong> {selectedTrainer[0].full_name || selectedTrainer[0].name} is currently serving a notice period
+              {selectedTrainer[0].notice_period_end_date ? ` (ending ${String(selectedTrainer[0].notice_period_end_date).slice(0, 10)})` : ''}. Please verify they will remain available through the target completion date.
+            </div>
+          )}
         </div>
 
         <div>
