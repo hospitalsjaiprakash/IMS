@@ -1,5 +1,5 @@
 const { query } = require('../config/database');
-const { auditLog } = require('../middleware/auth');
+const { auditLog, bumpUserTokenVersion } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 const { isEmployeeLockedOut, extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
 const { SECRET_CONFIG_KEYS, encryptSecret, assertAllowedOfficePortalUrl } = require('../utils/secretCrypto');
@@ -179,6 +179,8 @@ const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
     }
 
     await query(updateSql, [newRole, user.id]);
+    // Immediately invalidate active JWTs for the user whose privileged role was revoked
+    await bumpUserTokenVersion(user.id);
     await query(`UPDATE master_employees SET role = $1 WHERE employee_id = $2`, [newRole, user.employee_id]);
 
     await query(
@@ -356,6 +358,15 @@ exports.assignUserRole = async (req, res) => {
       updateSql = `UPDATE users SET role = $1, is_system_admin = TRUE, updated_at = NOW() WHERE id = $2`;
     }
     await query(updateSql, [actualRole, user.id]);
+
+    // Immediately invalidate existing JWTs when privileged access is actually downgraded/revoked
+    const isRoleDowngrade =
+      (user.is_system_admin && ['employee', 'hod'].includes(targetRole)) ||
+      (user.is_imc_lead && targetRole === 'imc') ||
+      (['employee', 'hod'].includes(targetRole) && ['system_admin', 'imc', 'head_management'].includes(prevRole));
+    if (isRoleDowngrade) {
+      await bumpUserTokenVersion(user.id);
+    }
 
     // Also sync role in master_employees table
     await query(`UPDATE master_employees SET role = $1 WHERE employee_id = $2`, [actualRole, user.employee_id]);
@@ -624,6 +635,10 @@ exports.toggleUserActiveStatus = async (req, res) => {
 
     await query('UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2', [newStatus, id]);
 
+    if (newStatus === false) {
+      await bumpUserTokenVersion(id);
+    }
+
     await auditLog(req.user.id, 'USER_STATUS_TOGGLED', null, { targetUser: id, newStatus }, req.ip);
 
     res.json({ success: true, is_active: newStatus });
@@ -741,59 +756,17 @@ exports.getRoleAudit = async (req, res) => {
   }
 };
 
-const { sendOtp, verifyOtp } = require('../utils/otpService');
+const SHARED_LOGIN_RETIRED_RESPONSE = {
+  error: 'Shared committee logins have been retired. Please sign in with your individual Employee ID and switch roles.',
+  code: 'SHARED_LOGIN_RETIRED'
+};
 
 exports.requestPasswordChangeOtp = async (req, res) => {
-  try {
-    const userRes = await query('SELECT employee_id, email FROM users WHERE id = $1', [req.user.id]);
-    if (userRes.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    
-    const user = userRes.rows[0];
-    if (!user.email) return res.status(400).json({ error: 'No email registered for your account.' });
-
-    const sent = await sendOtp(user.employee_id, user.email, 'admin_password_change');
-    if (sent) {
-      res.json({ success: true, message: 'OTP sent successfully.' });
-    } else {
-      res.status(500).json({ error: 'Failed to send OTP.' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  return res.status(410).json(SHARED_LOGIN_RETIRED_RESPONSE);
 };
 
 exports.updateRoleCredentials = async (req, res) => {
-  try {
-    const { targetRole, otp, newPassword } = req.body;
-    if (!targetRole || !otp || !newPassword) {
-      return res.status(400).json({ error: 'All fields are required.' });
-    }
-
-    const { validatePasswordStrength } = require('./authController');
-    const pwCheck = validatePasswordStrength(newPassword);
-    if (!pwCheck.valid) {
-      return res.status(400).json({ error: pwCheck.error, code: 'WEAK_PASSWORD' });
-    }
-
-    const userRes = await query('SELECT employee_id FROM users WHERE id = $1', [req.user.id]);
-    const employeeId = userRes.rows[0].employee_id;
-
-    const isValid = await verifyOtp(employeeId, 'admin_password_change', otp);
-    if (!isValid) return res.status(400).json({ error: 'Invalid or expired OTP.' });
-
-    const hash = await bcrypt.hash(newPassword, 12);
-
-    await query(
-      'UPDATE role_credentials SET password_hash = $1, updated_at = NOW() WHERE role = $2',
-      [hash, targetRole]
-    );
-
-    await auditLog(req.user.id, 'ROLE_PASSWORD_UPDATED', null, { targetRole }, req.ip);
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  return res.status(410).json(SHARED_LOGIN_RETIRED_RESPONSE);
 };
 
 exports.getManagementMembers = async (req, res) => {

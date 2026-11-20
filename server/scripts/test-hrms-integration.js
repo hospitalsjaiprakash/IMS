@@ -23,6 +23,7 @@ process.env.NODE_ENV = 'test';
 
 const http = require('http');
 const { createHmac } = require('node:crypto');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const request = require('supertest');
 const { pool, query } = require('../config/database');
@@ -467,8 +468,12 @@ async function runTests() {
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n--- Suite 4: Express API Security, Masking & Active JWT Lockout ---');
 
-    const adminUser = (await query(`SELECT id, employee_id, role FROM users WHERE TRIM(employee_id) = '00000' LIMIT 1`)).rows[0];
-    const adminToken = jwt.sign({ userId: adminUser.id, employeeId: adminUser.employee_id, role: 'system_admin' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const adminUser = (await query(`SELECT id, employee_id, role, token_version FROM users WHERE TRIM(employee_id) = '00000' LIMIT 1`)).rows[0];
+    const adminToken = jwt.sign(
+      { userId: adminUser.id, employeeId: adminUser.employee_id, role: 'system_admin', tv: adminUser.token_version ?? 1 },
+      process.env.JWT_SECRET,
+      { algorithm: 'HS256', expiresIn: '1h' }
+    );
 
     // 1. POST /api/admin/departments must return 405 HRMS_MANAGED_READ_ONLY
     const createDeptRes = await request(app)
@@ -505,13 +510,17 @@ async function runTests() {
 
     // 5. Active JWT middleware blocks inactive/disabled-portal user with 403 ACCOUNT_DISABLED
     const insUser = await query(
-      `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active)
-       VALUES ($1, 'Anita Rao', 'anita.rao@jphrc.test', $2, '__TEST_SENIOR_NURSE__', 'employee', TRUE)
-       RETURNING id`,
+      `INSERT INTO users (employee_id, full_name, email, department, designation, role, is_active, token_version)
+       VALUES ($1, 'Anita Rao', 'anita.rao@jphrc.test', $2, '__TEST_SENIOR_NURSE__', 'employee', TRUE, 1)
+       RETURNING id, token_version`,
       [TEST_EMP_CODE_1, TEST_DEPT_NAME]
     );
     createdTestUserId = insUser.rows[0].id;
-    const empToken = jwt.sign({ userId: createdTestUserId, employeeId: TEST_EMP_CODE_1, role: 'employee' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const empToken = jwt.sign(
+      { userId: createdTestUserId, employeeId: TEST_EMP_CODE_1, role: 'employee', tv: insUser.rows[0].token_version ?? 1 },
+      process.env.JWT_SECRET,
+      { algorithm: 'HS256', expiresIn: '1h' }
+    );
 
     const blockedMeRes = await request(app)
       .get('/api/auth/me')
@@ -534,20 +543,32 @@ async function runTests() {
       officePortalService.isEmployeeLockedOut('active', '2026-11-19T00:00:00Z', istAfterMidnight) === true
     );
 
-    // 2. Direct HTTP POST /api/auth/login & /api/auth/register-otp block inactive employee with 403
-    // Even if users.is_active is FALSE (set by HRMS sync), login must return 403 EMPLOYEE_INACTIVE (not 401)
-    await query(`UPDATE users SET is_active = FALSE WHERE id = $1`, [createdTestUserId]);
+    // 2. Direct HTTP POST /api/auth/login & /api/auth/register-otp anti-enumeration + HRMS lockout:
+    //    - Wrong password on inactive employee returns uniform 401 INVALID_CREDENTIALS (no status leak)
+    //    - Correct password on inactive employee returns 403 EMPLOYEE_INACTIVE even when users.is_active=FALSE
+    const testPwdHash = await bcrypt.hash('StrongHrms9!', 10);
+    await query(`UPDATE users SET is_active = FALSE, password_hash = $1 WHERE id = $2`, [testPwdHash, createdTestUserId]);
+    const wrongPwdInactiveRes = await request(app)
+      .post('/api/auth/login')
+      .send({ employeeId: TEST_EMP_CODE_1, password: 'WrongPassword9!' });
+    assert(
+      'POST /api/auth/login returns 401 INVALID_CREDENTIALS for wrong password on inactive employee (anti-enumeration)',
+      wrongPwdInactiveRes.status === 401 && wrongPwdInactiveRes.body.code === 'INVALID_CREDENTIALS'
+    );
+
     const blockedLoginRes = await request(app)
       .post('/api/auth/login')
-      .send({ employeeId: TEST_EMP_CODE_1, password: 'anypassword' });
+      .send({ employeeId: TEST_EMP_CODE_1, password: 'StrongHrms9!' });
     assert(
-      'POST /api/auth/login returns 403 EMPLOYEE_INACTIVE even when users.is_active=FALSE',
+      'POST /api/auth/login returns 403 EMPLOYEE_INACTIVE for correct password even when users.is_active=FALSE',
       blockedLoginRes.status === 403 && blockedLoginRes.body.code === 'EMPLOYEE_INACTIVE'
     );
 
+    // Clear password_hash so register-otp tests the inactive-HRMS gate rather than ALREADY_REGISTERED
+    await query(`UPDATE users SET password_hash = NULL WHERE id = $1`, [createdTestUserId]);
     const blockedOtpRes = await request(app)
       .post('/api/auth/register-otp')
-      .send({ fullName: 'Anita Rao', employeeId: TEST_EMP_CODE_1, email: 'anita.rao@jphrc.test', password: 'password123' });
+      .send({ fullName: 'Anita Rao', employeeId: TEST_EMP_CODE_1, email: 'anita.rao@jphrc.test', password: 'StrongHrms9!' });
     assert(
       'POST /api/auth/register-otp returns 403 EMPLOYEE_INACTIVE for inactive employee',
       blockedOtpRes.status === 403 && blockedOtpRes.body.code === 'EMPLOYEE_INACTIVE'

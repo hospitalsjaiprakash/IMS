@@ -1,56 +1,107 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
 import { authApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
-import { Alert, Spinner, SkeletonDetail } from '../../components/ui';
-import { User, Bell, Shield, Info, KeyRound, Lock, Send, Eye, EyeOff, CheckCircle2, AlertCircle, Edit2, Save, X, Phone, MessageSquare, Mail } from 'lucide-react';
+import { Spinner, SkeletonDetail } from '../../components/ui';
+import {
+  Shield,
+  Info,
+  KeyRound,
+  Lock,
+  Send,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  AlertCircle,
+  Edit2,
+  Phone,
+  Mail,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function SettingsPage() {
-  const { user, refreshUser, logout } = useAuthStore();
+  const { user, refreshUser, clearLocalSession, updateSession } = useAuthStore();
   const navigate = useNavigate();
+
+  const isRootAdmin = String(user?.employeeId || '').trim() === '00000';
 
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Artificial delay to show consistent loading skeleton transition
     const timer = setTimeout(() => setIsLoading(false), 300);
     return () => clearTimeout(timer);
   }, []);
 
-  // Profile editing state
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [emailInput, setEmailInput] = useState(user?.email || '');
-  const [phoneInput, setPhoneInput] = useState(user?.phone || '');
+  // Root System Admin (00000) 2-step Recovery Email Change state (Current Password + OTP)
+  const [emailStep, setEmailStep] = useState(null); // null | 'request' | 'verify'
+  const [newEmailInput, setNewEmailInput] = useState('');
+  const [currentPwdInput, setCurrentPwdInput] = useState('');
+  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
+  const [emailOtpInput, setEmailOtpInput] = useState('');
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailError, setEmailError] = useState('');
 
-  const updateContactMutation = useMutation({
-    mutationFn: (data) => authApi.updateContactInfo(data),
-    onSuccess: (res) => {
-      toast.success('Contact information updated successfully!');
-      if (res?.data?.user) {
-        useAuthStore.getState().updateUser(res.data.user);
-      }
-      refreshUser();
-      setIsEditingProfile(false);
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.error || 'Failed to update contact info');
-    }
-  });
-
-  const handleStartEdit = () => {
-    setEmailInput(user?.email || '');
-    setPhoneInput(user?.phone || '');
-    setIsEditingProfile(true);
+  const resetEmailForm = () => {
+    setEmailStep(null);
+    setNewEmailInput('');
+    setCurrentPwdInput('');
+    setEmailOtpInput('');
+    setEmailError('');
+    setShowCurrentPwd(false);
   };
 
-  const handleSaveContactInfo = (e) => {
+  const handleRequestAdminEmailOtp = async (e) => {
     e.preventDefault();
-    updateContactMutation.mutate({
-      email: emailInput,
-      phone: phoneInput
-    });
+    const trimmedEmail = newEmailInput.trim();
+    if (!currentPwdInput || !trimmedEmail) {
+      setEmailError('Please enter your current password and new recovery email address.');
+      return;
+    }
+    setEmailLoading(true);
+    setEmailError('');
+    try {
+      const res = await authApi.requestAdminEmailOtp({
+        currentPassword: currentPwdInput,
+        newEmail: trimmedEmail,
+      });
+      toast.success(res.data?.message || 'Verification OTP sent to your new recovery email.');
+      setEmailStep('verify');
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Failed to send verification OTP.';
+      setEmailError(msg);
+      toast.error(msg);
+    } finally {
+      setEmailLoading(false);
+    }
+  };
+
+  const handleVerifyAdminEmailChange = async (e) => {
+    e.preventDefault();
+    if (!emailOtpInput.trim() || emailOtpInput.trim().length !== 6) {
+      setEmailError('Please enter the 6-digit verification OTP sent to your new email.');
+      return;
+    }
+    setEmailLoading(true);
+    setEmailError('');
+    try {
+      const res = await authApi.updateContactInfo({
+        newEmail: newEmailInput.trim(),
+        currentPassword: currentPwdInput,
+        otp: emailOtpInput.trim(),
+      });
+      if (res?.data?.token || res?.data?.user) {
+        updateSession(res.data.token, res.data.user);
+      }
+      await refreshUser();
+      toast.success('Recovery email updated! Other active sessions have been signed out.');
+      resetEmailForm();
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Failed to update recovery email.';
+      setEmailError(msg);
+      toast.error(msg);
+    } finally {
+      setEmailLoading(false);
+    }
   };
 
   // Change password state
@@ -62,8 +113,6 @@ export default function SettingsPage() {
   const [cpError, setCpError] = useState('');
   const [showPwd, setShowPwd] = useState(false);
 
-
-
   const handleRequestCpOtp = async () => {
     setCpLoading(true);
     setCpError('');
@@ -72,8 +121,9 @@ export default function SettingsPage() {
       toast.success('Verification OTP sent to your email.');
       setCpStep('otp');
     } catch (err) {
-      setCpError(err.response?.data?.error || 'Failed to send OTP.');
-      toast.error(err.response?.data?.error || 'Failed to send OTP.');
+      const msg = err.response?.data?.error || 'Failed to send OTP.';
+      setCpError(msg);
+      toast.error(msg);
     } finally {
       setCpLoading(false);
     }
@@ -85,12 +135,20 @@ export default function SettingsPage() {
       setCpError('Please enter OTP and new password.');
       return;
     }
-    if (cpNewPassword.length < 6 || !/[A-Za-z]/.test(cpNewPassword) || !/([0-9]|[^A-Za-z0-9])/.test(cpNewPassword)) {
+    if (
+      cpNewPassword.length < 6 ||
+      !/[A-Za-z]/.test(cpNewPassword) ||
+      !/([0-9]|[^A-Za-z0-9])/.test(cpNewPassword)
+    ) {
       setCpError('Password must be at least 6 characters and include at least one letter and one number or special character.');
       return;
     }
-    if (cpConfirmPassword && cpNewPassword !== cpConfirmPassword) {
-      setCpError('New password and confirmation do not match.');
+    if (new TextEncoder().encode(cpNewPassword).length > 72) {
+      setCpError('Password must not exceed 72 bytes.');
+      return;
+    }
+    if (!cpConfirmPassword || cpNewPassword !== cpConfirmPassword) {
+      setCpError('Please confirm your new password — both password fields must match.');
       return;
     }
     setCpLoading(true);
@@ -99,14 +157,17 @@ export default function SettingsPage() {
       await authApi.employeeResetPassword({
         employeeId: user?.employeeId,
         otp: cpOtp,
-        newPassword: cpNewPassword
+        newPassword: cpNewPassword,
       });
       setCpStep(null);
+      setCpOtp('');
+      setCpNewPassword('');
+      setCpConfirmPassword('');
       toast.success('Password changed successfully! Please login again.');
-      setTimeout(() => {
-        logout();
-        navigate('/login');
-      }, 1500);
+      // Server already bumped token_version on password reset; clear local session immediately
+      // to avoid racing with background polls or issuing a redundant /auth/logout call.
+      clearLocalSession({ broadcast: true });
+      navigate('/login', { replace: true });
     } catch (err) {
       setCpError(err.response?.data?.error || 'Invalid OTP or failed to reset password.');
     } finally {
@@ -133,7 +194,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Profile card with editable contact info */}
+      {/* Profile card (HRMS-managed read-only for employees; Password+OTP recovery email update for root 00000 only) */}
       <div className="card p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-5 border-b border-slate-200">
           <div className="flex items-center gap-3.5">
@@ -150,76 +211,137 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {!isEditingProfile && (
+          {isRootAdmin && emailStep === null && (
             <button
-              onClick={handleStartEdit}
+              type="button"
+              onClick={() => {
+                setEmailError('');
+                setNewEmailInput('');
+                setCurrentPwdInput('');
+                setEmailOtpInput('');
+                setEmailStep('request');
+              }}
               className="btn-secondary btn-sm flex items-center justify-center gap-1.5 self-start sm:self-center transition-all hover:border-blue-300 hover:bg-blue-50/50 hover:text-blue-700 font-medium"
             >
               <Edit2 size={14} className="text-blue-600" />
-              <span>Edit Contact Info</span>
+              <span>Update Recovery Email</span>
             </button>
           )}
         </div>
 
-        {isEditingProfile ? (
-          <form onSubmit={handleSaveContactInfo} className="space-y-4 pt-1">
-            <div className="bg-blue-50 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-800 flex items-start gap-2.5">
-              <Info size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
-              <span>
-                You can update your registered Email Address and Phone Number below. These details will be used for system notifications and verification OTPs.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                  <Mail size={14} className="text-slate-500" />
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="e.g. employee@hospital.com"
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-blue-500 rounded-xl text-slate-900 outline-none text-sm transition-all shadow-sm"
-                />
+        {isRootAdmin && emailStep !== null ? (
+          <div className="space-y-4 pt-1">
+            {emailError && (
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
+                <AlertCircle size={15} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <span>{emailError}</span>
               </div>
+            )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                  <Phone size={14} className="text-slate-500" />
-                  Phone Number
-                </label>
-                <input
-                  type="text"
-                  value={phoneInput}
-                  onChange={(e) => setPhoneInput(e.target.value)}
-                  placeholder="e.g. 9876543210"
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-blue-500 rounded-xl text-slate-900 outline-none text-sm transition-all shadow-sm font-mono"
-                />
-              </div>
-            </div>
+            {emailStep === 'request' && (
+              <form onSubmit={handleRequestAdminEmailOtp} className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-800 flex items-start gap-2.5">
+                  <Info size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                  <span>
+                    To update the root System Admin recovery email, verify your current password first. A 6-digit OTP will be sent to the new email address before saving.
+                  </span>
+                </div>
 
-            <div className="flex gap-2 justify-end pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setIsEditingProfile(false)}
-                className="btn-secondary btn-sm"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={updateContactMutation.isPending}
-                className="btn bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-70"
-              >
-                {updateContactMutation.isPending ? <Spinner size={14} className="text-white" /> : <Save size={14} />}
-                Save Changes
-              </button>
-            </div>
-          </form>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                      <Lock size={14} className="text-slate-500" />
+                      Current Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showCurrentPwd ? 'text' : 'password'}
+                        value={currentPwdInput}
+                        onChange={(e) => { setCurrentPwdInput(e.target.value); setEmailError(''); }}
+                        placeholder="Enter current password"
+                        autoComplete="current-password"
+                        className="w-full px-3.5 py-2.5 pr-10 bg-white border border-slate-200 focus:border-blue-500 rounded-xl text-slate-900 outline-none text-sm transition-all shadow-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPwd(!showCurrentPwd)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        {showCurrentPwd ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                      <Mail size={14} className="text-slate-500" />
+                      New Recovery Email
+                    </label>
+                    <input
+                      type="email"
+                      value={newEmailInput}
+                      onChange={(e) => { setNewEmailInput(e.target.value); setEmailError(''); }}
+                      placeholder="e.g. admin-recovery@jphrc.org"
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-blue-500 rounded-xl text-slate-900 outline-none text-sm transition-all shadow-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 justify-end pt-3 border-t border-slate-100">
+                  <button type="button" onClick={resetEmailForm} className="btn-secondary btn-sm">
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={emailLoading || !currentPwdInput || !newEmailInput.trim()}
+                    className="btn bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-70"
+                  >
+                    {emailLoading ? <Spinner size={14} className="text-white" /> : <Send size={14} />}
+                    Send Verification OTP
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {emailStep === 'verify' && (
+              <form onSubmit={handleVerifyAdminEmailChange} className="space-y-4 bg-slate-50 rounded-xl p-4 border border-slate-200">
+                <p className="text-xs text-slate-600">
+                  Enter the 6-digit verification code sent to <strong>{newEmailInput.trim()}</strong> to confirm updating your recovery email. All other active sessions will be signed out.
+                </p>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Verification OTP</label>
+                  <input
+                    value={emailOtpInput}
+                    onChange={(e) => { setEmailOtpInput(e.target.value.replace(/\D/g, '').slice(0, 6)); setEmailError(''); }}
+                    placeholder="000000"
+                    maxLength={6}
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-blue-500 rounded-xl text-slate-900 outline-none text-sm font-mono tracking-[0.25em] text-center font-bold"
+                  />
+                </div>
+                <div className="flex gap-2 justify-end pt-1">
+                  <button type="button" onClick={resetEmailForm} className="btn-secondary btn-sm">
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={emailLoading || emailOtpInput.length !== 6}
+                    className="btn bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-70"
+                  >
+                    {emailLoading ? <Spinner size={14} className="text-white" /> : <CheckCircle2 size={14} />}
+                    Verify &amp; Save Recovery Email
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         ) : (
           <div className="space-y-3 pt-1">
+            {!isRootAdmin && (
+              <div className="bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-600 flex items-center gap-2">
+                <Info size={14} className="text-slate-500 flex-shrink-0" />
+                <span>Synced from OfficePortal HRMS — contact HR to update your email or phone number.</span>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6 text-sm">
               <div className="py-2 border-b border-slate-100 flex justify-between sm:block">
                 <span className="text-xs font-medium text-slate-400 block mb-0.5">Full Name</span>
@@ -238,7 +360,9 @@ export default function SettingsPage() {
                 <span className="badge-blue inline-block mt-0.5 capitalize">{user?.role?.replace(/_/g, ' ')}</span>
               </div>
               <div className="py-2 border-b sm:border-b-0 border-slate-100 flex justify-between sm:block">
-                <span className="text-xs font-medium text-slate-400 block mb-0.5">Email Address</span>
+                <span className="text-xs font-medium text-slate-400 block mb-0.5">
+                  {isRootAdmin ? 'Recovery Email Address' : 'Official Email Address'}
+                </span>
                 <span className="text-slate-800 font-medium break-all">
                   {user?.email ? (
                     <span className="flex items-center gap-1.5">
@@ -407,20 +531,16 @@ export default function SettingsPage() {
               </button>
               <button
                 type="submit"
-                disabled={cpLoading || cpOtp.length !== 6 || !cpNewPassword}
+                disabled={cpLoading || cpOtp.length !== 6 || !cpNewPassword || !cpConfirmPassword}
                 className="btn bg-green-600 hover:bg-green-700 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm disabled:opacity-70"
               >
                 {cpLoading ? <Spinner size={14} className="text-white" /> : <CheckCircle2 size={14} />}
-                Update Password & Re-Login
+                Update Password &amp; Re-Login
               </button>
             </div>
           </form>
         )}
       </div>
-
-
-
-
     </div>
   );
 }

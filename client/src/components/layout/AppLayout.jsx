@@ -7,6 +7,7 @@ import {
   ChevronRight, Menu, X, Shield, Search, Paperclip, Send, Megaphone
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
+import { useIdleLogout } from '../../hooks/useIdleLogout';
 import { notificationsApi, authApi, attachmentsApi } from '../../api';
 import { useQuery } from '@tanstack/react-query';
 import { timeAgo } from '../../utils/helpers';
@@ -65,6 +66,9 @@ export default function AppLayout() {
   const [viewerFile, setViewerFile] = useState(null);
   const notifRef = useRef(null);
 
+  // Silent 60-minute inactivity auto-logout on shared hospital workstations
+  useIdleLogout();
+
 
   const { data: notifData, refetch: refetchNotifs } = useQuery({
     queryKey: ['notifications'],
@@ -99,8 +103,8 @@ export default function AppLayout() {
     };
   }, []);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
@@ -133,7 +137,7 @@ export default function AppLayout() {
   };
 
   const renderSidebarContent = () => {
-    const isRootSystemAccount = ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(String(user?.employeeId || '').trim().toUpperCase());
+    const isRootSystemAccount = String(user?.employeeId || '').trim() === '00000';
     const isHod = !isRootSystemAccount && (
       user?.role === 'hod' ||
       Boolean(user?.isHod) ||

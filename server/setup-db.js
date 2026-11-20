@@ -50,6 +50,7 @@ const migrations = [
   '035_allow_any_employee_reviewer.sql',
   '036_hrms_v1_complete_integration.sql',
   '037_hrms_v1_text_columns_hardening.sql',
+  '038_auth_security_hardening.sql',
 ];
 
 function splitSqlStatements(sql) {

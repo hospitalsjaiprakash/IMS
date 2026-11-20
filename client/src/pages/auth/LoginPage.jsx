@@ -108,12 +108,20 @@ export default function LoginPage() {
       setError('Password must be at least 6 characters and include at least one letter and one number or special character.');
       return;
     }
+    if (new TextEncoder().encode(regForm.password).length > 72) {
+      setError('Password must not exceed 72 bytes.');
+      return;
+    }
     const result = await requestRegistrationOtp(regForm);
     if (result.success) {
-      setSuccessMsg(result.message || 'OTP sent to your email address.');
+      setSuccessMsg(result.message || 'Verification OTP sent to your official HRMS email address.');
       setMode('register_otp');
     } else {
-      setError(result.error);
+      if (result.code === 'OTP_COOLDOWN' && result.retryAfterSeconds) {
+        setError(`Please wait ${result.retryAfterSeconds} seconds before requesting another OTP.`);
+      } else {
+        setError(result.error);
+      }
     }
   };
 
@@ -146,11 +154,21 @@ export default function LoginPage() {
         employeeId: forgotForm.employeeId,
         email: forgotForm.email
       });
-      setSuccessMsg(res.data.message || 'OTP sent to your email address.');
+      setSuccessMsg(
+        res.data.message ||
+        'If your details match an active registered account, a verification OTP has been sent to the registered email.'
+      );
       setMode('forgot_otp');
     } catch (err) {
+      const status = err.response?.status;
+      const code = err.response?.data?.code;
+      const retryAfter = err.response?.data?.retryAfterSeconds;
       const errData = err.response?.data?.error;
-      setError(typeof errData === 'string' ? errData : (errData?.message || 'Failed to send OTP. Please check your credentials.'));
+      if (status === 429 && code === 'OTP_COOLDOWN' && retryAfter) {
+        setError(`Please wait ${retryAfter} seconds before requesting another OTP.`);
+      } else {
+        setError(typeof errData === 'string' ? errData : (errData?.message || 'Unable to process password reset request right now. Please try again.'));
+      }
     } finally {
       setLocalLoading(false);
     }
@@ -164,6 +182,10 @@ export default function LoginPage() {
     }
     if (forgotForm.newPassword.length < 6 || !/[A-Za-z]/.test(forgotForm.newPassword) || !/([0-9]|[^A-Za-z0-9])/.test(forgotForm.newPassword)) {
       setError('Password must be at least 6 characters and include at least one letter and one number or special character.');
+      return;
+    }
+    if (new TextEncoder().encode(forgotForm.newPassword).length > 72) {
+      setError('Password must not exceed 72 bytes.');
       return;
     }
     setLocalLoading(true);
@@ -391,7 +413,7 @@ export default function LoginPage() {
 
 
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Email Address</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Official Email Address</label>
                   <input
                     name="email"
                     type="email"
@@ -400,6 +422,9 @@ export default function LoginPage() {
                     placeholder="e.g. sourav.barik@jphrc.org"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
+                  <p className="text-xs text-slate-500 mt-1">
+                    Must match your official email registered in OfficePortal HRMS.
+                  </p>
                 </div>
 
                 <div>
