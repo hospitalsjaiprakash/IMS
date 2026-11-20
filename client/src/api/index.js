@@ -28,26 +28,34 @@ authApi_axios.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 and 403 ACCOUNT_DISABLED globally — clear token and redirect to login
+// Handle 401 (including SESSION_REVOKED) and 403 ACCOUNT_DISABLED globally — clear session and redirect to login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     const status = err.response?.status;
     const code = err.response?.data?.code;
-    if (status === 401 || (status === 403 && code === 'ACCOUNT_DISABLED')) {
+    if (
+      (status === 401 && code !== 'INVALID_PASSWORD') ||
+      (status === 403 && code === 'ACCOUNT_DISABLED')
+    ) {
       const url = err.config?.url || '';
       if (
         url.includes('/auth/login') ||
-        url.includes('/auth/committee-login') ||
-        url.includes('/auth/switch-role') ||
-        url.includes('/auth/leave-role') ||
+        url.includes('/auth/logout') ||
         url.includes('/auth/register')
       ) {
         return Promise.reject(err);
       }
       sessionStorage.removeItem('ims_token');
       sessionStorage.removeItem('ims_user');
-      window.location.href = '/';
+      sessionStorage.removeItem('ims_query_cache');
+      sessionStorage.removeItem('ims_last_activity_at');
+      try {
+        localStorage.removeItem('ims_last_activity_at');
+      } catch {
+        // ignore
+      }
+      window.location.href = '/login';
     }
     return Promise.reject(err);
   }
@@ -59,13 +67,12 @@ export const authApi = {
   requestRegistrationOtp: (data) => authApi_axios.post('/auth/register-otp', data),
   register: (data) => authApi_axios.post('/auth/register', data),
   login: (data) => authApi_axios.post('/auth/login', data),
-  committeeLogin: (data) => authApi_axios.post('/auth/committee-login', data),
+  logout: () => api.post('/auth/logout'),
   switchRole: (data) => api.post('/auth/switch-role', data),
-  forgotPassword: (data) => api.post('/auth/forgot-password', data),
-  resetPassword: (data) => api.post('/auth/reset-password', data),
   employeeForgotPassword: (data) => api.post('/auth/employee-forgot-password', data),
   employeeResetPassword: (data) => api.post('/auth/employee-reset-password', data),
   changePasswordOtp: () => api.post('/auth/change-password-otp'),
+  requestAdminEmailOtp: (data) => api.post('/auth/admin-email-otp', data),
   getMe: () => api.get('/auth/me'),
   getCommitteeMembers: () => api.get('/auth/committee-members'),
   leaveRole: (data) => api.post('/auth/leave-role', data),
@@ -144,8 +151,6 @@ export const adminApi = {
   getConfig: () => api.get('/admin/config'),
   updateConfig: (data) => api.put('/admin/config', data),
   getAllAttachments: () => api.get('/admin/attachments'),
-  requestRolePasswordOtp: () => api.post('/admin/role-credentials/otp'),
-  updateRoleCredentials: (data) => api.put('/admin/role-credentials', data),
   getImcMembers: () => api.get('/admin/imc-members'),
   assignImc: (data) => api.post('/admin/assign-imc', data),
   assignRole: (data) => api.post('/admin/assign-role', data),

@@ -1183,7 +1183,9 @@ async function upsertMasterEmployee(client, emp, fallbackTimestamp = null) {
       const spLock = await runInSavepoint(client, 'sp_lock_user', async () => {
         return client.query(
           `UPDATE users
-           SET is_active = FALSE, updated_at = NOW()
+           SET is_active = FALSE,
+               token_version = COALESCE(token_version, 1) + 1,
+               updated_at = NOW()
            WHERE employee_id = $1 AND is_active = TRUE
            RETURNING id`,
           [empCode]
@@ -1246,7 +1248,9 @@ async function applyEmployeeDeletion(client, portalId, empCode, deletedAtRaw) {
     const spLock = await runInSavepoint(client, 'sp_lock_deleted_user', async () => {
       return client.query(
         `UPDATE users
-         SET is_active = FALSE, updated_at = NOW()
+         SET is_active = FALSE,
+             token_version = COALESCE(token_version, 1) + 1,
+             updated_at = NOW()
          WHERE employee_id = $1 AND is_active = TRUE
          RETURNING id`,
         [affectedEmpCode]

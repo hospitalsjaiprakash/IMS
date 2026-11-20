@@ -235,7 +235,13 @@ io.use(async (socket, next) => {
     socket.user = user;
     return next();
   } catch (err) {
-    return next(new Error(err.code === 'ACCOUNT_DISABLED' ? 'ACCOUNT_DISABLED' : 'UNAUTHORIZED'));
+    const code =
+      err.code === 'ACCOUNT_DISABLED'
+        ? 'ACCOUNT_DISABLED'
+        : err.code === 'SESSION_REVOKED'
+          ? 'SESSION_REVOKED'
+          : 'UNAUTHORIZED';
+    return next(new Error(code));
   }
 });
 

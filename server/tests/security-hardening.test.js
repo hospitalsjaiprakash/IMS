@@ -26,10 +26,17 @@ const { buildLetterHtml, escapeHtml } = require('../templates/letterHtmlTemplate
 const { generateLetterPdf, closeBrowser } = require('../services/pdfService');
 const { uploadIncidentAttachments, hasValidMagicBytes } = require('../middleware/upload');
 const { canNonPrivilegedUserViewLetter } = require('../utils/accessControl');
+const { computeOtpMac } = require('../utils/otpService');
 
 function signTestJwt(user, extra = {}) {
   return jwt.sign(
-    { userId: user.id, employeeId: user.employee_id, role: user.role, ...extra },
+    {
+      userId: user.id,
+      employeeId: user.employee_id,
+      role: user.role,
+      tv: typeof user.token_version === 'number' ? user.token_version : 1,
+      ...extra
+    },
     process.env.JWT_SECRET,
     { algorithm: 'HS256', expiresIn: '1h' }
   );
@@ -732,16 +739,18 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
       assert.equal(res.body.code, 'WEAK_PASSWORD', `Expected WEAK_PASSWORD for "${weak}"`);
     }
 
-    // Complex 6-char password passes validation (reaches employee lookup -> 404, not 400 WEAK_PASSWORD)
+    // Complex 6-char non-trivial password passes validation (reaches HR lookup -> 400 REGISTRATION_VERIFICATION_FAILED, not WEAK_PASSWORD)
     const strongRes = await request(app)
       .post('/api/auth/register-otp')
+      .set('X-Forwarded-For', '10.20.30.11')
       .send({
         fullName: 'Strong Pw User',
         employeeId: 'NONEXISTENT_999',
         email: 'strong@example.com',
-        password: 'Abc123'
+        password: 'K9x#m2'
       });
-    assert.equal(strongRes.status, 404);
+    assert.equal(strongRes.status, 400);
+    assert.equal(strongRes.body.code, 'REGISTRATION_VERIFICATION_FAILED');
 
     // Weak password also rejected on employee password reset
     const resetWeakRes = await request(app)
@@ -1031,13 +1040,13 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
       .set('Authorization', `Bearer ${outsiderToken}`)
       .expect(403);
 
-    // 8. PUT /api/admin/role-credentials must enforce password complexity policy
-    const weakRoleRes = await request(app)
+    // 8. PUT /api/admin/role-credentials is retired (410 SHARED_LOGIN_RETIRED)
+    const retiredRoleRes = await request(app)
       .put('/api/admin/role-credentials')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ targetRole: 'imc', otp: '000000', newPassword: 'onlyletters' })
-      .expect(400);
-    assert.equal(weakRoleRes.body.code, 'WEAK_PASSWORD');
+      .expect(410);
+    assert.equal(retiredRoleRes.body.code, 'SHARED_LOGIN_RETIRED');
 
     // 9. Blank-department letters must fail CLOSED for unrelated HODs
     const canViewBlankDept = canNonPrivilegedUserViewLetter(
@@ -1151,12 +1160,12 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
     assert.equal(provisionedAdmin.rows[0].is_active, true);
     assert.equal(provisionedAdmin.rows[0].password_hash, null, 'Provisioned privileged user must have password_hash = NULL');
 
-    // Attempt login with legacy hardcoded password '123456' -> must fail with 401 NOT_REGISTERED
+    // Attempt login with legacy hardcoded password '123456' -> must fail with uniform 401 INVALID_CREDENTIALS (anti-enumeration)
     const adminLoginRes = await request(app)
       .post('/api/auth/login')
       .send({ employeeId: unregAdminEmpId, password: '123456' })
       .expect(401);
-    assert.equal(adminLoginRes.body.code, 'NOT_REGISTERED');
+    assert.equal(adminLoginRes.body.code, 'INVALID_CREDENTIALS');
 
     // 2. Admin maps another unregistered master employee to IMC Lead via POST /api/admin/assign-imc
     await request(app)
@@ -1180,7 +1189,7 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
       .post('/api/auth/login')
       .send({ employeeId: unregImcEmpId, password: '123456' })
       .expect(401);
-    assert.equal(imcLoginRes.body.code, 'NOT_REGISTERED');
+    assert.equal(imcLoginRes.body.code, 'INVALID_CREDENTIALS');
 
     // 3. Admin maps unregistered master employee as department leader via POST /api/admin/map-department-leader
     await request(app)
@@ -1202,7 +1211,7 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
       .post('/api/auth/login')
       .send({ employeeId: unregLeaderEmpId, password: '123456' })
       .expect(401);
-    assert.equal(leaderLoginRes.body.code, 'NOT_REGISTERED');
+    assert.equal(leaderLoginRes.body.code, 'INVALID_CREDENTIALS');
 
     // 4. Admin maps unregistered master employee as department reviewer via POST /api/admin/department-reviewers
     await request(app)
@@ -1224,9 +1233,9 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
       .post('/api/auth/login')
       .send({ employeeId: unregReviewerEmpId, password: '123456' })
       .expect(401);
-    assert.equal(reviewerLoginRes.body.code, 'NOT_REGISTERED');
+    assert.equal(reviewerLoginRes.body.code, 'INVALID_CREDENTIALS');
 
-    // 5. Unregistered skeleton user cannot abuse employee-forgot-password before registration
+    // 5. Unregistered skeleton user cannot abuse employee-forgot-password before registration (returns uniform 200 anti-enumeration and creates ZERO OTP rows)
     const forgotUnregRes = await request(app)
       .post('/api/auth/employee-forgot-password')
       .set('X-Forwarded-For', '10.20.30.41')
@@ -1234,37 +1243,44 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
         employeeId: unregAdminEmpId,
         email: `${unregAdminEmpId.toLowerCase()}@test.jphrc.local`
       })
-      .expect(400);
-    assert.equal(forgotUnregRes.body.code, 'NOT_REGISTERED');
+      .expect(200);
+    assert.equal(forgotUnregRes.body.success, true);
+    const unregOtpCheck = await query(
+      `SELECT id FROM security_otps WHERE employee_id = $1 AND action = 'employee_password_reset'`,
+      [unregAdminEmpId]
+    );
+    assert.equal(unregOtpCheck.rows.length, 0, 'Unregistered skeleton user must NOT receive a password-reset OTP');
 
     // 6. End-to-end OTP self-registration on skeleton privileged account:
-    //    - 1-char fullName bypass is blocked (401 NAME_MISMATCH)
+    //    - 1-char fullName bypass is blocked (400 REGISTRATION_VERIFICATION_FAILED)
     //    - deactivated skeleton is blocked (403 ACCOUNT_DEACTIVATED)
     //    - legitimate registration preserves canonical full_name & is_system_admin flag and hashes at bcrypt cost 12
+    const unregAdminEmail = `${unregAdminEmpId.toLowerCase()}@test.jphrc.local`;
     createdOtpEmpIds.push(unregAdminEmpId);
     const seedRegOtp = async (code) => {
-      const hash = crypto.createHash('sha256').update(code).digest('hex');
+      const hash = computeOtpMac(unregAdminEmpId, 'registration', unregAdminEmail, code);
       await query('DELETE FROM security_otps WHERE employee_id = $1 AND action = $2', [unregAdminEmpId, 'registration']);
       await query(
-        `INSERT INTO security_otps (employee_id, action, otp_hash, attempts, max_attempts, expires_at)
-         VALUES ($1, 'registration', $2, 0, 5, NOW() + INTERVAL '10 minutes')`,
-        [unregAdminEmpId, hash]
+        `INSERT INTO security_otps (employee_id, action, otp_hash, target_email, attempts, max_attempts, expires_at)
+         VALUES ($1, 'registration', $2, $3, 0, 5, NOW() + INTERVAL '10 minutes')`,
+        [unregAdminEmpId, hash, unregAdminEmail]
       );
     };
 
-    // 6a. 1-character fullName bypass must fail with 401 NAME_MISMATCH
+    // 6a. 1-character fullName bypass must fail with 400 REGISTRATION_VERIFICATION_FAILED
     await seedRegOtp('112233');
     const shortNameRes = await request(app)
       .post('/api/auth/register')
+      .set('X-Forwarded-For', '10.20.30.42')
       .send({
         fullName: 'a',
         employeeId: unregAdminEmpId,
-        email: `${unregAdminEmpId.toLowerCase()}@test.jphrc.local`,
+        email: unregAdminEmail,
         password: 'StrongReg123!',
         otp: '112233'
       })
-      .expect(401);
-    assert.equal(shortNameRes.body.code, 'NAME_MISMATCH');
+      .expect(400);
+    assert.equal(shortNameRes.body.code, 'REGISTRATION_VERIFICATION_FAILED');
 
     // 6b. Manually deactivated skeleton account must fail with 403 ACCOUNT_DEACTIVATED
     await query('UPDATE users SET is_active = FALSE WHERE id = $1', [provisionedAdmin.rows[0].id]);
@@ -1325,66 +1341,30 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // CONSISTENT BCRYPT COST 12 & SAFE ROLE LOOKUP IN resetPassword()
+  // RETIRED SHARED COMMITTEE ENDPOINTS (410 SHARED_LOGIN_RETIRED)
   // ─────────────────────────────────────────────────────────────────────────
-  test('Consistent bcrypt cost 12: POST /api/auth/reset-password rejects invalid/prototype targetRole and hashes with cost 12', async () => {
-    // Prototype property lookup (e.g., targetRole: 'toString') must return 400 (never 500)
-    await request(app)
+  test('Retired shared committee logins: POST /api/auth/reset-password and /committee-login return 410 SHARED_LOGIN_RETIRED without mutating role_credentials', async () => {
+    const res1 = await request(app)
       .post('/api/auth/reset-password')
+      .set('X-Forwarded-For', '10.20.30.43')
       .send({
         username: 'IMC2026',
         targetRole: 'toString',
         otp: '123456',
         newPassword: 'StrongReset123!'
       })
-      .expect(400);
+      .expect(410);
+    assert.equal(res1.body.code, 'SHARED_LOGIN_RETIRED');
 
-    // Save current imc role_credentials row and verify resetPassword writes a cost-12 bcrypt hash
-    const origCredRes = await query(
-      `SELECT role, username, password_hash, updated_at FROM role_credentials WHERE role = 'imc' LIMIT 1`
-    );
-    assert.equal(origCredRes.rows.length, 1, 'Expected imc row in role_credentials');
-    const origCred = origCredRes.rows[0];
-    createdOtpEmpIds.push('SYS_IMC');
-
-    const resetOtp = '654321';
-    const otpHash = crypto.createHash('sha256').update(resetOtp).digest('hex');
-    const resetStartedAt = new Date();
-
-    try {
-      await query(`DELETE FROM security_otps WHERE employee_id = 'SYS_IMC' AND action = 'password_reset'`);
-      await query(
-        `INSERT INTO security_otps (employee_id, action, otp_hash, attempts, max_attempts, expires_at)
-         VALUES ('SYS_IMC', 'password_reset', $1, 0, 5, NOW() + INTERVAL '10 minutes')`,
-        [otpHash]
-      );
-
-      await request(app)
-        .post('/api/auth/reset-password')
-        .send({
-          username: origCred.username,
-          targetRole: 'imc',
-          otp: resetOtp,
-          newPassword: 'ResetCost12Pass!'
-        })
-        .expect(200);
-
-      const updatedCredRes = await query(
-        `SELECT password_hash FROM role_credentials WHERE role = 'imc'`
-      );
-      const newHash = updatedCredRes.rows[0].password_hash;
-      assert.match(newHash, /^\$2[ab]\$12\$/, `Expected bcrypt cost 12 hash, got ${newHash.slice(0, 10)}`);
-      assert.equal(await bcrypt.compare('ResetCost12Pass!', newHash), true);
-    } finally {
-      await query(
-        `UPDATE role_credentials SET password_hash = $1, updated_at = $2 WHERE role = 'imc'`,
-        [origCred.password_hash, origCred.updated_at]
-      );
-      await query(`DELETE FROM security_otps WHERE employee_id = 'SYS_IMC' AND action = 'password_reset'`).catch(() => {});
-      await query(
-        `DELETE FROM audit_logs WHERE action = 'PASSWORD_RESET' AND created_at >= $1`,
-        [resetStartedAt]
-      ).catch(() => {});
-    }
+    const res2 = await request(app)
+      .post('/api/auth/committee-login')
+      .set('X-Forwarded-For', '10.20.30.43')
+      .send({
+        username: 'IMC2026',
+        targetRole: 'imc',
+        password: 'AnyPassword1!'
+      })
+      .expect(410);
+    assert.equal(res2.body.code, 'SHARED_LOGIN_RETIRED');
   });
 });

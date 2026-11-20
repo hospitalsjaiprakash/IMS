@@ -3,8 +3,26 @@ const { query } = require('../config/database');
 const { isEmployeeLockedOut } = require('../services/officePortalService');
 
 /**
+ * Atomically increment a user's token_version so all previously issued JWTs
+ * are immediately rejected on HTTP and Socket.IO requests.
+ */
+const bumpUserTokenVersion = async (userId) => {
+  if (!userId) return null;
+  const res = await query(
+    `UPDATE users
+     SET token_version = COALESCE(token_version, 1) + 1,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING token_version`,
+    [userId]
+  );
+  return res.rows[0]?.token_version ?? null;
+};
+
+/**
  * Verify a Bearer JWT (strictly HS256) and load the active user record from PostgreSQL,
- * enforcing live HRMS lifecycle lockouts (terminated/inactive/deleted/portalAccessDisableDate).
+ * enforcing token_version revocation and live HRMS lifecycle lockouts
+ * (terminated/inactive/deleted/portalAccessDisableDate).
  * Shared by HTTP `authenticate` middleware and Socket.IO `io.use()` handshake authentication.
  */
 const verifyJwtAndLoadActiveUser = async (token) => {
@@ -36,6 +54,7 @@ const verifyJwtAndLoadActiveUser = async (token) => {
   const result = await query(
     `SELECT u.id, u.employee_id, u.full_name, u.email, u.role, u.department, u.designation,
             u.is_active, u.is_imc_lead, u.is_imc_member, u.is_management_member, u.is_system_admin,
+            u.token_version,
             me.status AS hrms_status, me.portal_access_disable_date
      FROM users u
      LEFT JOIN master_employees me ON me.employee_id = u.employee_id
@@ -51,10 +70,22 @@ const verifyJwtAndLoadActiveUser = async (token) => {
   }
 
   const userRow = result.rows[0];
-  const empCodeUpper = String(userRow.employee_id || '').trim().toUpperCase();
-  const isGenericSystem = ['00000', 'SYS_IMC', 'SYS_MGMT'].includes(empCodeUpper);
+  const currentTokenVersion = typeof userRow.token_version === 'number' ? userRow.token_version : 1;
 
-  if (!isGenericSystem) {
+  // Enforce server-side JWT revocation (legacy tokens without numeric `tv` are rejected cleanly)
+  if (typeof decoded.tv !== 'number' || decoded.tv !== currentTokenVersion) {
+    const err = new Error('Session has been revoked. Please log in again.');
+    err.statusCode = 401;
+    err.code = 'SESSION_REVOKED';
+    throw err;
+  }
+
+  const empCodeUpper = String(userRow.employee_id || '').trim().toUpperCase();
+  // Only root System Admin (00000) is exempt from HRMS directory lookup;
+  // retired shared accounts (SYS_IMC, SYS_MGMT) are deactivated and blocked.
+  const isRootAdmin = empCodeUpper === '00000';
+
+  if (!isRootAdmin) {
     const hrmsBlocked = isEmployeeLockedOut(
       userRow.hrms_status,
       userRow.portal_access_disable_date
@@ -81,14 +112,17 @@ const authenticate = async (req, res, next) => {
     }
 
     if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
+      return res.status(401).json({ error: 'No token provided', code: 'NO_TOKEN' });
     }
 
     req.user = await verifyJwtAndLoadActiveUser(token);
     next();
   } catch (error) {
     if (error.statusCode === 401) {
-      return res.status(401).json({ error: error.message });
+      return res.status(401).json({
+        error: error.message,
+        code: error.code || 'UNAUTHORIZED'
+      });
     }
     if (error.statusCode === 403) {
       return res.status(403).json({
@@ -103,7 +137,7 @@ const authenticate = async (req, res, next) => {
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ error: 'No token provided' });
+      return res.status(401).json({ error: 'No token provided', code: 'NO_TOKEN' });
     }
 
     const userRole = req.user.role;
@@ -134,4 +168,10 @@ const auditLog = async (userId, action, incidentId, details, ipAddress) => {
   }
 };
 
-module.exports = { authenticate, authorize, auditLog, verifyJwtAndLoadActiveUser };
+module.exports = {
+  authenticate,
+  authorize,
+  auditLog,
+  verifyJwtAndLoadActiveUser,
+  bumpUserTokenVersion
+};

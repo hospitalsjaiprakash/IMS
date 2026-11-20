@@ -34,6 +34,17 @@ export function useSocket() {
     socket.on('connect', () => {
     });
 
+    socket.on('connect_error', (err) => {
+      const msg = String(err?.message || '');
+      if (msg === 'SESSION_REVOKED' || msg === 'ACCOUNT_DISABLED') {
+        socket.disconnect();
+        useAuthStore.getState().clearLocalSession({ broadcast: false });
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }
+    });
+
     // When an incident is created, invalidate the incident list to trigger a refetch
     socket.on('incident_created', () => {
       queryClient.invalidateQueries({ queryKey: ['incidents'] });

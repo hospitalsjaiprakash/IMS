@@ -86,7 +86,26 @@ pool.query(`
   WHERE assigned_user_id IS NULL AND (hod_user_id IS NOT NULL OR incharge_user_id IS NOT NULL);
 
   ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
+  ADD COLUMN IF NOT EXISTS phone VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+
+  CREATE TABLE IF NOT EXISTS security_otps (
+    id SERIAL PRIMARY KEY,
+    employee_id VARCHAR(50) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    otp_hash VARCHAR(255) NOT NULL,
+    target_email TEXT,
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 5,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  );
+
+  ALTER TABLE security_otps
+  ADD COLUMN IF NOT EXISTS target_email TEXT;
+
+  CREATE INDEX IF NOT EXISTS idx_security_otps_emp_action_created
+  ON security_otps (employee_id, action, created_at DESC);
 
   ALTER TABLE master_employees
   ADD COLUMN IF NOT EXISTS phone VARCHAR(20),
