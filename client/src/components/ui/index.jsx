@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X, AlertCircle, CheckCircle, Info, AlertTriangle, Loader2, Search, ChevronDown, Check, ChevronRight, Home, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getSLABadgeInfo, getSeverityClass, getStatusClass, getStatusLabel } from '../../utils/helpers';
@@ -19,43 +20,142 @@ export function SkeletonCard() {
 
 // ── Searchable Multi-Select ───────────────────────
 // Props: options: string[], value: string[], onChange: (string[]) => void
-//        placeholder, label, error
-export function SearchableMultiSelect({ options = [], value = [], onChange, placeholder = 'Select…', error }) {
+//        placeholder, searchPlaceholder, error
+export function SearchableMultiSelect({
+  options = [],
+  value = [],
+  onChange,
+  placeholder = 'Select…',
+  searchPlaceholder = 'Search…',
+  error,
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [dropPos, setDropPos] = useState({
+    top: 'auto',
+    bottom: 'auto',
+    left: 0,
+    width: 0,
+    maxHeight: 340,
+    placement: 'bottom',
+  });
   const ref = useRef(null);
   const triggerRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const searchInputRef = useRef(null);
+  const optionRefs = useRef([]);
 
-  // close on outside click
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+  const computePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return null;
+
+    const VIEWPORT_PADDING = 12;
+    const DROPDOWN_GAP = 6;
+    const MAX_DROPDOWN_HEIGHT = 340;
+    const MIN_PREFERRED_BELOW = 240;
+
+    const r = trigger.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+
+    if (r.bottom <= 0 || r.top >= vh) {
+      return { hidden: true };
+    }
+
+    const spaceBelow = Math.max(0, vh - r.bottom - DROPDOWN_GAP - VIEWPORT_PADDING);
+    const spaceAbove = Math.max(0, r.top - DROPDOWN_GAP - VIEWPORT_PADDING);
+    const openUpward = spaceBelow < MIN_PREFERRED_BELOW && spaceAbove > spaceBelow;
+    const availableHeight = openUpward ? spaceAbove : spaceBelow;
+    const maxHeight = Math.min(MAX_DROPDOWN_HEIGHT, availableHeight);
+    const width = Math.min(r.width, Math.max(200, vw - VIEWPORT_PADDING * 2));
+    const left = Math.max(VIEWPORT_PADDING, Math.min(r.left, vw - width - VIEWPORT_PADDING));
+
+    return {
+      hidden: false,
+      placement: openUpward ? 'top' : 'bottom',
+      top: openUpward ? 'auto' : r.bottom + DROPDOWN_GAP,
+      bottom: openUpward ? vh - r.top + DROPDOWN_GAP : 'auto',
+      left,
+      width,
+      maxHeight,
+    };
   }, []);
 
-  // recompute position on scroll / resize
+  // close on outside click (accounting for portaled dropdown)
   useEffect(() => {
     if (!open) return;
-    const update = () => {
-      if (triggerRef.current) {
-        const r = triggerRef.current.getBoundingClientRect();
-        setDropPos({ top: r.bottom + 4, left: r.left, width: r.width });
-      }
+    const handler = (e) => {
+      const inTrigger = ref.current && ref.current.contains(e.target);
+      const inDropdown = dropdownRef.current && dropdownRef.current.contains(e.target);
+      if (!inTrigger && !inDropdown) setOpen(false);
     };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const handleOpen = () => {
-    if (triggerRef.current) {
-      const r = triggerRef.current.getBoundingClientRect();
-      setDropPos({ top: r.bottom + 4, left: r.left, width: r.width });
+  // focus search input without triggering browser scroll jumps
+  useEffect(() => {
+    if (open) {
+      searchInputRef.current?.focus({ preventScroll: true });
     }
-    setOpen(o => !o);
+  }, [open]);
+
+  // recompute position on external scroll, viewport resize, or trigger resize (e.g. wrapping chips)
+  useEffect(() => {
+    if (!open) return;
+
+    const update = () => {
+      const pos = computePosition();
+      if (!pos) return;
+      if (pos.hidden) {
+        setOpen(false);
+        return;
+      }
+      setDropPos(pos);
+    };
+
+    const handleScroll = (e) => {
+      if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
+      update();
+    };
+
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', update);
+
+    let observer;
+    if (typeof ResizeObserver !== 'undefined' && triggerRef.current) {
+      observer = new ResizeObserver(update);
+      observer.observe(triggerRef.current);
+    }
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', update);
+      observer?.disconnect();
+    };
+  }, [open, computePosition]);
+
+  const closeDropdown = (returnFocus = false) => {
+    setOpen(false);
+    setActiveIndex(-1);
+    if (returnFocus) {
+      triggerRef.current?.focus({ preventScroll: true });
+    }
+  };
+
+  const handleOpen = () => {
+    if (open) {
+      closeDropdown(false);
+      return;
+    }
+    const pos = computePosition();
+    if (pos && !pos.hidden) {
+      setDropPos(pos);
+    }
+    setOpen(true);
     setQuery('');
+    setActiveIndex(-1);
   };
 
   const filtered = options.filter(o => o.toLowerCase().includes(query.toLowerCase()));
@@ -67,15 +167,50 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
 
   const remove = (opt, e) => { e.stopPropagation(); onChange(value.filter(v => v !== opt)); };
 
+  const handleDropdownKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDropdown(true);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (filtered.length === 0) return;
+      const next = activeIndex < filtered.length - 1 ? activeIndex + 1 : 0;
+      setActiveIndex(next);
+      optionRefs.current[next]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (filtered.length === 0) return;
+      const prev = activeIndex > 0 ? activeIndex - 1 : filtered.length - 1;
+      setActiveIndex(prev);
+      optionRefs.current[prev]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && activeIndex >= 0 && activeIndex < filtered.length) {
+      e.preventDefault();
+      toggle(filtered[activeIndex]);
+    }
+  };
+
   return (
     <div ref={ref} className="relative">
       {/* Trigger */}
       <div
         ref={triggerRef}
-        role="button"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
         tabIndex={0}
         onClick={handleOpen}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleOpen(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleOpen();
+          } else if (e.key === 'ArrowDown' && !open) {
+            e.preventDefault();
+            handleOpen();
+          } else if (e.key === 'Escape' && open) {
+            e.preventDefault();
+            closeDropdown(false);
+          }
+        }}
         className={`w-full min-h-[44px] rounded-xl border bg-white px-3.5 py-2 text-sm text-left flex flex-wrap items-center gap-1.5 focus:outline-none focus:ring-2 transition-colors duration-150 cursor-pointer ${error ? 'border-red-500 focus:ring-red-500' : open ? 'border-green-500 ring-2 ring-green-500' : 'border-slate-300 hover:border-slate-400'
           }`}
       >
@@ -85,63 +220,104 @@ export function SearchableMultiSelect({ options = [], value = [], onChange, plac
           value.map(v => (
             <span key={v} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-0.5 text-xs font-medium">
               {v}
-              <button type="button" onClick={(e) => remove(v, e)} className="hover:text-red-500 ml-0.5"><X size={10} /></button>
+              <button type="button" aria-label={`Remove ${v}`} onClick={(e) => remove(v, e)} className="hover:text-red-500 ml-0.5"><X size={10} /></button>
             </span>
           ))
         )}
         <ChevronDown size={14} className={`ml-auto flex-shrink-0 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </div>
 
-      {/* Dropdown */}
-      {open && (
+      {/* Dropdown — portaled to body with viewport-aware collision flipping & constrained height */}
+      {open && createPortal(
         <div
-          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
-          className="bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden"
+          ref={dropdownRef}
+          onKeyDown={handleDropdownKeyDown}
+          style={{
+            position: 'fixed',
+            top: dropPos.top,
+            bottom: dropPos.bottom,
+            left: dropPos.left,
+            width: dropPos.width,
+            maxHeight: dropPos.maxHeight,
+            zIndex: 9999,
+          }}
+          className="bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden flex flex-col"
         >
           {/* Search */}
-          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100">
+          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 flex-shrink-0 bg-white">
             <Search size={14} className="text-slate-400 flex-shrink-0" />
             <input
-              autoFocus
+              ref={searchInputRef}
               type="text"
               value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Search categories…"
+              onChange={e => { setQuery(e.target.value); setActiveIndex(0); }}
+              placeholder={searchPlaceholder}
               className="flex-1 text-sm bg-transparent outline-none text-slate-700 placeholder-slate-400"
             />
-            {query && <button type="button" onClick={() => setQuery('')}><X size={13} className="text-slate-400 hover:text-slate-600" /></button>}
+            {query && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => { setQuery(''); setActiveIndex(-1); searchInputRef.current?.focus({ preventScroll: true }); }}
+              >
+                <X size={13} className="text-slate-400 hover:text-slate-600" />
+              </button>
+            )}
           </div>
           {/* Options */}
-          <div className="max-h-60 overflow-y-auto py-1">
+          <div
+            role="listbox"
+            aria-multiselectable="true"
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-1"
+          >
             {filtered.length === 0 ? (
               <p className="px-4 py-3 text-xs text-slate-400 text-center">No matches found</p>
-            ) : filtered.map(opt => {
+            ) : filtered.map((opt, idx) => {
               const selected = value.includes(opt);
+              const isActive = idx === activeIndex;
               return (
                 <button
                   key={opt}
+                  ref={el => { optionRefs.current[idx] = el; }}
                   type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onMouseEnter={() => setActiveIndex(idx)}
                   onClick={() => toggle(opt)}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${selected
+                    ? 'bg-blue-50 text-blue-700 font-medium'
+                    : isActive
+                      ? 'bg-slate-100 text-slate-800'
+                      : 'hover:bg-slate-50 text-slate-700'
                     }`}
                 >
-                  <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border ${selected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                  <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border ${selected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
                     }`}>
                     {selected && <Check size={10} className="text-white" />}
                   </div>
-                  {opt}
+                  <span className="break-words">{opt}</span>
                 </button>
               );
             })}
           </div>
           {/* Footer */}
-          {value.length > 0 && (
-            <div className="px-4 py-2 border-t border-slate-100 flex items-center justify-between bg-slate-50">
-              <span className="text-xs text-slate-500">{value.length} selected</span>
-              <button type="button" onClick={() => onChange([])} className="text-xs text-red-500 hover:text-red-700 font-medium">Clear all</button>
+          <div className="px-4 py-2 border-t border-slate-100 flex items-center justify-between bg-slate-50 flex-shrink-0">
+            <span className="text-xs text-slate-500">
+              {value.length > 0 ? `${value.length} selected` : `${filtered.length} available`}
+            </span>
+            <div className="flex items-center gap-3">
+              {value.length > 0 && (
+                <button type="button" onClick={() => onChange([])} className="text-xs text-red-500 hover:text-red-700 font-medium">
+                  Clear all
+                </button>
+              )}
+              <button type="button" onClick={() => closeDropdown(true)} className="text-xs text-green-700 hover:text-green-800 font-semibold">
+                Done
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

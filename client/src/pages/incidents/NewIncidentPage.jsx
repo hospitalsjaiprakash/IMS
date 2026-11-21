@@ -309,6 +309,7 @@ export default function NewIncidentPage() {
                     setForm(f => ({ ...f, selectedCategories: cats, selectedTypes: newTypes }));
                   }}
                   placeholder="Click to search & select categories…"
+                  searchPlaceholder="Search categories…"
                   error={!!errors.selectedCategories}
                 />
                 {errors.selectedCategories && <p className="field-error">{errors.selectedCategories}</p>}
@@ -345,6 +346,7 @@ export default function NewIncidentPage() {
                       value={form.selectedDepartments}
                       onChange={(depts) => setForm(f => ({ ...f, selectedDepartments: depts }))}
                       placeholder={isLoadingDepts ? 'Loading departments…' : 'Click to search & select concerned department(s)…'}
+                      searchPlaceholder="Search departments…"
                       error={!!errors.selectedDepartments}
                     />
                     {errors.selectedDepartments && <p className="field-error">{errors.selectedDepartments}</p>}
