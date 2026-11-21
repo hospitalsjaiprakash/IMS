@@ -52,6 +52,11 @@ async function syncEmployeesFromHrms(overrideUrl = null) {
   }
 
   console.log(`[HRMS Sync] Starting sync from Google Sheets API at ${syncStartTime.toISOString()}...`);
+  if (String(process.env.HRMS_API_ENABLED || 'true').toLowerCase() === 'false') {
+    const err = new Error('HRMS API synchronization is disabled in this environment.');
+    err.code = 'HRMS_DISABLED_IN_ENVIRONMENT';
+    throw err;
+  }
   console.log(`[HRMS Sync] Target URL: ${targetUrl.substring(0, 80)}...`);
 
   let response;

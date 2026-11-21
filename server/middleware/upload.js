@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const { s3Client, isR2Configured, uploadToR2 } = require('../config/s3');
 const { query } = require('../config/database');
+const { withStoragePrefix } = require('../utils/storageKey');
 
 // Maps DB stage names to human-readable R2 folder names
 const stageFolderMap = {
@@ -34,7 +35,7 @@ async function buildS3Key(req, file, stage) {
       if (result.rows.length > 0) {
         // Convert JPHRC/IMS/2026/00001 -> JPHRC-IMS-2026-00001 (safe folder name)
         const refId = result.rows[0].reference_id.replace(/\//g, '-');
-        return `${refId}/${folder}/${safeFilename}`;
+        return withStoragePrefix(`${refId}/${folder}/${safeFilename}`);
       }
     } catch (e) {
       console.error('[R2 Key] Failed to fetch reference_id:', e.message);
@@ -42,7 +43,7 @@ async function buildS3Key(req, file, stage) {
   }
 
   // Fallback for new incidents (submission stage - no ID yet) or broadcast uploads
-  return `pending/${folder}/${safeFilename}`;
+  return withStoragePrefix(`pending/${folder}/${safeFilename}`);
 }
 
 // Allowed file types: only images and PDF

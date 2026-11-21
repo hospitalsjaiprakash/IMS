@@ -9,6 +9,13 @@ const { webhookLimiter } = require('../middleware/rateLimiter');
  * @access  Public (Authenticated via HMAC-SHA256 signature in X-Awarious-Signature)
  */
 router.post('/officeportal', webhookLimiter, async (req, res) => {
+  if (String(process.env.HRMS_API_ENABLED || 'true').toLowerCase() === 'false') {
+    return res.status(503).json({
+      error: 'HRMS integration is disabled in this environment.',
+      code: 'HRMS_DISABLED_IN_ENVIRONMENT'
+    });
+  }
+
   const signatureHeader = req.headers['x-awarious-signature'] || req.headers['X-Awarious-Signature'];
 
   if (!signatureHeader) {

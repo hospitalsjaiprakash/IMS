@@ -152,17 +152,19 @@ exports.createIncident = async (req, res) => {
     if (req.files && req.files.length > 0) {
       const { s3Client } = require('../config/s3');
       const { CopyObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+      const { withStoragePrefix } = require('../utils/storageKey');
       const bucket = process.env.S3_BUCKET_NAME;
       const safeRefId = incident.reference_id.replace(/\//g, '-'); // JPHRC-IMS-2026-00001
+      const pendingPrefix = withStoragePrefix('pending/');
 
       for (const file of req.files) {
         let storedFilename = file.filename || file.key || '';
 
         // If R2 is active and the file was placed in pending/, move it to the proper folder
-        if (s3Client && bucket && file.key && file.key.startsWith('pending/')) {
+        if (s3Client && bucket && file.key && (file.key.startsWith('pending/') || file.key.startsWith(pendingPrefix))) {
           const oldKey = file.key;
           const filename = oldKey.split('/').pop(); // just the filename part
-          const newKey = `${safeRefId}/employee/${filename}`;
+          const newKey = withStoragePrefix(`${safeRefId}/employee/${filename}`);
 
           try {
             await s3Client.send(new CopyObjectCommand({

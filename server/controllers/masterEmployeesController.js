@@ -313,6 +313,12 @@ const { assertAllowedOfficePortalUrl } = require('../utils/secretCrypto');
 
 // POST on-demand sync from OfficePortal HRMS Public API v1
 exports.syncFromHrms = async (req, res) => {
+  if (String(process.env.HRMS_API_ENABLED || 'true').toLowerCase() === 'false') {
+    return res.status(403).json({
+      error: 'HRMS API synchronization is disabled in the staging environment.',
+      code: 'HRMS_DISABLED_IN_ENVIRONMENT'
+    });
+  }
   try {
     const config = await officePortalService.getConfig();
     const isOfficePortal = Boolean(config.clientId && config.clientSecret);
@@ -359,6 +365,13 @@ exports.syncFromHrms = async (req, res) => {
 
 // POST test OfficePortal OAuth connection & refresh live quota telemetry
 exports.testConnection = async (req, res) => {
+  if (String(process.env.HRMS_API_ENABLED || 'true').toLowerCase() === 'false') {
+    return res.status(403).json({
+      success: false,
+      error: 'HRMS API connection testing is disabled in the staging environment.',
+      code: 'HRMS_DISABLED_IN_ENVIRONMENT'
+    });
+  }
   try {
     const result = await officePortalService.testConnection();
     await auditLog(req.user.id, 'OFFICEPORTAL_CONNECTION_TESTED', null, {

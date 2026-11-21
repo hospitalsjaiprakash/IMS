@@ -380,6 +380,11 @@ async function getAccessToken(forceRefresh = false) {
 
   tokenLockPromise = (async () => {
     try {
+      if (String(process.env.HRMS_API_ENABLED || 'true').toLowerCase() === 'false') {
+        const err = new Error('OfficePortal HRMS API is disabled in this environment.');
+        err.code = 'HRMS_DISABLED_IN_ENVIRONMENT';
+        throw err;
+      }
       const config = await getConfig();
       if (!config.clientId || !config.clientSecret) {
         const err = new Error('OfficePortal Client ID or API Key (client_secret) is not configured.');
@@ -475,6 +480,11 @@ async function updateQuotaMetadata(headers) {
  * - Exponential backoff with jitter on 5xx / network timeouts (up to 4 attempts)
  */
 async function requestWithRetry(path, options = {}) {
+  if (String(process.env.HRMS_API_ENABLED || 'true').toLowerCase() === 'false') {
+    const err = new Error('OfficePortal HRMS API is disabled in this environment.');
+    err.code = 'HRMS_DISABLED_IN_ENVIRONMENT';
+    throw err;
+  }
   const config = await getConfig();
   const rawUrl = path.startsWith('http') ? path : `${config.baseUrl}${path}`;
   // SSRF / Bearer-exfiltration guard: verify destination URL against strict host allowlist

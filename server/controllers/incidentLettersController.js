@@ -886,7 +886,8 @@ exports.submitManagementLetterDecision = async (req, res) => {
 
             // 2. Freeze PDF into Cloudflare R2
             if (isR2Configured() && pdfBuffer) {
-              const s3Key = `${incident.reference_id}/letters/${letter.reference_number}.pdf`;
+              const { withStoragePrefix } = require('../utils/storageKey');
+              const s3Key = withStoragePrefix(`${incident.reference_id}/letters/${letter.reference_number}.pdf`);
               await uploadToR2(s3Key, pdfBuffer, 'application/pdf', {
                 incidentId: id,
                 letterId: letter.id,

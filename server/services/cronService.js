@@ -2,7 +2,13 @@ const cron = require('node-cron');
 const { query } = require('../config/database');
 const { sendEmail } = require('../utils/emailService');
 
+const isEscalationsEnabled = () =>
+  String(process.env.ESCALATIONS_ENABLED || 'true').toLowerCase() !== 'false';
+
 async function processHodEscalations() {
+  if (!isEscalationsEnabled()) {
+    return;
+  }
   console.log('[CRON] Starting HOD Escalation check...');
   try {
     // 1. Fetch thresholds from system config
@@ -145,6 +151,9 @@ async function processHodEscalations() {
  * Automatically escalate incidents pending resolution for more than 21 days
  */
 async function checkAndAutoEscalate21Days() {
+  if (!isEscalationsEnabled()) {
+    return;
+  }
   try {
     const overdueRes = await query(`
       SELECT 
@@ -243,11 +252,13 @@ async function runWebhookPiiRetention() {
   }
 }
 
-// Start daily escalations cron job (Runs every day at 8:00 AM)
-cron.schedule('0 8 * * *', () => {
-  processHodEscalations();
-  checkAndAutoEscalate21Days();
-});
+// Start daily escalations cron job (Runs every day at 8:00 AM unless ESCALATIONS_ENABLED=false)
+if (isEscalationsEnabled()) {
+  cron.schedule('0 8 * * *', () => {
+    processHodEscalations();
+    checkAndAutoEscalate21Days();
+  });
+}
 
 // Nightly webhook PII retention job (Runs every day at 3:00 AM IST)
 cron.schedule('0 3 * * *', () => {

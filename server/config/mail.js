@@ -51,5 +51,41 @@ transporter.on('error', (err) => {
   console.warn('[SMTP Pool Error]:', err.message);
 });
 
+// Redirect all outgoing emails to a single inbox when EMAIL_REDIRECT_TO is set (Staging)
+const originalSendMail = transporter.sendMail.bind(transporter);
+const formatRecipients = (val) => (Array.isArray(val) ? val.join(', ') : val ? String(val) : '');
+transporter.sendMail = (mailOptions = {}, callback) => {
+  const redirectTo = (process.env.EMAIL_REDIRECT_TO || '').trim();
+  if (!redirectTo) {
+    return originalSendMail(mailOptions, callback);
+  }
+  const originalRecipients = [
+    formatRecipients(mailOptions.to),
+    formatRecipients(mailOptions.cc),
+    formatRecipients(mailOptions.bcc),
+  ]
+    .filter(Boolean)
+    .join(', ');
+  const prefixTag = `[STAGING → ${originalRecipients || 'unknown'}]`;
+  const origSubject = mailOptions.subject || '';
+  const subject = origSubject.startsWith('[STAGING')
+    ? origSubject
+    : `${prefixTag} ${origSubject}`.trim();
+
+  const redirectedOptions = {
+    ...mailOptions,
+    to: redirectTo,
+    cc: undefined,
+    bcc: undefined,
+    subject,
+    headers: {
+      ...(mailOptions.headers || {}),
+      'X-Original-Recipients': originalRecipients,
+    },
+  };
+  console.log(`[EMAIL REDIRECT] ${originalRecipients} -> ${redirectTo} | Subject: "${subject}"`);
+  return originalSendMail(redirectedOptions, callback);
+};
+
 module.exports = transporter;
 module.exports.isSmtpConfigured = isSmtpConfigured;

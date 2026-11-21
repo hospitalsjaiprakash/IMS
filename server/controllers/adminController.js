@@ -1246,13 +1246,13 @@ exports.downloadBroadcastAttachment = async (req, res) => {
 
     const key = rawKey.trim();
 
-    // Strict R2 key allowlist: broadcast/ or pending/broadcast/ only, zero path traversal or control chars
+    // Strict R2 key allowlist: broadcast/ or pending/broadcast/ (with optional staging/ prefix) only, zero path traversal or control chars
     if (
       key.includes('..') ||
       key.includes('\\') ||
       key.startsWith('/') ||
       /[\x00-\x1f\x7f]/.test(key) ||
-      !/^(?:pending\/)?broadcast\/[a-zA-Z0-9._-]+$/.test(key)
+      !/^(?:staging\/)?(?:pending\/)?broadcast\/[a-zA-Z0-9._-]+$/.test(key)
     ) {
       return res.status(400).json({ error: 'Invalid broadcast attachment key.' });
     }
