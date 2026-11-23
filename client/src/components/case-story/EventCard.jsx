@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   formatDateTime,
   formatDate,
   formatTime,
   getSeverityClass,
   getStatusLabel,
-  parseProposedOutcomes
+  parseProposedOutcomes,
+  getApiErrorMessage,
 } from '../../utils/helpers';
-import { UPLOADS_URL } from '../../api';
+import { attachmentsApi } from '../../api';
+import toast from 'react-hot-toast';
 import {
   FileText,
   User,
@@ -16,10 +18,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
-  Clock,
   ArrowRight,
   ArrowRightLeft,
-  Shield,
   ShieldCheck,
   Award,
   GraduationCap,
@@ -29,17 +29,13 @@ import {
   ChevronUp,
   Download,
   Eye,
-  CornerDownRight,
   RotateCcw,
   Sparkles,
   Info,
   Lock,
-  Bell
+  Bell,
 } from 'lucide-react';
 
-/**
- * Format elapsed time between two events into compact string e.g. "+15 mins" or "+2 hrs"
- */
 function formatTimeDelta(currentDate, prevDate) {
   if (!currentDate || !prevDate) return null;
   const d1 = new Date(currentDate);
@@ -59,9 +55,6 @@ function formatTimeDelta(currentDate, prevDate) {
   return `+${diffDays}d ${diffHrs % 24}h`;
 }
 
-/**
- * Role badge styling
- */
 function getRoleBadge(role) {
   switch (role) {
     case 'head_management':
@@ -72,7 +65,7 @@ function getRoleBadge(role) {
     case 'hod':
     case 'asst_coo':
     case 'coo':
-      return { label: 'Department Head (HOD)', bg: 'bg-amber-100 text-amber-800 border-amber-200' };
+      return { label: 'Department Reviewer', bg: 'bg-amber-100 text-amber-800 border-amber-200' };
     case 'investigator':
       return { label: 'Appointed Investigator', bg: 'bg-cyan-100 text-cyan-800 border-cyan-200' };
     case 'trainer':
@@ -84,9 +77,6 @@ function getRoleBadge(role) {
   }
 }
 
-/**
- * Event-type visual accents & icons
- */
 function getEventVisuals(eventType) {
   switch (eventType) {
     case 'INCIDENT_CREATED':
@@ -95,7 +85,7 @@ function getEventVisuals(eventType) {
         color: 'emerald',
         badgeBg: 'bg-emerald-500 text-white',
         ringColor: 'ring-emerald-200',
-        cardBg: 'bg-gradient-to-br from-emerald-50/40 via-white to-slate-50/30 border-emerald-200'
+        cardBg: 'bg-gradient-to-br from-emerald-50/40 via-white to-slate-50/30 border-emerald-200',
       };
     case 'HOD_REMINDER_SENT':
       return {
@@ -103,7 +93,7 @@ function getEventVisuals(eventType) {
         color: 'amber',
         badgeBg: 'bg-amber-500 text-white',
         ringColor: 'ring-amber-200',
-        cardBg: 'bg-amber-50/30 border-amber-200'
+        cardBg: 'bg-amber-50/30 border-amber-200',
       };
     case 'IMC_CLAIMED':
       return {
@@ -111,7 +101,7 @@ function getEventVisuals(eventType) {
         color: 'indigo',
         badgeBg: 'bg-indigo-600 text-white',
         ringColor: 'ring-indigo-200',
-        cardBg: 'bg-indigo-50/30 border-indigo-200'
+        cardBg: 'bg-indigo-50/30 border-indigo-200',
       };
     case 'NOTIFICATION_DISPATCHED':
     case 'EMAIL_DISPATCHED':
@@ -120,7 +110,7 @@ function getEventVisuals(eventType) {
         color: 'sky',
         badgeBg: 'bg-sky-500 text-white',
         ringColor: 'ring-sky-200',
-        cardBg: 'bg-sky-50/30 border-sky-200'
+        cardBg: 'bg-sky-50/30 border-sky-200',
       };
     case 'REDIRECT_REQUESTED':
       return {
@@ -128,7 +118,7 @@ function getEventVisuals(eventType) {
         color: 'orange',
         badgeBg: 'bg-orange-500 text-white',
         ringColor: 'ring-orange-200',
-        cardBg: 'bg-orange-50/40 border-orange-200'
+        cardBg: 'bg-orange-50/40 border-orange-200',
       };
     case 'REDIRECT_APPROVED':
       return {
@@ -136,7 +126,7 @@ function getEventVisuals(eventType) {
         color: 'emerald',
         badgeBg: 'bg-emerald-600 text-white',
         ringColor: 'ring-emerald-200',
-        cardBg: 'bg-emerald-50/30 border-emerald-200'
+        cardBg: 'bg-emerald-50/30 border-emerald-200',
       };
     case 'REDIRECT_REJECTED':
       return {
@@ -144,7 +134,7 @@ function getEventVisuals(eventType) {
         color: 'red',
         badgeBg: 'bg-red-500 text-white',
         ringColor: 'ring-red-200',
-        cardBg: 'bg-red-50/40 border-red-200'
+        cardBg: 'bg-red-50/40 border-red-200',
       };
     case 'HOD_FEEDBACK_SUBMITTED':
       return {
@@ -152,7 +142,16 @@ function getEventVisuals(eventType) {
         color: 'teal',
         badgeBg: 'bg-teal-600 text-white',
         ringColor: 'ring-teal-200',
-        cardBg: 'bg-gradient-to-br from-teal-50/30 via-white to-slate-50/20 border-teal-200'
+        cardBg: 'bg-gradient-to-br from-teal-50/30 via-white to-slate-50/20 border-teal-200',
+      };
+    case 'DEPARTMENTS_INVOLVED':
+    case 'CATEGORIES_INVOLVED':
+      return {
+        icon: Users,
+        color: 'amber',
+        badgeBg: 'bg-amber-600 text-white',
+        ringColor: 'ring-amber-200',
+        cardBg: 'bg-amber-50/30 border-amber-200',
       };
     case 'INVESTIGATION_PANEL_ASSIGNED':
       return {
@@ -160,7 +159,7 @@ function getEventVisuals(eventType) {
         color: 'cyan',
         badgeBg: 'bg-cyan-600 text-white',
         ringColor: 'ring-cyan-200',
-        cardBg: 'bg-cyan-50/40 border-cyan-200'
+        cardBg: 'bg-cyan-50/40 border-cyan-200',
       };
     case 'INVESTIGATION_REPORT_SUBMITTED':
       return {
@@ -168,7 +167,7 @@ function getEventVisuals(eventType) {
         color: 'blue',
         badgeBg: 'bg-blue-600 text-white',
         ringColor: 'ring-blue-200',
-        cardBg: 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50/20 border-blue-200'
+        cardBg: 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50/20 border-blue-200',
       };
     case 'INVESTIGATION_RETURNED':
       return {
@@ -176,7 +175,7 @@ function getEventVisuals(eventType) {
         color: 'amber',
         badgeBg: 'bg-amber-600 text-white',
         ringColor: 'ring-amber-200',
-        cardBg: 'bg-amber-50/50 border-amber-300'
+        cardBg: 'bg-amber-50/50 border-amber-300',
       };
     case 'IMC_ASSESSMENT_SUBMITTED':
       return {
@@ -184,7 +183,7 @@ function getEventVisuals(eventType) {
         color: 'indigo',
         badgeBg: 'bg-indigo-600 text-white',
         ringColor: 'ring-indigo-200',
-        cardBg: 'bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/20 border-indigo-200'
+        cardBg: 'bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/20 border-indigo-200',
       };
     case 'MGMT_DECISION_MODIFIED':
       return {
@@ -192,7 +191,7 @@ function getEventVisuals(eventType) {
         color: 'purple',
         badgeBg: 'bg-purple-600 text-white',
         ringColor: 'ring-purple-200',
-        cardBg: 'bg-gradient-to-br from-purple-50/60 via-white to-indigo-50/30 border-purple-300 shadow-sm'
+        cardBg: 'bg-gradient-to-br from-purple-50/60 via-white to-indigo-50/30 border-purple-300 shadow-sm',
       };
     case 'MGMT_DECISION_AGREED':
       return {
@@ -200,7 +199,7 @@ function getEventVisuals(eventType) {
         color: 'purple',
         badgeBg: 'bg-purple-600 text-white',
         ringColor: 'ring-purple-200',
-        cardBg: 'bg-purple-50/30 border-purple-200'
+        cardBg: 'bg-purple-50/30 border-purple-200',
       };
     case 'MGMT_RETURNED_FOR_REINVESTIGATION':
     case 'MGMT_RETURNED_FOR_REVISION':
@@ -209,7 +208,7 @@ function getEventVisuals(eventType) {
         color: 'amber',
         badgeBg: 'bg-amber-600 text-white',
         ringColor: 'ring-amber-200',
-        cardBg: 'bg-amber-50/50 border-amber-300'
+        cardBg: 'bg-amber-50/50 border-amber-300',
       };
     case 'TRAINER_ASSIGNED':
       return {
@@ -217,7 +216,7 @@ function getEventVisuals(eventType) {
         color: 'blue',
         badgeBg: 'bg-blue-600 text-white',
         ringColor: 'ring-blue-200',
-        cardBg: 'bg-blue-50/40 border-blue-200'
+        cardBg: 'bg-blue-50/40 border-blue-200',
       };
     case 'TRAINING_REPORT_SUBMITTED':
       return {
@@ -225,7 +224,7 @@ function getEventVisuals(eventType) {
         color: 'blue',
         badgeBg: 'bg-blue-600 text-white',
         ringColor: 'ring-blue-200',
-        cardBg: 'bg-gradient-to-br from-blue-50/30 via-white to-slate-50/20 border-blue-200'
+        cardBg: 'bg-gradient-to-br from-blue-50/30 via-white to-slate-50/20 border-blue-200',
       };
     case 'TRAINING_REWORK_REQUESTED':
       return {
@@ -233,7 +232,7 @@ function getEventVisuals(eventType) {
         color: 'amber',
         badgeBg: 'bg-amber-600 text-white',
         ringColor: 'ring-amber-200',
-        cardBg: 'bg-amber-50/40 border-amber-300'
+        cardBg: 'bg-amber-50/40 border-amber-300',
       };
     case 'TRAINING_VERIFIED_BY_IMC':
     case 'EMPLOYEE_TRAINING_VERIFIED':
@@ -242,7 +241,7 @@ function getEventVisuals(eventType) {
         color: 'emerald',
         badgeBg: 'bg-emerald-600 text-white',
         ringColor: 'ring-emerald-200',
-        cardBg: 'bg-emerald-50/30 border-emerald-200'
+        cardBg: 'bg-emerald-50/30 border-emerald-200',
       };
     case 'LETTER_DRAFTED':
     case 'LETTER_REVISED':
@@ -251,7 +250,7 @@ function getEventVisuals(eventType) {
         color: 'indigo',
         badgeBg: 'bg-indigo-600 text-white',
         ringColor: 'ring-indigo-200',
-        cardBg: 'bg-indigo-50/30 border-indigo-200'
+        cardBg: 'bg-indigo-50/30 border-indigo-200',
       };
     case 'LETTER_DELETED':
       return {
@@ -259,7 +258,7 @@ function getEventVisuals(eventType) {
         color: 'slate',
         badgeBg: 'bg-slate-500 text-white',
         ringColor: 'ring-slate-200',
-        cardBg: 'bg-slate-50/50 border-slate-200'
+        cardBg: 'bg-slate-50/50 border-slate-200',
       };
     case 'LETTERS_SUBMITTED_TO_MGMT':
       return {
@@ -267,7 +266,7 @@ function getEventVisuals(eventType) {
         color: 'purple',
         badgeBg: 'bg-purple-600 text-white',
         ringColor: 'ring-purple-200',
-        cardBg: 'bg-purple-50/30 border-purple-200'
+        cardBg: 'bg-purple-50/30 border-purple-200',
       };
     case 'LETTERS_RETURNED_FOR_REVISION':
       return {
@@ -275,7 +274,7 @@ function getEventVisuals(eventType) {
         color: 'amber',
         badgeBg: 'bg-amber-600 text-white',
         ringColor: 'ring-amber-200',
-        cardBg: 'bg-amber-50/50 border-amber-300'
+        cardBg: 'bg-amber-50/50 border-amber-300',
       };
     case 'LETTERS_APPROVED_DISPATCHED':
       return {
@@ -283,7 +282,7 @@ function getEventVisuals(eventType) {
         color: 'emerald',
         badgeBg: 'bg-emerald-600 text-white',
         ringColor: 'ring-emerald-200',
-        cardBg: 'bg-emerald-50/40 border-emerald-200'
+        cardBg: 'bg-emerald-50/40 border-emerald-200',
       };
     case 'FINAL_REPORT_GENERATED':
     case 'INCIDENT_CLOSED':
@@ -293,7 +292,7 @@ function getEventVisuals(eventType) {
         color: 'emerald',
         badgeBg: 'bg-emerald-700 text-white',
         ringColor: 'ring-emerald-300',
-        cardBg: 'bg-gradient-to-br from-emerald-50/60 via-white to-emerald-50/30 border-emerald-300 shadow-sm'
+        cardBg: 'bg-gradient-to-br from-emerald-50/60 via-white to-emerald-50/30 border-emerald-300 shadow-sm',
       };
     case 'INCIDENT_REOPENED':
       return {
@@ -301,7 +300,7 @@ function getEventVisuals(eventType) {
         color: 'rose',
         badgeBg: 'bg-rose-600 text-white',
         ringColor: 'ring-rose-200',
-        cardBg: 'bg-rose-50/40 border-rose-200'
+        cardBg: 'bg-rose-50/40 border-rose-200',
       };
     default:
       return {
@@ -309,7 +308,7 @@ function getEventVisuals(eventType) {
         color: 'slate',
         badgeBg: 'bg-slate-600 text-white',
         ringColor: 'ring-slate-200',
-        cardBg: 'bg-white border-slate-200'
+        cardBg: 'bg-white border-slate-200',
       };
   }
 }
@@ -318,17 +317,37 @@ export default function EventCard({
   event,
   incident,
   index,
-  totalEvents,
   prevEvent,
   isExpanded = false,
   onToggleExpand,
-  onViewAttachment
+  onViewAttachment,
 }) {
   const [internalExpanded, setInternalExpanded] = useState(isExpanded);
+  const [downloadingId, setDownloadingId] = useState(null);
   const expanded = onToggleExpand ? isExpanded : internalExpanded;
+
   const toggle = () => {
     if (onToggleExpand) onToggleExpand();
     else setInternalExpanded(v => !v);
+  };
+
+  const handleDownloadAttachment = async (att, e) => {
+    e.stopPropagation();
+    if (!att?.id) return;
+    setDownloadingId(att.id);
+    try {
+      const res = await attachmentsApi.getDownloadUrl(att.id);
+      const url = res.data?.url;
+      if (url) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        toast.error('Download link unavailable.');
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to download attachment.'));
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const visuals = getEventVisuals(event.event_type);
@@ -338,8 +357,8 @@ export default function EventCard({
   const payload = event.payload || {};
   const attachments = Array.isArray(event.attachments) ? event.attachments : [];
 
-  // Concise 1-line preview snippet for collapsed state
-  const previewSnippet = event.summary ||
+  const previewSnippet =
+    event.summary ||
     payload.report_text ||
     payload.reportText ||
     payload.findings ||
@@ -350,6 +369,8 @@ export default function EventCard({
     payload.notes ||
     '';
 
+  const renderedPayload = renderEventPayload(event, payload, incident);
+
   return (
     <div
       id={`event-${event.id}`}
@@ -357,7 +378,7 @@ export default function EventCard({
         event.is_system_event ? 'opacity-85' : 'shadow-2xs'
       }`}
     >
-      {/* CARD HEADER / ACCORDION TRIGGER */}
+      {/* CARD HEADER */}
       <div
         onClick={toggle}
         className={`px-3 sm:px-3.5 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 cursor-pointer select-none transition-colors hover:bg-black/[0.015] ${
@@ -365,7 +386,6 @@ export default function EventCard({
         }`}
       >
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          {/* Step Icon Badge */}
           <div
             className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-2xs ring-2 ${visuals.ringColor} ${visuals.badgeBg}`}
           >
@@ -382,18 +402,18 @@ export default function EventCard({
               </h3>
 
               {event.round_no > 1 && (
-                <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-amber-100 text-amber-800 border border-amber-300">
                   R{event.round_no}
                 </span>
               )}
 
               {event.is_system_event && (
-                <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                   System
                 </span>
               )}
 
-              <span className={`px-1.5 py-0.2 rounded font-semibold text-[10px] border ${roleBadge.bg}`}>
+              <span className={`px-1.5 py-0.5 rounded font-semibold text-[10px] border ${roleBadge.bg}`}>
                 {roleBadge.label}
               </span>
               <span className="text-[11px] font-bold text-slate-700 truncate">
@@ -406,7 +426,6 @@ export default function EventCard({
               )}
             </div>
 
-            {/* In collapsed state: 1-line clean preview */}
             {!expanded && previewSnippet && (
               <p className="text-[11px] text-slate-500 truncate mt-0.5 max-w-[280px] sm:max-w-2xl leading-tight">
                 {previewSnippet}
@@ -415,40 +434,36 @@ export default function EventCard({
           </div>
         </div>
 
-        {/* Timestamp & Accordion Toggle */}
         <div className="flex items-center gap-2 shrink-0 pl-1">
           <div className="text-right flex items-center gap-1.5">
             <span className="text-[11px] text-slate-500 font-medium whitespace-nowrap">
               {formatDateTime(event.occurred_at)}
             </span>
             {timeDelta && (
-              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1 py-0.2 rounded border border-indigo-100 hidden sm:inline-block">
+              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1 py-0.5 rounded border border-indigo-100 hidden sm:inline-block">
                 {timeDelta}
               </span>
             )}
           </div>
 
-          <div
-            className="text-slate-400 hover:text-slate-700 p-0.5 rounded hover:bg-slate-100/80 transition-colors"
-          >
+          <div className="text-slate-400 hover:text-slate-700 p-0.5 rounded hover:bg-slate-100/80 transition-colors">
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </div>
         </div>
       </div>
 
-      {/* CARD BODY (EXPANDABLE) */}
+      {/* CARD BODY */}
       {expanded && (
         <div className="px-3 sm:px-3.5 pb-3 pt-1 space-y-2 border-t border-slate-100/90 mt-0.5">
-          {/* Summary paragraph */}
-          {event.summary && (
+          {/* Show summary text ONLY if there is no structured payload block (prevents TC-08 duplicate copy) */}
+          {!renderedPayload && event.summary && (
             <p className="text-xs text-slate-700 leading-relaxed pt-1.5">
               {event.summary}
             </p>
           )}
 
-          {/* STATUS TRANSITION BADGE */}
           {event.status_before && event.status_after && event.status_before !== event.status_after && (
-            <div className="flex items-center gap-1.5 text-[11px] py-1 px-2.5 rounded-md bg-slate-50 border border-slate-200/80 w-fit flex-wrap">
+            <div className="flex items-center gap-1.5 text-[11px] py-1 px-2.5 rounded-md bg-slate-50 border border-slate-200/80 w-fit flex-wrap mt-1">
               <span className="text-slate-500 font-medium">Status transition:</span>
               <span className="font-semibold text-slate-600">{getStatusLabel(event.status_before)}</span>
               <ArrowRight size={11} className="text-slate-400" />
@@ -456,15 +471,13 @@ export default function EventCard({
             </div>
           )}
 
-          {/* RICH PAYLOAD RENDERERS */}
-          {renderEventPayload(event, payload, onViewAttachment, incident)}
+          {renderedPayload}
 
-          {/* ATTACHMENTS SECTION */}
           {attachments.length > 0 && (
             <div className="pt-1.5">
               <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                 <Paperclip size={12} className="text-slate-400" />
-                <span>Attached Files & Evidence ({attachments.length})</span>
+                <span>Attached Files &amp; Evidence ({attachments.length})</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {attachments.map((att) => {
@@ -498,17 +511,15 @@ export default function EventCard({
                             <Eye size={12} />
                           </button>
                         )}
-                        <a
-                          href={`${UPLOADS_URL}/${att.stored_filename}`}
-                          download
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-0.5 hover:text-indigo-600 rounded text-slate-400 hover:bg-slate-100"
+                        <button
+                          type="button"
+                          disabled={downloadingId === att.id}
+                          onClick={(e) => handleDownloadAttachment(att, e)}
+                          className="p-0.5 hover:text-indigo-600 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-50"
                           title="Download file"
                         >
                           <Download size={12} />
-                        </a>
+                        </button>
                       </div>
                     </div>
                   );
@@ -522,10 +533,7 @@ export default function EventCard({
   );
 }
 
-/**
- * Specialized sub-renderers based on event_type with complete data fidelity
- */
-function renderEventPayload(event, payload, onViewAttachment, incident) {
+function renderEventPayload(event, payload, incident) {
   const type = event.event_type;
 
   // 1. INCIDENT REPORTED
@@ -533,9 +541,12 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     const incDate = payload.incident_date || payload.incidentDate;
     const incTime = payload.incident_time || payload.incidentTime;
     const severity = payload.reported_severity || payload.reportedSeverity || payload.severity;
-    const category = payload.incident_category || payload.incidentCategory || payload.category;
+    const rawCats = payload.incident_categories || payload.incidentCategories || incident?.incident_categories;
+    const categoryDisplay = Array.isArray(rawCats) && rawCats.length > 0
+      ? rawCats.join(', ')
+      : (payload.incident_category || payload.incidentCategory || payload.category || incident?.incident_category || '—');
     const description = payload.description || payload.details;
-    const respPerson = payload.responsible_person_name || payload.responsiblePersonName || (incident && (incident.responsible_person_name || incident.responsiblePersonName));
+    const respPerson = payload.responsible_person_name || payload.responsiblePersonName || incident?.responsible_person_name || incident?.responsiblePersonName;
     const hasResp = payload.has_responsible_person ?? incident?.has_responsible_person;
 
     return (
@@ -549,15 +560,21 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
           <span className="font-semibold text-slate-800">{incTime ? formatTime(`1970-01-01T${incTime}`) : '—'}</span>
         </div>
         <div>
-          <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Reported Severity</span>
-          <span className={`px-2 py-0.2 rounded text-[11px] font-bold inline-block ${getSeverityClass(severity)}`}>
-            {severity || '—'}
-          </span>
+          <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Assigned Severity</span>
+          {severity ? (
+            <span className={`px-2 py-0.5 rounded text-[11px] font-bold inline-block ${getSeverityClass(severity)}`}>
+              {severity}
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded text-[11px] font-semibold inline-block bg-slate-100 text-slate-500">
+              Pending
+            </span>
+          )}
         </div>
         <div>
           <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Category</span>
-          <span className="font-semibold text-slate-800 truncate block" title={category}>
-            {category || '—'}
+          <span className="font-semibold text-slate-800 truncate block" title={categoryDisplay}>
+            {categoryDisplay}
           </span>
         </div>
         <div className="col-span-2 sm:col-span-4 bg-slate-50/80 p-2 rounded border border-slate-100 flex items-center justify-between gap-2 flex-wrap">
@@ -585,32 +602,46 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     );
   }
 
-  // 2. REDIRECTION (REQUEST, APPROVED, REJECTED)
+  // 2. REDIRECTION
   if (type === 'REDIRECT_REQUESTED') {
-    const fromDept = payload.from_department || payload.fromDepartment || 'Current Department';
-    const targetDepts = payload.target_departments || payload.targetDepartments || [];
+    const fromScope =
+      payload.from_category || payload.fromCategory ||
+      payload.from_department || payload.fromDepartment ||
+      incident?.redirect_requested_by_category ||
+      incident?.redirect_requested_by_dept ||
+      'Assigned Reviewer';
+    const rawTargets =
+      payload.target_categories || payload.targetCategories ||
+      payload.target_departments || payload.targetDepartments || [];
+    const targetList = Array.isArray(rawTargets)
+      ? rawTargets.filter(Boolean)
+      : (rawTargets ? [String(rawTargets).trim()].filter(Boolean) : []);
     const retainReq = payload.retain_requesting_dept ?? payload.retainRequestingDept;
 
     return (
       <div className="bg-white p-2.5 rounded-lg border border-orange-200 space-y-1.5 text-xs">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="font-bold text-slate-700">Routing Request:</span>
-          <span className="px-1.5 py-0.2 bg-slate-100 text-slate-700 rounded font-semibold text-[11px]">{fromDept}</span>
-          <ArrowRight size={12} className="text-orange-500" />
-          <span className="px-1.5 py-0.2 bg-orange-100 text-orange-800 rounded font-bold text-[11px]">
-            {Array.isArray(targetDepts) ? targetDepts.join(', ') : targetDepts}
-          </span>
+          <span className="font-bold text-slate-700">Redirection Requested By:</span>
+          <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded font-semibold text-[11px]">{fromScope}</span>
+          {targetList.length > 0 && (
+            <>
+              <ArrowRight size={12} className="text-orange-500" />
+              <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded font-bold text-[11px]">
+                {targetList.join(', ')}
+              </span>
+            </>
+          )}
           {retainReq && (
-            <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-1.5 py-0.2 rounded border border-indigo-200">
+            <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-1.5 py-0.5 rounded border border-indigo-200">
               Joint Involvement Retained
             </span>
           )}
         </div>
         {payload.reason && (
           <div>
-            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">HOD Justification</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Redirection Reason</span>
             <p className="text-slate-800 italic bg-orange-50/40 p-2 rounded border border-orange-100 text-xs">
-              "{payload.reason}"
+              &ldquo;{payload.reason}&rdquo;
             </p>
           </div>
         )}
@@ -619,15 +650,26 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
   }
 
   if (type === 'REDIRECT_APPROVED') {
-    const newDepts = payload.new_departments || payload.newDepartments || payload.departments || [];
+    const rawTargets =
+      payload.target_categories || payload.targetCategories ||
+      payload.new_categories || payload.newCategories ||
+      payload.new_departments || payload.newDepartments ||
+      payload.departments || [];
+    const targetList = Array.isArray(rawTargets)
+      ? rawTargets.filter(Boolean)
+      : (rawTargets ? [String(rawTargets).trim()].filter(Boolean) : []);
+    const targetDisplay = targetList.length > 0
+      ? targetList.join(', ')
+      : (incident?.incident_category || 'updated incident category');
+
     return (
       <div className="bg-emerald-50/60 p-2.5 rounded-lg border border-emerald-200 text-xs space-y-1">
         <div className="flex items-center gap-1.5 font-bold text-emerald-800">
           <CheckCircle2 size={13} className="text-emerald-600" />
-          <span>Department Reassignment Endorsed</span>
+          <span>Incident Redirection Endorsed</span>
         </div>
         <p className="text-emerald-900 text-xs">
-          Incident successfully routed to: <strong>{Array.isArray(newDepts) ? newDepts.join(', ') : newDepts}</strong>.
+          Incident successfully routed to: <strong>{targetDisplay}</strong>.
         </p>
       </div>
     );
@@ -642,17 +684,36 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
         </div>
         {payload.reason && (
           <p className="text-red-950 bg-white/80 p-2 rounded border border-red-200 font-medium italic text-xs">
-            "{payload.reason}"
+            &ldquo;{payload.reason}&rdquo;
           </p>
         )}
       </div>
     );
   }
 
-  // SYSTEM ACTIVITY: HOD FEEDBACK REMINDER
+  // DEPARTMENTS / CATEGORIES INVOLVED
+  if (type === 'DEPARTMENTS_INVOLVED' || type === 'CATEGORIES_INVOLVED') {
+    const rawItems = payload.categories || payload.departments || [];
+    const itemList = Array.isArray(rawItems) ? rawItems.filter(Boolean) : [];
+    return (
+      <div className="bg-amber-50/50 p-2.5 rounded-lg border border-amber-200 text-xs space-y-1">
+        <div className="flex items-center gap-1.5 font-bold text-amber-900">
+          <Users size={13} className="text-amber-600" />
+          <span>Additional Category Review Requested</span>
+        </div>
+        {itemList.length > 0 && (
+          <p className="text-amber-950 text-xs">
+            Added for feedback: <strong>{itemList.join(', ')}</strong>
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // SYSTEM ACTIVITY: REVIEW REMINDER
   if (type === 'HOD_REMINDER_SENT') {
     const remindedBy = payload.reminded_by || payload.remindedBy || 'IMC Quality Committee';
-    const hodCount = payload.hod_count || payload.hodCount || 1;
+    const recipientCount = payload.hod_count || payload.hodCount || payload.recipient_count || 1;
 
     return (
       <div className="bg-amber-50/60 p-2.5 rounded-lg border border-amber-200 text-xs space-y-1.5">
@@ -668,7 +729,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
           <div>
             <span className="text-[10px] font-bold uppercase text-amber-700 block mb-0.5">Recipient Scope</span>
             <span className="font-semibold text-slate-800">
-              {hodCount} Concerned HOD(s) via In-App Alert & Email
+              {recipientCount} Assigned Reviewer{recipientCount === 1 ? '' : 's'} via In-App Alert &amp; Email
             </span>
           </div>
         </div>
@@ -692,7 +753,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     );
   }
 
-  // SYSTEM ACTIVITY: AUTOMATED NOTIFICATION & EMAIL DISPATCH
+  // SYSTEM ACTIVITY: AUTOMATED NOTIFICATION
   if (type === 'NOTIFICATION_DISPATCHED' || type === 'EMAIL_DISPATCHED') {
     return (
       <div className="bg-sky-50/60 p-2.5 rounded-lg border border-sky-200 text-xs space-y-1">
@@ -707,23 +768,26 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     );
   }
 
-  // 3. DEPARTMENT FEEDBACK
+  // 3. DEPARTMENT / CATEGORY FEEDBACK
   if (type === 'HOD_FEEDBACK_SUBMITTED') {
-    const deptName = payload.department_name || payload.departmentName || payload.dept_name || 'Asset / Operations';
+    const scopeName =
+      payload.category_name || payload.categoryName ||
+      payload.department_name || payload.departmentName ||
+      payload.dept_name || 'Assigned Review';
     const feedbackText = payload.feedback_text || payload.feedbackText || payload.feedback;
     const submittedAt = payload.submitted_at || payload.submittedAt || event.occurred_at;
 
     return (
       <div className="bg-white p-2.5 rounded-lg border border-teal-200 space-y-1.5 text-xs">
         <div className="flex items-center justify-between border-b border-teal-100 pb-1.5">
-          <span className="font-bold text-teal-900">Department: {deptName}</span>
+          <span className="font-bold text-teal-900">Review Scope: {scopeName}</span>
           {submittedAt && (
             <span className="text-[10px] text-slate-400">{formatDateTime(submittedAt)}</span>
           )}
         </div>
         {feedbackText && (
           <div>
-            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Department Observations & Assessment</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Observations &amp; Assessment</span>
             <p className="text-slate-800 whitespace-pre-wrap leading-relaxed bg-teal-50/30 p-2 rounded border border-teal-100 text-xs">
               {feedbackText}
             </p>
@@ -744,7 +808,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
         <div className="flex items-center justify-between border-b border-cyan-100 pb-1.5">
           <span className="font-bold text-cyan-900">Investigation Panel Composition (Round {event.round_no || 1})</span>
           {payload.deadline && (
-            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
               Deadline: {formatDate(payload.deadline)}
             </span>
           )}
@@ -773,7 +837,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
                     )}
                     {invDept && <span className="text-[11px] text-slate-500 truncate hidden sm:inline">({invDept})</span>}
                   </div>
-                  <span className="text-[10px] font-bold uppercase px-1.5 py-0.2 rounded bg-white text-cyan-800 border border-cyan-200 shrink-0">
+                  <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-white text-cyan-800 border border-cyan-200 shrink-0">
                     {invRole}
                   </span>
                 </div>
@@ -787,7 +851,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     );
   }
 
-  // 5. INVESTIGATION REPORT SUBMITTED (Fixes missing Joint Investigation Report data!)
+  // 5. INVESTIGATION REPORT SUBMITTED
   if (type === 'INVESTIGATION_REPORT_SUBMITTED') {
     const reportText = payload.report_text || payload.reportText || payload.findings || payload.feedback_text || payload.feedbackText;
     const submittedBy = payload.submitted_by || payload.submittedBy || event.actor_name;
@@ -804,11 +868,11 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
           </div>
           <div className="flex items-center gap-1">
             {attCount > 0 && (
-              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-semibold">
+              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-semibold">
                 {attCount} file{attCount > 1 ? 's' : ''}
               </span>
             )}
-            <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded font-bold uppercase">
+            <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold uppercase">
               Submitted for Evaluation
             </span>
           </div>
@@ -816,7 +880,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
 
         {reportText ? (
           <div>
-            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Findings & Root Cause Analysis</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Findings &amp; Root Cause Analysis</span>
             <p className="text-slate-800 whitespace-pre-wrap leading-relaxed bg-blue-50/30 p-2 rounded border border-blue-100 text-xs">
               {reportText}
             </p>
@@ -848,9 +912,9 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
         </div>
         {remarks && (
           <div>
-            <span className="text-[10px] font-bold uppercase text-amber-700 block mb-0.5">IMC Convenor Remarks & Instructions</span>
+            <span className="text-[10px] font-bold uppercase text-amber-700 block mb-0.5">IMC Convenor Remarks &amp; Instructions</span>
             <p className="text-amber-950 bg-white p-2 rounded border border-amber-200 font-medium whitespace-pre-wrap text-xs">
-              "{remarks}"
+              &ldquo;{remarks}&rdquo;
             </p>
           </div>
         )}
@@ -871,8 +935,8 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-indigo-50/40 p-2 rounded border border-indigo-100">
           <div>
             <span className="text-[10px] font-bold uppercase text-indigo-900 block mb-0.5">IMC Evaluated Severity</span>
-            <span className={`px-2 py-0.2 rounded text-[11px] font-bold inline-block ${getSeverityClass(payload.severity)}`}>
-              {payload.severity || 'Minor'}
+            <span className={`px-2 py-0.5 rounded text-[11px] font-bold inline-block ${getSeverityClass(payload.severity)}`}>
+              {payload.severity || 'Pending'}
             </span>
           </div>
           <div>
@@ -880,7 +944,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
             <div className="flex flex-wrap gap-1 mt-0.5">
               {outcomes.length > 0 ? (
                 outcomes.map(o => (
-                  <span key={o} className="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800 font-bold text-[10px] border border-indigo-200">
+                  <span key={o} className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold text-[10px] border border-indigo-200">
                     {o}
                   </span>
                 ))
@@ -893,7 +957,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
 
         {feedbackText && (
           <div>
-            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">IMC Findings & Recommendations</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">IMC Findings &amp; Recommendations</span>
             <p className="text-slate-800 whitespace-pre-wrap leading-relaxed bg-slate-50 p-2 rounded border border-slate-100 text-xs">
               {feedbackText}
             </p>
@@ -903,7 +967,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
         {respEmps.length > 0 && (
           <div className="pt-1.5 border-t border-slate-100">
             <span className="text-[10px] font-bold uppercase text-slate-500 block mb-1">
-              Identified Responsible Staff & Disciplinary Actions ({respEmps.length})
+              Identified Responsible Staff &amp; Disciplinary Actions ({respEmps.length})
             </span>
             <div className="space-y-1">
               {respEmps.map((emp, i) => (
@@ -920,17 +984,17 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
                   </div>
                   <div className="flex items-center gap-1 flex-wrap">
                     {Array.isArray(emp.outcomes) && emp.outcomes.map(o => (
-                      <span key={o} className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-semibold text-[10px] border border-indigo-200">
+                      <span key={o} className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold text-[10px] border border-indigo-200">
                         {o}
                       </span>
                     ))}
                     {emp.penalty_amount && (
-                      <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 font-bold text-[10px] border border-rose-200">
+                      <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold text-[10px] border border-rose-200">
                         ₹{Number(emp.penalty_amount).toLocaleString('en-IN')}
                       </span>
                     )}
                     {emp.needs_training && (
-                      <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 font-bold text-[10px] border border-amber-300">
+                      <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 font-bold text-[10px] border border-amber-300">
                         Training Required
                       </span>
                     )}
@@ -944,7 +1008,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     );
   }
 
-  // 8. MANAGEMENT DIRECTIVE (AGREED OR MODIFIED)
+  // 8. MANAGEMENT DIRECTIVE
   if (type === 'MGMT_DECISION_MODIFIED' || type === 'MGMT_DECISION_AGREED') {
     const isModified = type === 'MGMT_DECISION_MODIFIED' || payload.isModified || payload.decision === 'DISAGREE_MODIFY';
     const origOutcomes = parseProposedOutcomes(payload.imc_proposed_outcome || payload.originalOutcome || payload.original_outcome);
@@ -958,7 +1022,6 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
 
     return (
       <div className="bg-white p-2.5 rounded-lg border border-purple-200 space-y-2 text-xs">
-        {/* Comparison Callout for Modified Decision */}
         {isModified ? (
           <div className="p-2 bg-gradient-to-r from-amber-50 via-purple-50 to-indigo-50 rounded-lg border border-purple-300 space-y-1.5">
             <div className="flex items-center gap-1.5 text-purple-900 font-extrabold text-[11px] uppercase tracking-wide">
@@ -974,7 +1037,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
                 <div className="flex flex-wrap gap-1">
                   {origOutcomes.length > 0 ? (
                     origOutcomes.map(o => (
-                      <span key={o} className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 font-semibold text-[10px] line-through">
+                      <span key={o} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px] line-through">
                         {o}
                       </span>
                     ))
@@ -991,7 +1054,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
                 <div className="flex flex-wrap gap-1">
                   {modOutcomes.length > 0 ? (
                     modOutcomes.map(o => (
-                      <span key={o} className="px-1.5 py-0.2 rounded bg-purple-600 text-white font-extrabold text-[10px] shadow-2xs">
+                      <span key={o} className="px-1.5 py-0.5 rounded bg-purple-600 text-white font-extrabold text-[10px] shadow-2xs">
                         {o}
                       </span>
                     ))
@@ -1011,7 +1074,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
 
         {actions && (
           <div>
-            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Management Mandate & Directives</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Management Mandate &amp; Directives</span>
             <p className="text-slate-800 whitespace-pre-wrap leading-relaxed bg-slate-50 p-2 rounded border border-slate-200 font-medium text-xs">
               {actions}
             </p>
@@ -1025,7 +1088,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
           </div>
           <div>
             <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Mandatory Training</span>
-            <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold inline-block ${
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold inline-block ${
               (payload.require_training ?? payload.requireTraining) ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
             }`}>
               {(payload.require_training ?? payload.requireTraining) ? 'Mandated' : 'Not Required'}
@@ -1091,7 +1154,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
             <span className="text-[10px] font-bold uppercase text-slate-500 block mb-0.5">Enrolled Trainee(s)</span>
             <div className="flex flex-wrap gap-1">
               {trainees.map((t, idx) => (
-                <span key={idx} className="px-2 py-0.2 rounded bg-blue-50 text-blue-800 font-semibold border border-blue-200 text-[10px]">
+                <span key={idx} className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 font-semibold border border-blue-200 text-[10px]">
                   {t.name || t.full_name} {t.department ? `(${t.department})` : ''}
                 </span>
               ))}
@@ -1134,7 +1197,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
 
         {reportSummary && (
           <div>
-            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Session Summary & Methodology</span>
+            <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Session Summary &amp; Methodology</span>
             <p className="text-slate-800 whitespace-pre-wrap leading-relaxed bg-slate-50 p-2 rounded border border-slate-100 text-xs">
               {reportSummary}
             </p>
@@ -1144,7 +1207,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
     );
   }
 
-  // 11. FORMAL DISCIPLINARY LETTERS
+  // 11. FORMAL LETTERS
   if (type === 'LETTER_DRAFTED' || type === 'LETTER_REVISED') {
     const recipient = payload.recipientName || payload.recipient_name;
     const template = payload.templateType || payload.template_type;
@@ -1191,7 +1254,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
               <div key={l.id || i} className="flex items-center justify-between p-1.5 rounded bg-white border border-emerald-100 text-xs">
                 <span className="font-bold text-slate-800">{l.recipientName || l.recipient_name}</span>
                 <span className="text-slate-500 font-mono text-[10px]">{l.referenceNumber || l.reference_number}</span>
-                <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-semibold uppercase">
+                <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-semibold uppercase">
                   Dispatched via Email
                 </span>
               </div>
@@ -1209,7 +1272,7 @@ function renderEventPayload(event, payload, onViewAttachment, incident) {
       <div className="bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-300 space-y-1.5 text-xs">
         <div className="flex items-center gap-1.5 font-bold text-emerald-900">
           <CheckCircle2 size={14} className="text-emerald-600" />
-          <span>Hospital Incident Concluded & Resolution Archived</span>
+          <span>Hospital Incident Concluded &amp; Resolution Archived</span>
         </div>
         {notes && (
           <p className="text-emerald-950 bg-white p-2 rounded border border-emerald-200 leading-relaxed text-xs">

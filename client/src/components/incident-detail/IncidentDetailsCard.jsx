@@ -1,7 +1,8 @@
-import React from 'react';
-import { Building, Users, AlertTriangle, FileText, User, CheckCircle, Paperclip } from 'lucide-react';
-import { formatDate, formatDateTime, getStatusLabel, parseProposedOutcomes } from '../../utils/helpers';
-import { UPLOADS_URL } from '../../api';
+import { useState } from 'react';
+import { Layers, Building, Users, AlertTriangle, FileText, CheckCircle, Paperclip } from 'lucide-react';
+import { formatDate, formatDateTime, getStatusLabel, parseProposedOutcomes, getApiErrorMessage } from '../../utils/helpers';
+import { attachmentsApi } from '../../api';
+import toast from 'react-hot-toast';
 
 function DetailRow({ icon: Icon, label, value }) {
   return (
@@ -16,32 +17,62 @@ function DetailRow({ icon: Icon, label, value }) {
 }
 
 export default function IncidentDetailsCard({ incident, finalReport, feedbacks, attachments, onViewAttachment }) {
+  const [openingId, setOpeningId] = useState(null);
   const submissionAtts = (attachments || []).filter(a => a.stage === 'submission');
+
+  const categoriesList = Array.isArray(incident.categories) && incident.categories.length > 0
+    ? incident.categories
+    : (Array.isArray(incident.incident_categories) && incident.incident_categories.length > 0
+      ? incident.incident_categories.map(name => ({ name, has_feedback: incident.all_hod_feedback_submitted }))
+      : (incident.incident_category ? [{ name: incident.incident_category, has_feedback: incident.all_hod_feedback_submitted }] : []));
+
+  const legacyDepts = Array.isArray(incident.departments) ? incident.departments : [];
+
+  const handleOpenAttachment = async (att) => {
+    if (onViewAttachment) {
+      onViewAttachment(att);
+      return;
+    }
+    if (!att?.id) return;
+    setOpeningId(att.id);
+    try {
+      const res = await attachmentsApi.getDownloadUrl(att.id);
+      if (res.data?.url) {
+        window.open(res.data.url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Unable to open attachment.'));
+    } finally {
+      setOpeningId(null);
+    }
+  };
 
   return (
     <>
-      {/* --- PRINT TEMPLATE SPECIFIC CONTENT --- */}
+      {/* Print Template Specific Content */}
       <div className="hidden print:block space-y-4 text-sm leading-relaxed mb-6">
         <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4">
           <p><strong>Status:</strong> {getStatusLabel(incident.status)}</p>
-          <p><strong>Severity:</strong> {incident.severity}</p>
-          <p><strong>Incident Date & Time:</strong> {formatDate(incident.incident_date)} at {incident.incident_time?.slice(0, 5)}</p>
-          <p><strong>Location:</strong> {incident.main_location_name} - {incident.sub_location_name}</p>
+          <p><strong>Severity:</strong> {incident.severity || 'Pending'}</p>
+          <p><strong>Incident Date &amp; Time:</strong> {formatDate(incident.incident_date)} at {incident.incident_time?.slice(0, 5)}</p>
+          <p><strong>Location:</strong> {incident.main_location_name}{incident.sub_location_name ? ` - ${incident.sub_location_name}` : ''}</p>
           <p><strong>Reported By:</strong> {incident.reporter_name}</p>
           <p><strong>Occurred To:</strong> {incident.occurred_to}</p>
-          <p className="col-span-2"><strong>Department(s) Involved:</strong> {(incident.departments || []).map(d => typeof d === 'string' ? d : d.name).join(', ') || 'N/A'}</p>
-          <p><strong>Incident Category:</strong> {incident.incident_category}</p>
-          <p><strong>Incident Type:</strong> {incident.incident_type}</p>
+          <p className="col-span-2">
+            <strong>Incident Categor(ies):</strong>{' '}
+            {categoriesList.map(c => (typeof c === 'string' ? c : c.name)).join(', ') || 'N/A'}
+          </p>
+          <p className="col-span-2"><strong>Incident Type:</strong> {incident.incident_type}</p>
         </div>
-        
+
         <div className="mt-6 pt-4 border-t border-slate-200">
           <p className="font-bold text-base mb-2 uppercase tracking-wide">Description of the Incident</p>
           <p className="whitespace-pre-wrap">{incident.description}</p>
         </div>
-        
+
         {incident.responsible_employees && incident.responsible_employees.length > 0 ? (
           <div className="mt-6 pt-4 border-t border-slate-200">
-            <p className="font-bold text-base mb-2 uppercase tracking-wide">Responsible Personnel & Mandated Outcomes</p>
+            <p className="font-bold text-base mb-2 uppercase tracking-wide">Responsible Personnel &amp; Mandated Outcomes</p>
             <div className="space-y-2">
               {incident.responsible_employees.map(emp => (
                 <div key={emp.employee_id || emp.id} className="text-sm">
@@ -76,46 +107,49 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
             <p className="text-xs text-slate-500">Generated At: {formatDateTime(finalReport.generated_at)}</p>
           </div>
         )}
-        
+
         {feedbacks?.length > 0 && (
           <div className="mt-6 pt-4 border-t border-slate-200">
-            <p className="font-bold text-base mb-4 uppercase tracking-wide">Review & Feedback History</p>
+            <p className="font-bold text-base mb-4 uppercase tracking-wide">Review &amp; Feedback History</p>
             <div className="space-y-4">
-              {feedbacks.map(fb => (
-                <div key={fb.id} className="pb-4 border-b border-slate-100 last:border-0">
-                  <p className="mb-1">
-                    <strong>{fb.role?.replace('_', ' ').toUpperCase()} Review</strong> by {fb.full_name} ({fb.designation}) on {formatDateTime(fb.created_at)}
-                  </p>
-                  <p className="italic">"{fb.feedback_text}"</p>
-                </div>
-              ))}
+              {feedbacks.map(fb => {
+                const roleLabel = fb.role === 'hod' ? 'Department' : (fb.role?.replace('_', ' ').toUpperCase());
+                return (
+                  <div key={fb.id} className="pb-4 border-b border-slate-100 last:border-0">
+                    <p className="mb-1">
+                      <strong>{roleLabel} Review</strong> by {fb.full_name} ({fb.designation}) on {formatDateTime(fb.created_at)}
+                    </p>
+                    <p className="italic">&ldquo;{fb.feedback_text}&rdquo;</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
       </div>
 
-      {/* --- NORMAL UI CONTENT --- */}
+      {/* Normal UI Content */}
       <div className="card p-5 print:hidden">
-        <h2 className="text-sm font-bold text-slate-800 mb-4">Step 1: Incident Registration & Reporting Details</h2>
+        <h2 className="text-sm font-bold text-slate-800 mb-4">Incident Registration &amp; Reporting Details</h2>
         <div className="space-y-3 text-sm">
-          {incident.departments && incident.departments.length > 1 ? (
+          {categoriesList.length > 1 ? (
             <div className="py-2 px-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
                 <span className="flex items-center gap-1.5">
-                  <Building size={14} className="text-slate-500" />
-                  Concerned Departments
+                  <Layers size={14} className="text-slate-500" />
+                  Incident Categories
                 </span>
                 <span className="text-[11px] font-bold text-slate-500">
-                  {incident.departments.filter(d => typeof d === 'object' && d.has_feedback).length} of {incident.departments.length} Responded
+                  {categoriesList.filter(c => typeof c === 'object' && c.has_feedback).length} of {categoriesList.length} Responded
                 </span>
               </div>
               <div className="space-y-1.5">
-                {incident.departments.map(d => {
-                  const dName = typeof d === 'string' ? d : d.name;
-                  const hasFb = typeof d === 'object' ? d.has_feedback : false;
+                {categoriesList.map(c => {
+                  const cName = typeof c === 'string' ? c : c.name;
+                  const hasFb = typeof c === 'object' ? c.has_feedback : false;
                   return (
-                    <div key={dName} className="flex items-center justify-between py-1 px-2.5 rounded-lg bg-white border border-slate-200/80 text-xs">
-                      <span className="font-medium text-slate-800">{dName}</span>
+                    <div key={cName} className="flex items-center justify-between py-1 px-2.5 rounded-lg bg-white border border-slate-200/80 text-xs">
+                      <span className="font-medium text-slate-800">{cName}</span>
                       {hasFb ? (
                         <span className="text-emerald-700 font-semibold flex items-center gap-1 text-[11px]">
                           <CheckCircle size={12} className="text-emerald-600" /> Feedback Given
@@ -131,18 +165,31 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
               </div>
             </div>
           ) : (
-            <DetailRow icon={Building} label="Department" value={(incident.departments || []).map(d => typeof d === 'string' ? d : d.name).join(', ') || '—'} />
+            <DetailRow
+              icon={Layers}
+              label="Incident Category"
+              value={categoriesList.map(c => (typeof c === 'string' ? c : c.name)).join(', ') || '—'}
+            />
           )}
+
+          <DetailRow icon={FileText} label="Incident Type" value={incident.incident_type} />
           <DetailRow icon={Users} label="Occurred To" value={incident.occurred_to} />
-          <DetailRow icon={AlertTriangle} label="Severity" value={incident.severity} />
-          <DetailRow icon={FileText} label="Category" value={incident.incident_category} />
-          <DetailRow icon={FileText} label="Type" value={incident.incident_type} />
+          <DetailRow icon={AlertTriangle} label="Severity" value={incident.severity || 'Pending'} />
+
+          {legacyDepts.length > 0 && (
+            <DetailRow
+              icon={Building}
+              label="Legacy Involved Depts"
+              value={legacyDepts.map(d => (typeof d === 'string' ? d : d.name)).join(', ')}
+            />
+          )}
         </div>
+
         <div className="mt-4 pt-4 border-t border-slate-100">
           <p className="text-xs font-medium text-slate-500 mb-2">Description</p>
           <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{incident.description}</p>
         </div>
-        
+
         {submissionAtts.length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-100">
             <p className="text-xs font-medium text-slate-500 mb-2">Attachments ({submissionAtts.length})</p>
@@ -151,10 +198,10 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
                 <button
                   type="button"
                   key={att.id}
+                  disabled={openingId === att.id}
                   onClick={(e) => {
                     e.preventDefault();
-                    if (onViewAttachment) onViewAttachment(att);
-                    else window.open(`${UPLOADS_URL}/${att.stored_filename}`, '_blank');
+                    handleOpenAttachment(att);
                   }}
                   title={att.original_filename}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-blue-700 font-medium hover:bg-blue-50 hover:border-blue-300 transition-colors shadow-sm max-w-[200px]"

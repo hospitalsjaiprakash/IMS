@@ -1,6 +1,20 @@
 import { create } from 'zustand';
 import { authApi } from '../api';
-import { queryClient } from '../utils/queryClient';
+import { resetQueryCache } from '../utils/queryClient';
+
+const readInitialSession = () => {
+  try {
+    const token = sessionStorage.getItem('ims_token');
+    const rawUser = sessionStorage.getItem('ims_user');
+    const user = rawUser ? JSON.parse(rawUser) : null;
+    if (!token || !user || typeof user !== 'object') {
+      return { token: null, user: null, isAuthenticated: false };
+    }
+    return { token, user, isAuthenticated: true };
+  } catch {
+    return { token: null, user: null, isAuthenticated: false };
+  }
+};
 
 const touchActivityTimestamp = () => {
   const now = String(Date.now());
@@ -16,12 +30,12 @@ const touchActivityTimestamp = () => {
   }
 };
 
+const initialSession = readInitialSession();
+
 export const useAuthStore = create((set) => ({
-  user: (() => {
-    try { return JSON.parse(sessionStorage.getItem('ims_user')); } catch { return null; }
-  })(),
-  token: sessionStorage.getItem('ims_token'),
-  isAuthenticated: !!sessionStorage.getItem('ims_token'),
+  user: initialSession.user,
+  token: initialSession.token,
+  isAuthenticated: initialSession.isAuthenticated,
   loading: false,
   error: null,
 
@@ -29,8 +43,7 @@ export const useAuthStore = create((set) => ({
     set({ loading: true, error: null });
     try {
       const { data } = await authApi.login(credentials);
-      queryClient.clear();
-      sessionStorage.removeItem('ims_query_cache');
+      resetQueryCache();
       sessionStorage.setItem('ims_token', data.token);
       sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       touchActivityTimestamp();
@@ -38,7 +51,7 @@ export const useAuthStore = create((set) => ({
       return { success: true, user: data.user };
     } catch (err) {
       const errData = err.response?.data?.error;
-      const error = typeof errData === 'string' ? errData : (errData?.message || 'Login failed. Please try again.');
+      const error = typeof errData === 'string' ? errData : errData?.message || 'Login failed. Please try again.';
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -52,13 +65,13 @@ export const useAuthStore = create((set) => ({
       return { success: true, message: response.data.message };
     } catch (err) {
       const errData = err.response?.data?.error;
-      const error = typeof errData === 'string' ? errData : (errData?.message || 'Failed to request OTP. Please try again.');
+      const error = typeof errData === 'string' ? errData : errData?.message || 'Failed to request OTP. Please try again.';
       set({ error, loading: false });
       return {
         success: false,
         error,
         code: err.response?.data?.code,
-        retryAfterSeconds: err.response?.data?.retryAfterSeconds
+        retryAfterSeconds: err.response?.data?.retryAfterSeconds,
       };
     }
   },
@@ -71,7 +84,7 @@ export const useAuthStore = create((set) => ({
       return { success: true, message: response.data.message, employeeId: response.data.employeeId };
     } catch (err) {
       const errData = err.response?.data?.error;
-      const error = typeof errData === 'string' ? errData : (errData?.message || 'Registration failed. Please try again.');
+      const error = typeof errData === 'string' ? errData : errData?.message || 'Registration failed. Please try again.';
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -81,8 +94,7 @@ export const useAuthStore = create((set) => ({
     set({ loading: true, error: null });
     try {
       const { data } = await authApi.switchRole({ targetRole });
-      queryClient.clear();
-      sessionStorage.removeItem('ims_query_cache');
+      resetQueryCache();
       sessionStorage.setItem('ims_token', data.token);
       sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       touchActivityTimestamp();
@@ -90,7 +102,7 @@ export const useAuthStore = create((set) => ({
       return { success: true, user: data.user };
     } catch (err) {
       const errData = err.response?.data?.error;
-      const error = typeof errData === 'string' ? errData : (errData?.message || 'Role switch failed.');
+      const error = typeof errData === 'string' ? errData : errData?.message || 'Role switch failed.';
       set({ error, loading: false });
       return { success: false, error };
     }
@@ -100,8 +112,7 @@ export const useAuthStore = create((set) => ({
     set({ loading: true, error: null });
     try {
       const { data } = await authApi.leaveRole({ targetRole });
-      queryClient.clear();
-      sessionStorage.removeItem('ims_query_cache');
+      resetQueryCache();
       sessionStorage.setItem('ims_token', data.token);
       sessionStorage.setItem('ims_user', JSON.stringify(data.user));
       touchActivityTimestamp();
@@ -109,18 +120,16 @@ export const useAuthStore = create((set) => ({
       return { success: true, user: data.user };
     } catch (err) {
       const errData = err.response?.data?.error;
-      const error = typeof errData === 'string' ? errData : (errData?.message || 'Failed to leave role.');
+      const error = typeof errData === 'string' ? errData : errData?.message || 'Failed to leave role.';
       set({ error, loading: false });
       return { success: false, error };
     }
   },
 
   clearLocalSession: ({ broadcast = true } = {}) => {
-    queryClient.clear();
+    resetQueryCache();
     sessionStorage.removeItem('ims_token');
     sessionStorage.removeItem('ims_user');
-    // Clear cached query data and idle tracker so a new user starts cleanly
-    sessionStorage.removeItem('ims_query_cache');
     sessionStorage.removeItem('ims_last_activity_at');
     try {
       localStorage.removeItem('ims_last_activity_at');
@@ -153,11 +162,15 @@ export const useAuthStore = create((set) => ({
   updateSession: (token, user) => {
     if (token) sessionStorage.setItem('ims_token', token);
     if (user) sessionStorage.setItem('ims_user', JSON.stringify(user));
-    set((state) => ({
-      token: token || state.token,
-      user: user || state.user,
-      isAuthenticated: Boolean(token || state.token),
-    }));
+    set((state) => {
+      const nextToken = token || state.token;
+      const nextUser = user || state.user;
+      return {
+        token: nextToken,
+        user: nextUser,
+        isAuthenticated: Boolean(nextToken && nextUser),
+      };
+    });
   },
 
   refreshUser: async () => {
@@ -165,8 +178,8 @@ export const useAuthStore = create((set) => ({
       const { data } = await authApi.getMe();
       sessionStorage.setItem('ims_user', JSON.stringify(data));
       set({ user: data });
-    } catch (e) {
-      console.debug('Failed to refresh user:', e.message);
+    } catch {
+      // Handled silently or by 401 response interceptor
     }
   },
 }));
@@ -174,7 +187,9 @@ export const useAuthStore = create((set) => ({
 // Role helpers
 export const isAdmin = (user) => user?.role === 'system_admin';
 export const isImc = (user) => user?.role === 'imc';
+export const isImcLead = (user) => user?.role === 'imc' && Boolean(user?.isImcLead || user?.is_imc_lead);
 export const isHod = (user) => user?.role === 'hod';
+export const isFeedbackReviewer = (user) => user?.role === 'hod' || Boolean(user?.isFeedbackReviewer);
 export const isMd = (user) => user?.role === 'head_management';
 export const isAsstCoo = (user) => user?.role === 'asst_coo';
 export const isCoo = (user) => user?.role === 'coo';

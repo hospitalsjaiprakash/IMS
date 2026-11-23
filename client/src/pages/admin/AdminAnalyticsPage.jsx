@@ -3,33 +3,47 @@ import { adminApi } from '../../api';
 import { StatCard, Spinner, Alert } from '../../components/ui';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend
+  ResponsiveContainer, Cell
 } from 'recharts';
-import {
-  FileText, Clock, CheckCircle, AlertTriangle,
-  Database, Users, BookOpen, TrendingUp, UserCheck, MessageSquare
-} from 'lucide-react';
+import { Clock, CheckCircle, AlertTriangle, MessageSquare, RefreshCw } from 'lucide-react';
+import { formatDuration, getStatusLabel, getApiErrorMessage } from '../../utils/helpers';
+import { GlassTooltip } from '../../components/ui/GlassTooltip';
 
 const COLORS = ['#0e95ea', '#22c55e', '#f59e0b', '#d946ef', '#ef4444', '#6366f1', '#14b8a6', '#f97316', '#8b5cf6', '#ec4899'];
 
 export default function AdminAnalyticsPage() {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-analytics'],
     queryFn: () => adminApi.getAnalytics().then(r => r.data),
   });
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Spinner size={32} /></div>;
-  if (error) return <Alert type="error" title="Failed to load analytics" message={error.message} />;
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <Alert type="error" title="Failed to load analytics" message={getApiErrorMessage(error, 'Could not load system analytics.')} />
+        <button onClick={() => refetch()} className="btn-secondary flex items-center gap-2">
+          <RefreshCw size={15} /> Retry
+        </button>
+      </div>
+    );
+  }
 
   const {
     incidentsByMonth = [],
-    avgResolutionHours,
+    avgResolutionHours = null,
+    byCategory = [],
     byDepartment = [],
     slaBreach = 0,
     stalledIncidents = [],
     hodFeedbackPending = 0,
     hodFeedbackGiven = 0,
+    activeClaims = 0,
+    oldestClaimHours = null,
   } = data || {};
+
+  const categoryBreakdown = byCategory.length > 0 ? byCategory : byDepartment;
+  const categoryTitle = byCategory.length > 0 ? 'Top Categories by Incident Count' : 'Top Departments by Incident Count';
 
   return (
     <div className="space-y-6">
@@ -51,51 +65,59 @@ export default function AdminAnalyticsPage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Clock} label="Avg Resolution" value={`${avgResolutionHours}h`} color="bg-blue-50" iconColor="text-blue-600" />
+        <StatCard
+          icon={Clock}
+          label="Avg Resolution"
+          value={avgResolutionHours !== null && avgResolutionHours !== undefined ? formatDuration(Number(avgResolutionHours), 'N/A') : 'N/A'}
+          color="bg-blue-50"
+          iconColor="text-blue-600"
+        />
         <StatCard icon={AlertTriangle} label="SLA Breaches" value={slaBreach} color="bg-red-50" iconColor="text-red-600" />
-        <StatCard icon={MessageSquare} label="HOD Feedback Pending" value={hodFeedbackPending} color="bg-amber-50" iconColor="text-amber-600" />
-        <StatCard icon={CheckCircle} label="HOD Feedback Given" value={hodFeedbackGiven} color="bg-green-50" iconColor="text-green-600" />
+        <StatCard icon={MessageSquare} label="Dept Feedback Pending" value={hodFeedbackPending} color="bg-amber-50" iconColor="text-amber-600" />
+        <StatCard icon={CheckCircle} label="Dept Feedback Given" value={hodFeedbackGiven} color="bg-green-50" iconColor="text-green-600" />
       </div>
 
-
-      {/* Charts row */}
-      <div className="grid grid-cols-1 gap-5">
-        {/* Monthly bar chart */}
-        <div className="card p-5">
-          <h3 className="text-sm font-semibold text-slate-800 mb-4">Monthly Incident Trend (12 months)</h3>
-          {incidentsByMonth.length === 0 ? (
-            <div className="h-48 flex items-center justify-center text-slate-400 text-sm">No data available</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={incidentsByMonth} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ borderRadius: 12, border: '1px solid #e8edf4', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                />
-                <Bar dataKey="count" name="Incidents" radius={[4, 4, 0, 0]}>
-                  {incidentsByMonth.map((_, i) => (
-                    <Cell key={i} fill={i === incidentsByMonth.length - 1 ? '#0e95ea' : '#bae1fd'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+      {activeClaims > 0 && (
+        <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 flex items-center justify-between">
+          <span>Active IMC Review Claims: <strong className="text-slate-800">{activeClaims}</strong></span>
+          {oldestClaimHours !== null && (
+            <span>Oldest Active Claim Age: <strong className="text-slate-800">{formatDuration(Number(oldestClaimHours), 'N/A')}</strong></span>
           )}
         </div>
+      )}
+
+      {/* Monthly bar chart */}
+      <div className="card p-5">
+        <h3 className="text-sm font-semibold text-slate-800 mb-4">Monthly Incident Trend (12 months)</h3>
+        {incidentsByMonth.length === 0 ? (
+          <div className="h-48 flex items-center justify-center text-slate-400 text-sm">No data available</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={incidentsByMonth} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
+              <Tooltip content={<GlassTooltip />} />
+              <Bar dataKey="count" name="Incidents" radius={[4, 4, 0, 0]}>
+                {incidentsByMonth.map((_, i) => (
+                  <Cell key={i} fill={i === incidentsByMonth.length - 1 ? '#0e95ea' : '#bae1fd'} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
-
-      {/* Department breakdown */}
+      {/* Category & Stalled breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-slate-800 mb-4">Top Departments by Incident Count</h3>
-          {byDepartment.length === 0 ? (
+          <h3 className="text-sm font-semibold text-slate-800 mb-4">{categoryTitle}</h3>
+          {categoryBreakdown.length === 0 ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">No data</div>
           ) : (
             <div className="space-y-2.5">
-              {byDepartment.slice(0, 10).map((d, i) => {
-                const max = byDepartment[0]?.count || 1;
+              {categoryBreakdown.slice(0, 10).map((d, i) => {
+                const max = categoryBreakdown[0]?.count || 1;
                 const pct = Math.round((d.count / max) * 100);
                 return (
                   <div key={d.name} className="flex items-center gap-3">
@@ -134,8 +156,8 @@ export default function AdminAnalyticsPage() {
                 <div key={s.status} className="flex items-center justify-between p-3 bg-amber-50 border border-yellow-200 rounded-xl">
                   <div className="flex items-center gap-2">
                     <AlertTriangle size={14} className="text-amber-700" />
-                    <span className="text-sm font-medium text-slate-800 capitalize">
-                      {s.status.replace(/_/g, ' ')}
+                    <span className="text-sm font-medium text-slate-800">
+                      {getStatusLabel(s.status)}
                     </span>
                   </div>
                   <span className="text-lg font-bold text-amber-700 font-display">{s.count}</span>

@@ -1,21 +1,28 @@
-import React from 'react';
 import { Paperclip, X, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 const MAX_SIZE = 2 * 1024 * 1024; // 2MB
-const MAX_COUNT = 10;
 
-export default function FileUploadArea({ files, setFiles }) {
+export default function FileUploadArea({
+  files = [],
+  setFiles,
+  onChange,
+  maxFiles = 5,
+  label = 'Attachments (Optional)',
+  hint = 'Max file size: 2MB per file (JPG, PNG, WebP, PDF)',
+}) {
+  const updateFiles = setFiles || onChange;
+
   const handleFileChange = (e) => {
-    if (e.target.files?.length) {
+    if (e.target.files?.length && updateFiles) {
       const selected = Array.from(e.target.files);
       const validFiles = [];
 
       for (const file of selected) {
-        if (files.length + validFiles.length >= MAX_COUNT) {
-          toast.error(`Maximum ${MAX_COUNT} attachments permitted.`);
+        if (files.length + validFiles.length >= maxFiles) {
+          toast.error(`Maximum ${maxFiles} attachments permitted.`);
           break;
         }
 
@@ -38,7 +45,7 @@ export default function FileUploadArea({ files, setFiles }) {
       }
 
       if (validFiles.length > 0) {
-        setFiles([...files, ...validFiles]);
+        updateFiles([...files, ...validFiles]);
       }
     }
     e.target.value = null;
@@ -46,11 +53,11 @@ export default function FileUploadArea({ files, setFiles }) {
 
   return (
     <div className="mt-4">
-      <label className="field-label">Attachments (Optional)</label>
+      {label && <label className="field-label">{label}</label>}
       {files.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           {files.map((file, idx) => (
-            <div key={idx} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div key={`${file.name}-${idx}`} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center gap-3 overflow-hidden">
                 <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
                   <Paperclip size={14} className="text-slate-500" />
@@ -62,7 +69,7 @@ export default function FileUploadArea({ files, setFiles }) {
               </div>
               <button
                 type="button"
-                onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                onClick={() => updateFiles && updateFiles(files.filter((_, i) => i !== idx))}
                 className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
               >
                 <X size={16} />
@@ -84,7 +91,7 @@ export default function FileUploadArea({ files, setFiles }) {
             <Upload size={14} className="text-blue-600" />
           </div>
           <p className="text-sm font-medium text-slate-700">Click or drag files here</p>
-          <p className="text-[11px] text-slate-500 mt-0.5">Max file size: 2MB per file (JPG, PNG, WebP, PDF)</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">{hint} • Max {maxFiles} files</p>
         </div>
       </div>
     </div>

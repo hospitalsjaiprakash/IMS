@@ -1,46 +1,77 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { notificationsApi } from '../../api';
-import { Spinner, Alert } from '../../components/ui';
-import { Bell, Check, Clock, CheckCheck, MailOpen, Mail, FileText, LayoutDashboard, FilePlus, ChevronRight, Info } from 'lucide-react';
-import { timeAgo } from '../../utils/helpers';
+import { useAuthStore } from '../../store/authStore';
+import { Spinner, Alert, Pagination } from '../../components/ui';
+import {
+  Bell, Check, Clock, CheckCheck, MailOpen, Mail, FileText,
+  LayoutDashboard, FilePlus, ChevronRight, Info, RefreshCw, Users
+} from 'lucide-react';
+import { timeAgo, getRoleDashboard, getApiErrorMessage } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 export default function NotificationsPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { user } = useAuthStore();
+  const [page, setPage] = useState(1);
 
-  const { data: notifications = [], isLoading, error } = useQuery({
-    queryKey: ['notifications', 'page'],
-    queryFn: () => notificationsApi.list().then(r => r.data?.notifications || []),
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['notifications', 'page', page],
+    queryFn: () => notificationsApi.list({ page, limit: 25 }).then(r => r.data),
   });
+
+  const notifications = data?.notifications || [];
+  const totalCount = data?.total ?? notifications.length;
+  const unreadCount = data?.unreadCount ?? notifications.filter(n => !n.is_read).length;
+  const totalPages = data?.totalPages ?? Math.max(1, Math.ceil(totalCount / 25));
+  const readCount = Math.max(0, totalCount - unreadCount);
 
   const markReadMutation = useMutation({
     mutationFn: (id) => notificationsApi.markRead(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['notifications'] });
-    }
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to mark notification as read.')),
   });
 
   const markAllReadMutation = useMutation({
-    mutationFn: () => Promise.all(notifications.filter(n => !n.is_read).map(n => notificationsApi.markRead(n.id))),
+    mutationFn: () => notificationsApi.markRead('all'),
     onSuccess: () => {
       toast.success('All notifications marked as read');
       qc.invalidateQueries({ queryKey: ['notifications'] });
-    }
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to mark notifications as read.')),
   });
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><Spinner size={32} /></div>;
-  if (error) return <Alert type="error" title="Error" message="Failed to load notifications." />;
+  const handleNotificationClick = (notif) => {
+    if (!notif.is_read) {
+      markReadMutation.mutate(notif.id);
+    }
+    if (notif.incident_id) {
+      navigate(`/incidents/${encodeURIComponent(notif.incident_id)}`);
+    }
+  };
 
-  const unreadCount = notifications.filter(n => !n.is_read).length;
-  const readCount = notifications.filter(n => n.is_read).length;
-  const totalCount = notifications.length;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><Spinner size={32} /></div>;
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <Alert type="error" title="Error" message={getApiErrorMessage(error, 'Failed to load notifications.')} />
+        <button onClick={() => refetch()} className="btn-secondary flex items-center gap-2">
+          <RefreshCw size={15} /> Retry
+        </button>
+      </div>
+    );
+  }
 
   const quickLinks = [
-    { label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard', color: 'text-green-600 bg-green-50' },
+    { label: 'Dashboard', icon: LayoutDashboard, to: getRoleDashboard(user), color: 'text-green-600 bg-green-50' },
     { label: 'Incidents', icon: FileText, to: '/incidents', color: 'text-blue-600 bg-blue-50' },
-    { label: 'Report Incident', icon: FilePlus, to: '/incidents/new', color: 'text-indigo-600 bg-indigo-50' },
+    user?.role === 'system_admin'
+      ? { label: 'Users & Mappings', icon: Users, to: '/admin/users', color: 'text-indigo-600 bg-indigo-50' }
+      : { label: 'Report Incident', icon: FilePlus, to: '/incidents/new', color: 'text-indigo-600 bg-indigo-50' },
   ];
 
   return (
@@ -62,7 +93,7 @@ export default function NotificationsPage() {
           <button
             onClick={() => markAllReadMutation.mutate()}
             disabled={markAllReadMutation.isPending}
-            className="btn-secondary btn-sm"
+            className="btn-secondary btn-sm flex items-center gap-1.5"
           >
             <CheckCheck size={16} />
             Mark all as read
@@ -72,9 +103,7 @@ export default function NotificationsPage() {
 
       {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* LEFT — Notifications list (takes 2/3 width) */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-4">
           <div className="card divide-y divide-slate-100 overflow-hidden">
             {notifications.length === 0 ? (
               <div className="p-12 text-center text-slate-500">
@@ -82,13 +111,14 @@ export default function NotificationsPage() {
                   <Bell size={32} className="text-slate-300" />
                 </div>
                 <p className="font-medium text-slate-700">No notifications yet</p>
-                <p className="text-sm text-slate-400 mt-1">You'll be notified when something happens to your incidents.</p>
+                <p className="text-sm text-slate-400 mt-1">You&apos;ll be notified when something happens to your incidents.</p>
               </div>
             ) : (
               notifications.map(notif => (
                 <div
                   key={notif.id}
-                  className={`p-4 flex items-start gap-4 transition-colors ${!notif.is_read ? 'bg-blue-50/40' : 'hover:bg-slate-50'}`}
+                  onClick={() => handleNotificationClick(notif)}
+                  className={`p-4 flex items-start gap-4 transition-colors ${notif.incident_id ? 'cursor-pointer' : ''} ${!notif.is_read ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'}`}
                 >
                   <div className="mt-1.5 flex-shrink-0">
                     {!notif.is_read ? (
@@ -113,7 +143,10 @@ export default function NotificationsPage() {
                       </div>
                       {!notif.is_read && (
                         <button
-                          onClick={() => markReadMutation.mutate(notif.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markReadMutation.mutate(notif.id);
+                          }}
                           disabled={markReadMutation.isPending}
                           className="text-xs font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition-colors whitespace-nowrap flex-shrink-0"
                         >
@@ -126,12 +159,12 @@ export default function NotificationsPage() {
               ))
             )}
           </div>
+
+          <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
         </div>
 
-        {/* RIGHT — Stats + Quick Links sidebar (takes 1/3 width) */}
+        {/* Sidebar */}
         <div className="space-y-5">
-
-          {/* Notification Summary Stats */}
           <div className="card p-5">
             <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
               <Info size={15} className="text-slate-400" />
@@ -169,7 +202,6 @@ export default function NotificationsPage() {
               </div>
             </div>
 
-            {/* Progress bar */}
             {totalCount > 0 && (
               <div className="mt-4 pt-4 border-t border-slate-100">
                 <div className="flex items-center justify-between mb-1.5">
@@ -199,7 +231,6 @@ export default function NotificationsPage() {
             )}
           </div>
 
-          {/* Quick Links */}
           <div className="card p-5">
             <h2 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
               <ChevronRight size={15} className="text-slate-400" />

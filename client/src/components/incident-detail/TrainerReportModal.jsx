@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Upload, FileCheck, Calendar, Clock, BookOpen, AlertCircle, CheckCircle2, User, Award, MapPin, Target, ShieldCheck, Lightbulb } from 'lucide-react';
+import { Calendar, FileCheck, Award, MapPin, Target, Lightbulb } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi } from '../../api';
+import { getApiErrorMessage } from '../../utils/helpers';
 import FileUploadArea from './FileUploadArea';
 import toast from 'react-hot-toast';
 
@@ -55,16 +56,13 @@ export default function TrainerReportModal({
 
       await trainersApi.submitReport(incident.id, fd);
       toast.success('Training report submitted successfully. Forwarded to IMC for quality review.');
-      queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
       queryClient.invalidateQueries({ queryKey: ['incident', String(incident?.id)] });
-      queryClient.invalidateQueries({ queryKey: ['incident', Number(incident?.id)] });
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to submit training report.');
+      toast.error(getApiErrorMessage(err, 'Failed to submit training report.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -264,14 +262,12 @@ export default function TrainerReportModal({
 
         {/* Section 4: Mandatory Evidence Upload */}
         <div className="pt-2 border-t border-slate-200">
-          <label className="field-label field-required text-xs flex items-center justify-between">
-            <span className="flex items-center gap-1 font-bold text-slate-800">
-              <ShieldCheck size={13} className="text-emerald-600" />
-              Signed Attendance Sheet & Evaluation Evidence (Mandatory)
-            </span>
-            <span className="text-[10px] font-normal text-slate-500">PDF, JPG, PNG (Max 15MB)</span>
-          </label>
-          <FileUploadArea files={attachments} setFiles={setAttachments} />
+          <FileUploadArea
+            label="Signed Attendance Sheet & Evaluation Evidence (Mandatory)"
+            hint="Max 2MB per file (PDF, JPG, PNG, WebP)"
+            files={attachments}
+            setFiles={setAttachments}
+          />
         </div>
       </div>
     </Modal>

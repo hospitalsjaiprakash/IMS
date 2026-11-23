@@ -3,8 +3,9 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const commonController = require('../controllers/commonController');
 
-// Locations, Departments, Designations & Employment Types (100% HRMS API-driven)
+// Locations, Categories, Departments, Designations & Employment Types
 router.get('/locations', authenticate, commonController.getLocations);
+router.get('/categories', authenticate, commonController.getCategories);
 router.get('/departments', authenticate, commonController.getDepartments);
 router.get('/departments/designations', authenticate, commonController.getDesignations);
 router.get('/departments/employment-types', authenticate, commonController.getEmploymentTypes);

@@ -2,9 +2,7 @@ import React from 'react';
 import { Search, UserPlus, X } from 'lucide-react';
 import { Spinner } from '../ui';
 import { employeeApi } from '../../api';
-
-/** True if a user record represents an IMC committee member. */
-export const isImcUser = (u) => Boolean(u && (u.role === 'imc' || u.is_imc_member || u.is_imc_lead));
+import { isImcUser } from '../../utils/helpers';
 
 /**
  * Typeahead multi-select for picking investigators.
@@ -61,16 +59,12 @@ export default function InvestigatorPicker({
 
   // Remote search for non-IMC employees (debounced)
   React.useEffect(() => {
-    if (mode !== 'non_imc') return;
+    if (mode !== 'non_imc') return undefined;
     const q = term.trim();
-    if (!q) {
-      setRemoteResults([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
+    if (!q) return undefined;
     let cancelled = false;
     const timer = setTimeout(() => {
+      setSearching(true);
       employeeApi.search(q)
         .then(res => {
           if (cancelled) return;
@@ -149,7 +143,15 @@ export default function InvestigatorPicker({
           id={id}
           type="text"
           value={term}
-          onChange={e => { setTerm(e.target.value); setOpen(true); }}
+          onChange={e => {
+            const val = e.target.value;
+            setTerm(val);
+            if (!val.trim()) {
+              setRemoteResults([]);
+              setSearching(false);
+            }
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
           placeholder={placeholder || 'Start typing a name or employee ID…'}
           className="input pl-9"

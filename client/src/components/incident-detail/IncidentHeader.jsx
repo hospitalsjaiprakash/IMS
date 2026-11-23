@@ -1,18 +1,27 @@
-import React from 'react';
 import { Download, Flame, Calendar, MapPin, User } from 'lucide-react';
 import { StatusBadge, SeverityBadge, SLABadge } from '../../components/ui';
 import { formatDate } from '../../utils/helpers';
 import logo from '../../assets/logo.webp';
 
 export default function IncidentHeader({ incident, actions, user }) {
+  const canPrintPdf = Boolean(
+    user?.role === 'imc' ||
+    user?.is_imc_member ||
+    user?.isImcMember ||
+    user?.is_imc_lead ||
+    user?.isImcLead ||
+    user?.role === 'system_admin' ||
+    user?.is_system_admin
+  );
+
   return (
     <>
-      {/* --- PRINT TEMPLATE HEADER --- */}
+      {/* Print Template Header */}
       <div className="hidden print:block p-8 bg-white text-black w-full max-w-none m-0">
         <div className="flex items-center gap-6 border-b-2 border-slate-800 pb-6 mb-6">
           <img src={logo} alt="JPHRC Logo" className="w-24 h-24 object-contain" />
           <div>
-            <h1 className="text-2xl font-bold uppercase tracking-wide">Jaiprakash Hospital & Research Centre Pvt. Ltd.</h1>
+            <h1 className="text-2xl font-bold uppercase tracking-wide">Jaiprakash Hospital &amp; Research Centre Pvt. Ltd.</h1>
             <p className="text-sm font-semibold text-slate-600 mt-1 uppercase tracking-widest">Incident Management System - Official Report</p>
           </div>
         </div>
@@ -22,7 +31,7 @@ export default function IncidentHeader({ incident, actions, user }) {
         </div>
       </div>
 
-      {/* --- NORMAL UI HEADER --- */}
+      {/* Normal UI Header */}
       <div className="card p-5 mb-5 print:hidden">
         <div className="flex flex-col sm:flex-row sm:items-start gap-4">
           <div className="flex-1 min-w-0">
@@ -45,7 +54,7 @@ export default function IncidentHeader({ incident, actions, user }) {
               </span>
               <span className="flex items-center gap-1.5">
                 <MapPin size={13} />
-                {incident.main_location_name} › {incident.sub_location_name}
+                {incident.main_location_name}{incident.sub_location_name ? ` › ${incident.sub_location_name}` : ''}
               </span>
               <span className="flex items-center gap-1.5">
                 <User size={13} />
@@ -53,15 +62,15 @@ export default function IncidentHeader({ incident, actions, user }) {
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {actions}
-            {(user?.role === 'imc' || user?.is_imc_member || user?.isImcMember || user?.is_imc_lead || user?.isImcLead || user?.role === 'system_admin' || user?.is_system_admin) && (
-              <button onClick={() => window.print()} className="btn-secondary btn-sm print:hidden shadow-sm mr-2 border-slate-200">
+            {canPrintPdf && (
+              <button onClick={() => window.print()} className="btn-secondary btn-sm print:hidden shadow-sm mr-1 border-slate-200">
                 <Download size={14} />
                 Generate PDF
               </button>
             )}
-            <SeverityBadge severity={incident.severity} />
+            <SeverityBadge severity={incident.severity || 'Pending'} />
           </div>
         </div>
       </div>

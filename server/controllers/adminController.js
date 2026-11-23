@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, getClient } = require('../config/database');
 const { auditLog, bumpUserTokenVersion } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 const { isEmployeeLockedOut, extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
@@ -334,7 +334,7 @@ exports.assignUserRole = async (req, res) => {
     const prevRole = user.role;
     const baseRole = await getEmployeeBaseRole(user);
 
-    let updateSql = `UPDATE users SET role = $1, is_system_admin = FALSE, updated_at = NOW() WHERE id = $2`;
+    let updateSql = `UPDATE users SET role = $1, is_system_admin = FALSE, is_imc_member = FALSE, is_imc_lead = FALSE, is_management_member = FALSE, updated_at = NOW() WHERE id = $2`;
     let actualRole = targetRole;
     let auditNewRole = targetRole;
 
@@ -350,7 +350,7 @@ exports.assignUserRole = async (req, res) => {
       if (String(user.employee_id).trim() === '00000') {
         actualRole = 'system_admin';
       } else {
-        // Hospital employees assigned as Admin keep their personal Employee/HOD base role
+        // Hospital employees assigned as Admin keep their personal Employee/Reviewer base role
         // while gaining is_system_admin = TRUE so they have both Employee and Admin dashboards.
         actualRole = ['imc', 'head_management'].includes(user.role) ? user.role : baseRole;
       }
@@ -374,7 +374,6 @@ exports.assignUserRole = async (req, res) => {
     if (targetRole === 'hod' && departmentId) {
       await query(`UPDATE departments SET hod_user_id = $1 WHERE id = $2`, [user.id, departmentId]);
       await query(`UPDATE users SET department = (SELECT name FROM departments WHERE id = $1) WHERE id = $2`, [departmentId, user.id]);
-      await query(`UPDATE master_employees SET department = (SELECT name FROM departments WHERE id = $1) WHERE employee_id = $2`, [departmentId, user.employee_id]);
     }
 
     await query(
@@ -393,6 +392,15 @@ exports.assignUserRole = async (req, res) => {
   }
 };
 
+exports.getAuditActions = async (req, res) => {
+  try {
+    const result = await query(`SELECT DISTINCT action FROM audit_logs WHERE action IS NOT NULL ORDER BY action ASC`);
+    res.json(result.rows.map(r => r.action));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch audit actions' });
+  }
+};
+
 exports.getAuditLogs = async (req, res) => {
   try {
     const { page = 1, limit = 50, action, dateFrom, dateTo } = req.query;
@@ -403,8 +411,8 @@ exports.getAuditLogs = async (req, res) => {
     let idx = 1;
 
     if (action) { where += ` AND al.action = $${idx++}`; params.push(action); }
-    if (dateFrom) { where += ` AND al.created_at >= $${idx++}`; params.push(dateFrom); }
-    if (dateTo) { where += ` AND al.created_at <= $${idx++}`; params.push(dateTo); }
+    if (dateFrom) { where += ` AND al.created_at >= $${idx++}::date`; params.push(dateFrom); }
+    if (dateTo) { where += ` AND al.created_at < ($${idx++}::date + INTERVAL '1 day')`; params.push(dateTo); }
 
     const result = await query(
       `SELECT al.*, u.full_name, u.employee_id, i.reference_id
@@ -442,8 +450,8 @@ exports.exportAuditLogs = async (req, res) => {
     let idx = 1;
 
     if (action) { where += ` AND al.action = $${idx++}`; params.push(action); }
-    if (dateFrom) { where += ` AND al.created_at >= $${idx++}`; params.push(dateFrom); }
-    if (dateTo) { where += ` AND al.created_at <= $${idx++}`; params.push(dateTo); }
+    if (dateFrom) { where += ` AND al.created_at >= $${idx++}::date`; params.push(dateFrom); }
+    if (dateTo) { where += ` AND al.created_at < ($${idx++}::date + INTERVAL '1 day')`; params.push(dateTo); }
 
     const result = await query(
       `SELECT al.*, u.full_name, u.employee_id, i.reference_id
@@ -494,61 +502,78 @@ exports.exportAuditLogs = async (req, res) => {
 exports.getSystemAnalytics = async (req, res) => {
   try {
     const [
-      incidentsByMonth, avgResolutionTime, byDepartment,
+      incidentsByMonth, avgResolutionTime, byDepartment, byCategory,
       slaBreach, stalledIncidents, claimStats, kbCount,
       hodFeedbackStats
     ] = await Promise.all([
       query(`SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month,
         DATE_TRUNC('month', created_at) as month_date, COUNT(*) as count
-        FROM incidents WHERE created_at >= NOW() - INTERVAL '12 months'
+        FROM incidents WHERE status != 'withdrawn' AND created_at >= NOW() - INTERVAL '12 months'
         GROUP BY DATE_TRUNC('month', created_at) ORDER BY month_date`),
 
-      query(`SELECT AVG(EXTRACT(EPOCH FROM (resolved_at - created_at))/3600) as avg_hours
-        FROM incidents WHERE status = 'resolved' AND resolved_at IS NOT NULL`),
+      query(`SELECT AVG(GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(resolved_at, updated_at) - created_at)) / 3600.0)) as avg_hours,
+        COUNT(*) as completed_count
+        FROM incidents WHERE status IN ('resolved', 'closed')`),
 
       query(`SELECT d.name, COUNT(DISTINCT i.id) as count
         FROM departments d
         JOIN incident_departments id ON id.department_id = d.id
         JOIN incidents i ON i.id = id.incident_id
+        WHERE i.status != 'withdrawn'
         GROUP BY d.name ORDER BY count DESC LIMIT 15`),
 
+      query(`SELECT COALESCE(ic.name, NULLIF(TRIM(i.incident_category), ''), 'Others') as name, COUNT(DISTINCT i.id) as count
+        FROM incidents i
+        LEFT JOIN incident_category_links icl ON icl.incident_id = i.id
+        LEFT JOIN incident_categories ic ON ic.id = icl.category_id
+        WHERE i.status != 'withdrawn'
+        GROUP BY 1 ORDER BY count DESC LIMIT 15`),
+
       query(`SELECT COUNT(*) as sla_breach_count FROM incidents
-        WHERE status NOT IN ('resolved','withdrawn')
+        WHERE status NOT IN ('resolved', 'closed', 'withdrawn')
         AND created_at < NOW() - INTERVAL '7 days'`),
 
       query(`SELECT status, COUNT(*) as count FROM incidents
-        WHERE status NOT IN ('resolved','withdrawn')
+        WHERE status NOT IN ('resolved', 'closed', 'withdrawn')
         AND updated_at < NOW() - INTERVAL '7 days'
         GROUP BY status`),
 
       query(`SELECT COUNT(*) FILTER (WHERE is_active=TRUE) as active_claims,
-        MAX(EXTRACT(EPOCH FROM (NOW()-claimed_at))/3600) as oldest_claim_hours
+        MAX(EXTRACT(EPOCH FROM (NOW()-claimed_at))/3600) FILTER (WHERE is_active=TRUE) as oldest_claim_hours
         FROM imc_claims`),
 
       query(`SELECT COUNT(*) as count FROM knowledge_base`),
-      
+
       query(`
-        SELECT 
-          COUNT(DISTINCT f.incident_id) as given,
-          (SELECT COUNT(*) FROM incidents i 
-           WHERE i.status NOT IN ('resolved', 'withdrawn') 
-           AND NOT EXISTS (SELECT 1 FROM feedbacks f2 WHERE f2.incident_id = i.id AND f2.role = 'hod')
+        SELECT
+          COUNT(DISTINCT f.incident_id) FILTER (WHERE i.status != 'withdrawn') as given,
+          (SELECT COUNT(*) FROM incidents i2
+           WHERE i2.status NOT IN ('resolved', 'closed', 'withdrawn')
+           AND NOT EXISTS (SELECT 1 FROM feedbacks f2 WHERE f2.incident_id = i2.id AND f2.role = 'hod')
           ) as pending
-        FROM feedbacks f WHERE f.role = 'hod'
+        FROM feedbacks f
+        JOIN incidents i ON i.id = f.incident_id
+        WHERE f.role = 'hod'
       `)
     ]);
 
+    const completedCount = parseInt(avgResolutionTime.rows[0]?.completed_count || 0, 10);
+    const rawAvgHours = avgResolutionTime.rows[0]?.avg_hours;
+    const avgResolutionHours = completedCount > 0 && rawAvgHours !== null ? parseFloat(rawAvgHours).toFixed(1) : null;
+    const rawOldestClaim = claimStats.rows[0]?.oldest_claim_hours;
+
     res.json({
-      incidentsByMonth: incidentsByMonth.rows,
-      avgResolutionHours: parseFloat(avgResolutionTime.rows[0]?.avg_hours || 0).toFixed(1),
-      byDepartment: byDepartment.rows,
-      slaBreach: parseInt(slaBreach.rows[0]?.sla_breach_count || 0),
-      stalledIncidents: stalledIncidents.rows,
-      activeClaims: parseInt(claimStats.rows[0]?.active_claims || 0),
-      oldestClaimHours: parseFloat(claimStats.rows[0]?.oldest_claim_hours || 0).toFixed(1),
-      knowledgeBaseCount: parseInt(kbCount.rows[0]?.count || 0),
-      hodFeedbackPending: parseInt(hodFeedbackStats.rows[0]?.pending || 0),
-      hodFeedbackGiven: parseInt(hodFeedbackStats.rows[0]?.given || 0)
+      incidentsByMonth: incidentsByMonth.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      avgResolutionHours,
+      byDepartment: byDepartment.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      byCategory: byCategory.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      slaBreach: parseInt(slaBreach.rows[0]?.sla_breach_count || 0, 10),
+      stalledIncidents: stalledIncidents.rows.map(r => ({ ...r, count: parseInt(r.count, 10) || 0 })),
+      activeClaims: parseInt(claimStats.rows[0]?.active_claims || 0, 10),
+      oldestClaimHours: rawOldestClaim !== null && rawOldestClaim !== undefined ? parseFloat(rawOldestClaim).toFixed(1) : null,
+      knowledgeBaseCount: parseInt(kbCount.rows[0]?.count || 0, 10),
+      hodFeedbackPending: parseInt(hodFeedbackStats.rows[0]?.pending || 0, 10),
+      hodFeedbackGiven: parseInt(hodFeedbackStats.rows[0]?.given || 0, 10)
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch analytics' });
@@ -677,50 +702,59 @@ exports.getUserProfile = async (req, res) => {
       [id]
     );
 
-    // Fetch department incidents if HOD/Incharge/Mgmt
+    // Fetch category-mapped and department-mapped incidents for reviewer / leader
     let departmentIncidents = [];
     let managedDepartments = [];
-    if (user.role === 'hod' || user.role === 'head_management' || user.is_management_member) {
-       const managedDeptRes = await query(
-         `SELECT name FROM departments WHERE hod_user_id = $1 OR incharge_user_id = $1 OR asst_coo_user_id = $1`,
-         [id]
-       );
-       managedDepartments = managedDeptRes.rows.map(r => r.name);
+    let assignedCategories = [];
 
-       let deptRes;
-       if (managedDepartments.length > 0) {
-         deptRes = await query(
-           `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, d.name as dept_name, i.created_at
-            FROM incidents i
-            JOIN incident_departments idp ON idp.incident_id = i.id
-            JOIN departments d ON d.id = idp.department_id
-            WHERE d.hod_user_id = $1 OR d.incharge_user_id = $1 OR d.asst_coo_user_id = $1
-            ORDER BY i.created_at DESC`,
-           [id]
-         );
-       } else if ((user.role === 'hod' || user.role === 'incharge') && user.department) {
-         managedDepartments.push(user.department);
-         deptRes = await query(
-           `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type, d.name as dept_name, i.created_at
-            FROM incidents i
-            JOIN incident_departments idp ON idp.incident_id = i.id
-            JOIN departments d ON d.id = idp.department_id
-            WHERE d.name = $1
-            ORDER BY i.created_at DESC`,
-           [user.department]
-         );
-       }
-       
-       if (deptRes) {
-         departmentIncidents = deptRes.rows;
-       }
+    const assignedCatRes = await query(
+      `SELECT ic.id, ic.name
+       FROM category_feedback_assignees cfa
+       JOIN incident_categories ic ON ic.id = cfa.category_id
+       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE
+       ORDER BY ic.name ASC`,
+      [id]
+    );
+    assignedCategories = assignedCatRes.rows.map(r => r.name);
+
+    const managedDeptRes = await query(
+      `SELECT DISTINCT d.name
+       FROM departments d
+       LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = TRUE
+       WHERE d.assigned_user_id = $1 OR d.hod_user_id = $1 OR d.incharge_user_id = $1 OR d.asst_coo_user_id = $1 OR dr.id IS NOT NULL`,
+      [id]
+    );
+    managedDepartments = managedDeptRes.rows.map(r => r.name);
+
+    if (assignedCategories.length > 0 || managedDepartments.length > 0 || user.role === 'hod' || user.role === 'head_management' || user.is_management_member) {
+      const deptRes = await query(
+        `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type,
+                COALESCE(ic.name, d.name, i.incident_category) as dept_name, i.created_at
+         FROM incidents i
+         LEFT JOIN incident_category_links icl ON icl.incident_id = i.id
+         LEFT JOIN incident_categories ic ON ic.id = icl.category_id
+         LEFT JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id AND cfa.user_id = $1 AND cfa.is_active = TRUE
+         LEFT JOIN incident_departments idp ON idp.incident_id = i.id
+         LEFT JOIN departments d ON d.id = idp.department_id
+         LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = TRUE
+         WHERE cfa.id IS NOT NULL
+            OR d.assigned_user_id = $1
+            OR d.hod_user_id = $1
+            OR d.incharge_user_id = $1
+            OR d.asst_coo_user_id = $1
+            OR dr.id IS NOT NULL
+         ORDER BY i.created_at DESC`,
+        [id]
+      );
+      departmentIncidents = deptRes.rows;
     }
 
     res.json({
       reportedIncidents: reportedRes.rows,
       responsibleIncidents: responsibleRes.rows,
       departmentIncidents,
-      managedDepartments
+      managedDepartments: [...new Set([...assignedCategories, ...managedDepartments])],
+      assignedCategories
     });
   } catch (error) {
     console.error('[GET /admin/users/:id/profile] error:', error);
@@ -785,7 +819,196 @@ exports.removeManagementRole = async (req, res) => {
   return revokeCommitteeAccess(req, res, req.params.id || req.body.employeeId || req.body.id, 'head_management');
 };
 
+// =============================================
+// INCIDENT CATEGORY -> CONCERNED STAFF MAPPING
+// =============================================
+exports.getCategoryMappings = async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT
+        ic.id,
+        ic.name,
+        ic.is_active,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'mapping_id', cfa.id,
+              'user_id', u.id,
+              'employee_id', u.employee_id,
+              'full_name', u.full_name,
+              'designation', u.designation,
+              'department', u.department,
+              'email', u.email,
+              'phone', u.phone,
+              'is_active', u.is_active
+            ) ORDER BY cfa.created_at ASC
+          ) FILTER (WHERE cfa.id IS NOT NULL AND cfa.is_active = TRUE),
+          '[]'::json
+        ) as assignees
+      FROM incident_categories ic
+      LEFT JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
+      LEFT JOIN users u ON u.id = cfa.user_id
+      WHERE ic.is_active = TRUE
+      GROUP BY ic.id, ic.name, ic.is_active
+      ORDER BY ic.name ASC
+    `);
+
+    const rows = result.rows.map(row => {
+      const primary = Array.isArray(row.assignees) && row.assignees.length > 0 ? row.assignees[0] : null;
+      return {
+        ...row,
+        assigned_user_id: primary?.user_id || null,
+        assigned_staff_name: primary?.full_name || null,
+        assigned_employee_id: primary?.employee_id || null,
+        assigned_designation: primary?.designation || null,
+        assigned_department: primary?.department || null,
+        assigned_email: primary?.email || null,
+        assigned_phone: primary?.phone || null,
+        mapping_id: primary?.mapping_id || null
+      };
+    });
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching category mappings:', error);
+    res.status(500).json({ error: 'Failed to fetch incident category mappings.' });
+  }
+};
+
+exports.mapCategoryFeedbackStaff = async (req, res) => {
+  const client = await getClient();
+  try {
+    const { categoryId, categoryName, employeeId, replaceExisting = true } = req.body || {};
+    if ((!categoryId && !categoryName) || !employeeId) {
+      return res.status(400).json({ error: 'Incident category and Employee ID are required.' });
+    }
+
+    // Verify employee exists and is NOT terminated/inactive/deleted in HRMS
+    const masterCheck = await query(
+      `SELECT employee_id, name, status, portal_access_disable_date
+       FROM master_employees
+       WHERE UPPER(employee_id) = UPPER($1) OR id::text = $1
+       LIMIT 1`,
+      [String(employeeId).trim()]
+    );
+    if (masterCheck.rows.length > 0) {
+      const m = masterCheck.rows[0];
+      if (isEmployeeLockedOut(m.status, m.portal_access_disable_date)) {
+        return res.status(400).json({
+          error: `Cannot assign ${m.name} (${m.employee_id}): employment or portal access is marked inactive/terminated in HRMS.`
+        });
+      }
+    }
+
+    // Provision skeleton user if needed WITHOUT forcing role = 'hod' (any active staff can review)
+    const user = await getOrCreateUserFromMaster(employeeId, 'employee');
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found in hospital directory. Please verify the Employee ID.' });
+    }
+    if (user.is_active === false) {
+      return res.status(400).json({ error: `Cannot assign ${user.full_name} (${user.employee_id}): account is deactivated.` });
+    }
+
+    const catRes = categoryId
+      ? await query(`SELECT id, name FROM incident_categories WHERE id = $1 AND is_active = TRUE`, [categoryId])
+      : await query(`SELECT id, name FROM incident_categories WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND is_active = TRUE`, [categoryName]);
+    if (!catRes.rows.length) {
+      return res.status(404).json({ error: 'Incident category not found.' });
+    }
+    const category = catRes.rows[0];
+
+    await client.query('BEGIN');
+
+    if (replaceExisting !== false) {
+      await client.query(
+        `UPDATE category_feedback_assignees
+         SET is_active = FALSE, updated_at = NOW()
+         WHERE category_id = $1 AND user_id != $2 AND is_active = TRUE`,
+        [category.id, user.id]
+      );
+    }
+
+    const upsertRes = await client.query(
+      `INSERT INTO category_feedback_assignees (category_id, user_id, assigned_by, is_active, updated_at)
+       VALUES ($1, $2, $3, TRUE, NOW())
+       ON CONFLICT (category_id, user_id)
+       DO UPDATE SET is_active = TRUE, assigned_by = EXCLUDED.assigned_by, updated_at = NOW()
+       RETURNING id`,
+      [category.id, user.id, req.user.id]
+    );
+
+    await client.query('COMMIT');
+
+    await auditLog(req.user.id, 'CATEGORY_FEEDBACK_STAFF_MAPPED', null, {
+      categoryId: category.id,
+      categoryName: category.name,
+      mappingId: upsertRes.rows[0]?.id,
+      targetEmployee: user.employee_id,
+      targetName: user.full_name,
+      replaceExisting: replaceExisting !== false
+    }, req.ip);
+
+    res.json({
+      success: true,
+      mappingId: upsertRes.rows[0]?.id,
+      message: `Assigned ${user.full_name} (${user.employee_id}) to handle feedback for "${category.name}".`
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error in mapCategoryFeedbackStaff:', error);
+    res.status(500).json({ error: 'Failed to assign feedback staff for incident category.' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.removeCategoryFeedbackStaff = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { categoryId, userId } = req.query;
+
+    let deletedRows = [];
+    if (id && id !== 'by-category') {
+      const delRes = await query(
+        `DELETE FROM category_feedback_assignees WHERE id = $1 RETURNING id, category_id, user_id`,
+        [id]
+      );
+      deletedRows = delRes.rows;
+    } else if (categoryId && userId) {
+      const delRes = await query(
+        `DELETE FROM category_feedback_assignees WHERE category_id = $1 AND user_id = $2 RETURNING id, category_id, user_id`,
+        [categoryId, userId]
+      );
+      deletedRows = delRes.rows;
+    } else if (categoryId) {
+      const delRes = await query(
+        `DELETE FROM category_feedback_assignees WHERE category_id = $1 RETURNING id, category_id, user_id`,
+        [categoryId]
+      );
+      deletedRows = delRes.rows;
+    } else {
+      return res.status(400).json({ error: 'Mapping ID or categoryId is required.' });
+    }
+
+    if (!deletedRows.length) {
+      return res.status(404).json({ error: 'Category staff mapping not found.' });
+    }
+
+    await auditLog(req.user.id, 'CATEGORY_FEEDBACK_STAFF_REMOVED', null, {
+      mappingId: id,
+      categoryId: deletedRows[0].category_id,
+      removedCount: deletedRows.length
+    }, req.ip);
+
+    res.json({ success: true, message: 'Removed assigned feedback staff from incident category.' });
+  } catch (error) {
+    console.error('Error in removeCategoryFeedbackStaff:', error);
+    res.status(500).json({ error: 'Failed to remove feedback staff from incident category.' });
+  }
+};
+
 exports.mapDepartmentLeader = async (req, res) => {
+  const client = await getClient();
   try {
     const { departmentId, employeeId } = req.body;
     if (!departmentId || !employeeId) {
@@ -803,43 +1026,56 @@ exports.mapDepartmentLeader = async (req, res) => {
     }
     const deptName = deptRes.rows[0].name;
 
-    // Role elevation: any employee mapped as department reviewer gets reviewer permissions (hod role)
+    await client.query('BEGIN');
+
+    // Role elevation for legacy department leader endpoint
     if (user.role === 'employee') {
-      await query(`UPDATE users SET role = 'hod', updated_at = NOW() WHERE id = $1`, [user.id]);
+      await client.query(`UPDATE users SET role = 'hod', updated_at = NOW() WHERE id = $1`, [user.id]);
     }
 
-    // Single assigned staff member for this department:
-    // Update assigned_user_id and hod_user_id (for backwards compatibility)
-    await query(
-      `UPDATE departments 
-       SET assigned_user_id = $1, hod_user_id = $1, incharge_user_id = NULL, asst_coo_user_id = NULL 
-       WHERE id = $2`, 
+    await client.query(
+      `UPDATE departments
+       SET assigned_user_id = $1, hod_user_id = $1, incharge_user_id = NULL, asst_coo_user_id = NULL
+       WHERE id = $2`,
       [user.id, departmentId]
     );
 
-    // Sync into department_reviewers table
-    await query(`
+    // Deactivate previous ghost department reviewers for this department before assigning the new one
+    await client.query(
+      `UPDATE department_reviewers
+       SET is_active = FALSE, updated_at = NOW()
+       WHERE department_id = $1 AND user_id != $2 AND is_active = TRUE`,
+      [departmentId, user.id]
+    );
+
+    await client.query(`
       INSERT INTO department_reviewers (user_id, department_id, reviewer_role, is_active, assigned_by, updated_at)
       VALUES ($1, $2, 'Department Reviewer', true, $3, NOW())
       ON CONFLICT (user_id, department_id, reviewer_role)
       DO UPDATE SET is_active = true, updated_at = NOW()
     `, [user.id, departmentId, req.user.id]);
 
+    await client.query('COMMIT');
+
     await auditLog(req.user.id, 'DEPARTMENT_FEEDBACK_STAFF_MAPPED', null, {
       departmentId, deptName, targetEmployee: user.employee_id, targetName: user.full_name
     }, req.ip);
 
-    res.json({ 
-      success: true, 
-      message: `Successfully assigned ${user.full_name} (${user.employee_id}) as department reviewer for ${deptName}.` 
+    res.json({
+      success: true,
+      message: `Successfully assigned ${user.full_name} (${user.employee_id}) as department reviewer for ${deptName}.`
     });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Error in mapDepartmentLeader:', error);
     res.status(500).json({ error: 'Failed to assign department feedback staff.' });
+  } finally {
+    client.release();
   }
 };
 
 exports.removeDepartmentLeader = async (req, res) => {
+  const client = await getClient();
   try {
     const { departmentId } = req.body;
     if (!departmentId) {
@@ -847,8 +1083,8 @@ exports.removeDepartmentLeader = async (req, res) => {
     }
 
     const deptRes = await query(
-      `SELECT id, name, COALESCE(assigned_user_id, hod_user_id) as current_leader_id 
-       FROM departments WHERE id = $1`, 
+      `SELECT id, name, COALESCE(assigned_user_id, hod_user_id) as current_leader_id
+       FROM departments WHERE id = $1`,
       [departmentId]
     );
     if (!deptRes.rows.length) {
@@ -862,13 +1098,23 @@ exports.removeDepartmentLeader = async (req, res) => {
       return res.status(400).json({ error: `No staff member is currently mapped for ${deptName}.` });
     }
 
-    // Remove assigned staff mapping from department
-    await query(
-      `UPDATE departments 
-       SET assigned_user_id = NULL, hod_user_id = NULL, incharge_user_id = NULL, asst_coo_user_id = NULL 
-       WHERE id = $1`, 
+    await client.query('BEGIN');
+
+    await client.query(
+      `UPDATE departments
+       SET assigned_user_id = NULL, hod_user_id = NULL, incharge_user_id = NULL, asst_coo_user_id = NULL
+       WHERE id = $1`,
       [departmentId]
     );
+
+    await client.query(
+      `UPDATE department_reviewers
+       SET is_active = FALSE, updated_at = NOW()
+       WHERE department_id = $1 AND is_active = TRUE`,
+      [departmentId]
+    );
+
+    await client.query('COMMIT');
 
     await auditLog(req.user.id, 'DEPARTMENT_FEEDBACK_STAFF_REMOVED', null, {
       departmentId, deptName
@@ -876,8 +1122,11 @@ exports.removeDepartmentLeader = async (req, res) => {
 
     res.json({ success: true, message: `Successfully unassigned feedback staff from ${deptName}.` });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Error in removeDepartmentLeader:', error);
     res.status(500).json({ error: 'Failed to remove department feedback staff.' });
+  } finally {
+    client.release();
   }
 };
 

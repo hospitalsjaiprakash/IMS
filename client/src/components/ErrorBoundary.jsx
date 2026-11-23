@@ -24,16 +24,21 @@ export class ErrorBoundary extends React.Component {
               <AlertTriangle className="text-red-600" size={32} />
             </div>
             <h2 className="text-xl font-bold text-slate-800 mb-2">Something went wrong</h2>
-            <p className="text-sm text-slate-500 mb-6">
-              The application encountered an unexpected error. Our team has been notified.
+            <p className="text-sm text-slate-500 mb-5">
+              An unexpected display error occurred. Refreshing the page usually resolves it immediately.
             </p>
             {this.state.error && (
-              <pre className="text-left text-xs bg-slate-100 p-3 rounded-lg overflow-auto max-h-48 mb-6 text-slate-700 font-mono whitespace-pre-wrap">
-                {this.state.error.toString()}
-                {this.state.error.stack ? `\n\n${this.state.error.stack}` : ''}
-              </pre>
+              <details className="text-left mb-6 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <summary className="text-xs font-semibold text-slate-600 cursor-pointer">
+                  Technical Details
+                </summary>
+                <pre className="text-[11px] mt-2 overflow-auto max-h-40 text-slate-600 font-mono whitespace-pre-wrap">
+                  {this.state.error.toString()}
+                </pre>
+              </details>
             )}
             <button
+              type="button"
               onClick={() => window.location.reload()}
               className="btn-primary w-full justify-center flex items-center gap-2"
             >

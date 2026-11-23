@@ -1,20 +1,19 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { 
-  GraduationCap, CheckCircle2, Clock, Calendar, Download, Eye, 
-  ShieldCheck, UserCheck, AlertCircle, Award, Users, RefreshCw, FileText, XCircle, Printer, QrCode,
-  MapPin, Target, Lightbulb
+import {
+  GraduationCap, CheckCircle2, Clock, Download, Eye,
+  ShieldCheck, UserCheck, Award, Users, RefreshCw, FileText, Printer,
+  MapPin, Lightbulb
 } from 'lucide-react';
-import { Modal, Spinner, Alert } from '../ui';
-import { trainersApi, attachmentsApi, UPLOADS_URL } from '../../api';
-import { formatDate } from '../../utils/helpers';
+import { Modal, Spinner, Alert, ConfirmDialog } from '../ui';
+import { trainersApi, attachmentsApi } from '../../api';
+import { formatDate, getApiErrorMessage } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 
 export default function TrainingProgressCard({
   incident,
   trainers = [],
   user,
-  canImcAct,
   isManagement,
   onOpenAssignModal,
   onOpenReportModal,
@@ -29,8 +28,9 @@ export default function TrainingProgressCard({
   const [isClosing, setIsClosing] = useState(false);
   const [viewAppointmentLetterModal, setViewAppointmentLetterModal] = useState(false);
   const [selectedLetterAssignment, setSelectedLetterAssignment] = useState(null);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
 
-  const isImcLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.role === 'imc' || user?.is_system_admin || user?.role === 'system_admin');
+  const isImcLead = Boolean(user?.is_imc_lead || user?.isImcLead || user?.is_system_admin || user?.role === 'system_admin');
   const isMgmtUser = Boolean(isManagement || user?.role === 'head_management' || user?.role === 'system_admin');
 
   const activeAssignment = trainers[trainers.length - 1]; // Latest assignment
@@ -56,10 +56,9 @@ export default function TrainingProgressCard({
   const canSubmitReport = (isAssignedTrainer || isImcLead) && isInProgress;
 
   const invalidateTrainingQueries = () => {
-    queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+    queryClient.invalidateQueries({ queryKey: ['incident', String(incident?.id)] });
     queryClient.invalidateQueries({ queryKey: ['incidents'] });
     queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-    queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
   };
 
   const handleImcVerify = async () => {
@@ -106,8 +105,7 @@ export default function TrainingProgressCard({
     }
   };
 
-  const handleManagementClose = async () => {
-    if (!window.confirm('Confirm training completion and officially CLOSE this incident file?')) return;
+  const executeManagementClose = async () => {
     setIsClosing(true);
     try {
       await trainersApi.managementClose(incident.id, {
@@ -117,23 +115,23 @@ export default function TrainingProgressCard({
       invalidateTrainingQueries();
       if (onRefetch) onRefetch();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to close incident.');
+      toast.error(getApiErrorMessage(err, 'Failed to close incident.'));
     } finally {
       setIsClosing(false);
     }
   };
 
-  const handleDownloadAttachment = async (attId, fileName) => {
+  const handleDownloadAttachment = async (attId) => {
     try {
       const res = await attachmentsApi.getDownloadUrl(attId);
       const url = res.data?.url || res.data?.downloadUrl;
       if (url) {
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener,noreferrer');
       } else {
-        window.open(`${UPLOADS_URL}/${fileName}`, '_blank');
+        toast.error('Download link unavailable.');
       }
-    } catch (e) {
-      window.open(`${UPLOADS_URL}/${fileName}`, '_blank');
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to download training evidence.'));
     }
   };
 
@@ -298,7 +296,7 @@ export default function TrainingProgressCard({
               <div className="pt-2 border-t border-emerald-100 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleManagementClose}
+                  onClick={() => setCloseConfirmOpen(true)}
                   disabled={isClosing}
                   className="btn-primary btn-sm text-xs bg-emerald-600 hover:bg-emerald-700 border-emerald-600 flex items-center gap-1.5 shadow-sm"
                 >
@@ -463,7 +461,7 @@ export default function TrainingProgressCard({
                     </span>
                     <button
                       type="button"
-                      onClick={() => handleDownloadAttachment(t.report_attachment_id || t.trainer_attachment_id, t.report_file_name || t.report_original_filename)}
+                      onClick={() => handleDownloadAttachment(t.report_attachment_id || t.trainer_attachment_id)}
                       className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
                     >
                       <Download size={12} /> Download Evidence
@@ -669,6 +667,18 @@ export default function TrainingProgressCard({
           </Modal>
         );
       })()}
+
+      <ConfirmDialog
+        open={closeConfirmOpen}
+        onClose={() => setCloseConfirmOpen(false)}
+        onConfirm={() => {
+          setCloseConfirmOpen(false);
+          executeManagementClose();
+        }}
+        title="Confirm Training Completion & Close Incident"
+        message="Confirm training completion and officially close this incident file?"
+        confirmLabel="Confirm & Close"
+      />
     </>
   );
 }

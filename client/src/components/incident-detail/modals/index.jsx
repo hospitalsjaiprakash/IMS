@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import toast from 'react-hot-toast';
-import { Download, FileText, AlertCircle, Search, UserPlus, X, Shield, Users, CheckCircle, DollarSign } from 'lucide-react';
-import { Modal, Spinner, Alert } from '../../../components/ui';
-import { UPLOADS_URL, API_BASE_URL, attachmentsApi } from '../../../api';
-import { OCCURRED_TO_OPTIONS, SEVERITY_OPTIONS, parseProposedOutcomes } from '../../../utils/helpers';
+import { Download, FileText, AlertCircle, CheckCircle, DollarSign } from 'lucide-react';
+import { Modal, Spinner, Alert, SearchableMultiSelect } from '../../../components/ui';
+import { attachmentsApi } from '../../../api';
+import { OCCURRED_TO_OPTIONS, parseProposedOutcomes, convertNumberToWords, INCIDENT_CATEGORIES, getApiErrorMessage } from '../../../utils/helpers';
 import FileUploadArea from '../FileUploadArea';
 import ProposedOutcomeMultiSelect from '../ProposedOutcomeMultiSelect';
 import ResponsibleEmployeePicker from '../ResponsibleEmployeePicker';
@@ -34,7 +34,7 @@ export function WithdrawModal({ show, onClose, withdrawReason, setWithdrawReason
 
 export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText, hodAttachments, setHodAttachments, mutate, isPending, canHodFeedback }) {
   return (
-    <Modal open={show} onClose={onClose} title="Submit Feedback" size="lg"
+    <Modal open={show} onClose={onClose} title="Submit Department Feedback" size="lg"
       footer={<>
         <button onClick={onClose} className="btn-secondary">Cancel</button>
         {canHodFeedback && (
@@ -48,7 +48,7 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
         )}
       </>}
     >
-      <label className="field-label field-required">Feedback</label>
+      <label className="field-label field-required">Department Feedback</label>
       <textarea
         value={feedbackText}
         onChange={e => setFeedbackText(e.target.value)}
@@ -59,42 +59,6 @@ export function HodFeedbackModal({ show, onClose, feedbackText, setFeedbackText,
       <FileUploadArea files={hodAttachments} setFiles={setHodAttachments} />
     </Modal>
   );
-}
-
-function convertNumberToWords(amount) {
-  if (!amount || isNaN(amount) || Number(amount) <= 0) return '';
-  const num = Math.floor(Number(amount));
-  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
-    'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
-  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-  const numToWordsUnder1000 = (n) => {
-    let str = '';
-    if (n >= 100) {
-      str += ones[Math.floor(n / 100)] + ' Hundred ';
-      n %= 100;
-    }
-    if (n >= 20) {
-      str += tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
-    } else if (n > 0) {
-      str += ones[n];
-    }
-    return str.trim();
-  };
-
-  let words = '';
-  const crore = Math.floor(num / 10000000);
-  let rem = num % 10000000;
-  const lakh = Math.floor(rem / 100000);
-  rem %= 100000;
-  const thousand = Math.floor(rem / 1000);
-  rem %= 1000;
-
-  if (crore > 0) words += numToWordsUnder1000(crore) + ' Crore ';
-  if (lakh > 0) words += numToWordsUnder1000(lakh) + ' Lakh ';
-  if (thousand > 0) words += numToWordsUnder1000(thousand) + ' Thousand ';
-  if (rem > 0) words += numToWordsUnder1000(rem);
-
-  return `Rupees ${words.trim()} only`;
 }
 
 export function ManagementDecisionModal({
@@ -512,14 +476,14 @@ export function RedirectIncidentModal({ show, onClose, redirectReason, setRedire
         </button>
       </>}
     >
-      <Alert type="warning" message="This action will flag this incident as misrouted. The Incident Management Committee (IMC) will review your request and route it to the correct department HOD." className="mb-4" />
+      <Alert type="warning" message="This action will flag this incident as misrouted. The Incident Management Committee (IMC) will review your request and route it to the appropriate incident category." className="mb-4" />
       <label className="field-label field-required">Reason for redirection request</label>
       <textarea
         value={redirectReason}
         onChange={e => setRedirectReason(e.target.value)}
         className="textarea"
         rows={4}
-        placeholder="Please explain why this incident is not for your department, and suggest the correct department if possible…"
+        placeholder="Please explain why this incident does not belong to your assigned scope, and suggest the appropriate incident category if possible…"
       />
     </Modal>
   );
@@ -539,25 +503,31 @@ export function RejectRedirectModal({ show, onClose, rejectRedirectReason, setRe
         </button>
       </>}
     >
-      <Alert type="warning" message="This will return the incident to the original department HOD for action." className="mb-4" />
+      <Alert type="warning" message="This will return the incident to the assigned reviewer for department feedback." className="mb-4" />
       <label className="field-label field-required">Reason for Rejection</label>
       <textarea
         value={rejectRedirectReason}
         onChange={e => setRejectRedirectReason(e.target.value)}
         className="textarea"
         rows={4}
-        placeholder="Please explain why the redirection request is denied..."
+        placeholder="Please explain why the redirection request is denied…"
       />
     </Modal>
   );
 }
 
 export function EditFeedbackModal({ editFbModal, onClose, editFbText, setEditFbText, mutate, isPending }) {
+  const roleLabel = editFbModal
+    ? editFbModal.feedbackType
+        .replace('head_management', 'Management')
+        .replace('hod', 'Department')
+        .replace('imc', 'IMC')
+    : '';
   return (
     <Modal
       open={!!editFbModal}
       onClose={onClose}
-      title={editFbModal ? `Edit ${editFbModal.feedbackType.replace('head_management', 'Management').replace('hod', 'HOD').replace('imc', 'IMC').toUpperCase()} Feedback` : ''}
+      title={editFbModal ? `Edit ${roleLabel} Feedback` : ''}
       size="md"
       footer={
         <>
@@ -577,7 +547,7 @@ export function EditFeedbackModal({ editFbModal, onClose, editFbText, setEditFbT
           <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-xl border border-amber-200">
             <AlertCircle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-slate-700">
-              You are editing your own <strong>{editFbModal.feedbackType.replace('head_management', 'Management').replace('hod', 'HOD').replace('imc', 'IMC')}</strong> feedback.
+              You are editing your own <strong>{roleLabel}</strong> feedback.
               This change will be recorded in the audit trail.
             </p>
           </div>
@@ -598,6 +568,16 @@ export function EditFeedbackModal({ editFbModal, onClose, editFbText, setEditFbT
 }
 
 export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, isPending }) {
+  const dateBounds = useMemo(() => {
+    const now = new Date();
+    const tzOffsetMs = now.getTimezoneOffset() * 60000;
+    const max = new Date(now.getTime() - tzOffsetMs).toISOString().split('T')[0];
+    const minD = new Date(now);
+    minD.setDate(minD.getDate() - 14);
+    const min = new Date(minD.getTime() - tzOffsetMs).toISOString().split('T')[0];
+    return { min, max };
+  }, []);
+
   const handleSave = () => {
     if (editInc.incidentDate) {
       const parts = editInc.incidentDate.split('-').map(Number);
@@ -638,19 +618,15 @@ export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, 
       }
     >
       <div className="space-y-4 pt-1">
-        <Alert type="info" message="You can edit this incident only while it hasn't been reviewed by your HOD yet." />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Alert type="info" message="You can edit this incident only before department review begins." />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label className="field-label field-required">Incident Date</label>
             <input
               type="date"
               value={editInc.incidentDate || ''}
-              min={(() => {
-                const d = new Date();
-                d.setDate(d.getDate() - 14);
-                return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-              })()}
-              max={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]}
+              min={dateBounds.min}
+              max={dateBounds.max}
               onChange={e => setEditInc(p => ({ ...p, incidentDate: e.target.value }))}
               className="input"
             />
@@ -676,17 +652,6 @@ export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, 
               {OCCURRED_TO_OPTIONS.map(o => <option key={o}>{o}</option>)}
             </select>
           </div>
-          <div>
-            <label className="field-label field-required">Severity</label>
-            <select
-              value={editInc.severity || ''}
-              onChange={e => setEditInc(p => ({ ...p, severity: e.target.value }))}
-              className="select"
-            >
-              <option value="">Select…</option>
-              {SEVERITY_OPTIONS.map(o => <option key={o}>{o}</option>)}
-            </select>
-          </div>
         </div>
         <div>
           <label className="field-label field-required">
@@ -708,48 +673,53 @@ export function EditIncidentModal({ show, onClose, editInc, setEditInc, mutate, 
 }
 
 export function FilePreviewModal({ previewFile, onClose }) {
-  const [fileUrl, setFileUrl] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [fetched, setFetched] = useState({ id: null, url: null, error: false });
+  const [failedImgUrl, setFailedImgUrl] = useState(null);
+
+  const blobUrl = useMemo(() => {
+    if (previewFile instanceof File || previewFile instanceof Blob) {
+      return URL.createObjectURL(previewFile);
+    }
+    return null;
+  }, [previewFile]);
 
   useEffect(() => {
-    if (!previewFile) {
-      setFileUrl(null);
-      setLoading(false);
-      setError(false);
-      return;
-    }
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [blobUrl]);
 
-    if (previewFile instanceof File || previewFile instanceof Blob) {
-      const objUrl = URL.createObjectURL(previewFile);
-      setFileUrl(objUrl);
-      return () => URL.revokeObjectURL(objUrl);
-    }
+  const needsFetch = Boolean(previewFile && !blobUrl && !previewFile.url && previewFile.id);
 
-    if (previewFile.url) {
-      setFileUrl(previewFile.url);
-      return;
-    }
+  useEffect(() => {
+    if (!needsFetch) return undefined;
+    let active = true;
+    attachmentsApi
+      .getPreviewUrl(previewFile.id)
+      .then((res) => {
+        if (!active) return;
+        if (res.data?.url) {
+          setFetched({ id: previewFile.id, url: res.data.url, error: false });
+        } else {
+          setFetched({ id: previewFile.id, url: null, error: true });
+        }
+      })
+      .catch(() => {
+        if (active) setFetched({ id: previewFile.id, url: null, error: true });
+      });
+    return () => {
+      active = false;
+    };
+  }, [needsFetch, previewFile?.id]);
 
-    if (previewFile.id) {
-      setLoading(true);
-      setError(false);
-      attachmentsApi.getPreviewUrl(previewFile.id)
-        .then(res => {
-          if (res.data?.url) {
-            setFileUrl(res.data.url);
-          } else {
-            setFileUrl(`${API_BASE_URL}/attachments/${previewFile.id}/view`);
-          }
-        })
-        .catch(() => {
-          setFileUrl(`${API_BASE_URL}/attachments/${previewFile.id}/view`);
-        })
-        .finally(() => setLoading(false));
-    } else if (previewFile.stored_filename) {
-      setFileUrl(`${UPLOADS_URL}/${previewFile.stored_filename?.split('/').map(encodeURIComponent).join('/')}`);
-    }
-  }, [previewFile]);
+  const fileUrl = blobUrl || previewFile?.url || (fetched.id === previewFile?.id ? fetched.url : null);
+  const loading = Boolean(needsFetch && fetched.id !== previewFile?.id);
+  const error = Boolean(
+    previewFile &&
+      ((!blobUrl && !previewFile.url && !previewFile.id) ||
+        (fetched.id === previewFile?.id && fetched.error) ||
+        (fileUrl && failedImgUrl === fileUrl))
+  );
 
   const filename = previewFile?.original_filename || previewFile?.name || 'File Preview';
   const isImage = previewFile?.mime_type?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|svg)($|\?)/i.test(filename) || /\.(jpe?g|png|gif|webp|bmp|svg)($|\?)/i.test(fileUrl || '');
@@ -772,13 +742,16 @@ export function FilePreviewModal({ previewFile, onClose }) {
       try {
         const res = await attachmentsApi.getDownloadUrl(previewFile.id);
         if (res.data?.url) {
-          window.open(res.data.url, '_blank');
+          window.open(res.data.url, '_blank', 'noopener,noreferrer');
           return;
         }
-      } catch (_) {}
+      } catch (err) {
+        toast.error(getApiErrorMessage(err, 'Unable to download attachment.'));
+        return;
+      }
     }
     if (fileUrl) {
-      window.open(fileUrl, '_blank');
+      window.open(fileUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -820,7 +793,7 @@ export function FilePreviewModal({ previewFile, onClose }) {
             <img
               src={fileUrl}
               alt="Preview"
-              onError={() => setError(true)}
+              onError={() => setFailedImgUrl(fileUrl)}
               className="max-w-full max-h-[78vh] object-contain rounded-lg shadow-sm"
             />
           ) : isPdf && fileUrl ? (
@@ -840,63 +813,75 @@ export function FilePreviewModal({ previewFile, onClose }) {
   );
 }
 
-export function InvolveDepartmentModal({ show, onClose, currentDepartments = [], departmentsList = [], mutate, isPending }) {
-  const [selectedDeptIds, setSelectedDeptIds] = useState([]);
+export function InvolveDepartmentModal({
+  show,
+  onClose,
+  currentCategories = [],
+  categoryOptions = INCIDENT_CATEGORIES,
+  mutate,
+  isPending,
+}) {
+  const [selectedCategories, setSelectedCategories] = useState([]);
 
-  useEffect(() => {
-    if (!show) setSelectedDeptIds([]);
-  }, [show]);
-
-  const currentNames = currentDepartments.map(d => (typeof d === 'string' ? d : d.name).toLowerCase());
-  const availableDepts = departmentsList.filter(d => !currentNames.includes((d.name || '').toLowerCase()));
-
-  const toggleDept = (id) => {
-    setSelectedDeptIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+  const handleClose = () => {
+    setSelectedCategories([]);
+    onClose();
   };
 
+  const currentLower = new Set(
+    currentCategories
+      .map(c => (typeof c === 'string' ? c : c?.name))
+      .filter(Boolean)
+      .map(s => s.trim().toLowerCase())
+  );
+  const availableCategories = categoryOptions.filter(c => !currentLower.has((c || '').trim().toLowerCase()));
+  const currentNamesDisplay = currentCategories
+    .map(c => (typeof c === 'string' ? c : c?.name))
+    .filter(Boolean)
+    .join(', ');
+
   return (
-    <Modal open={show} onClose={onClose} title="Involve Additional Department(s)" size="md"
-      footer={<>
-        <button onClick={onClose} className="btn-secondary">Cancel</button>
-        <button
-          onClick={() => mutate(selectedDeptIds)}
-          disabled={selectedDeptIds.length === 0 || isPending}
-          className="btn-primary"
-        >
-          {isPending && <Spinner size={15} className="text-white" />} Involve Selected ({selectedDeptIds.length})
-        </button>
-      </>}
+    <Modal
+      open={show}
+      onClose={handleClose}
+      title="Involve Additional Incident Category"
+      size="md"
+      footer={
+        <>
+          <button type="button" onClick={handleClose} className="btn-secondary">Cancel</button>
+          <button
+            type="button"
+            onClick={() => mutate(selectedCategories)}
+            disabled={selectedCategories.length === 0 || isPending}
+            className="btn-primary"
+          >
+            {isPending && <Spinner size={15} className="text-white" />} Involve Selected ({selectedCategories.length})
+          </button>
+        </>
+      }
     >
       <div className="space-y-4">
-        <Alert type="info" message="Select one or more departments whose feedback is also required for this incident. Their HODs will be notified immediately." />
+        <Alert
+          type="info"
+          message="Select one or more incident categories whose feedback is also required for this incident. Assigned category reviewers will be notified immediately."
+        />
 
         <div className="text-xs text-slate-500 font-medium">
-          Currently involved: <span className="text-slate-800 font-semibold">{currentDepartments.map(d => typeof d === 'string' ? d : d.name).join(', ') || 'None'}</span>
+          Currently involved: <span className="text-slate-800 font-semibold">{currentNamesDisplay || 'None'}</span>
         </div>
 
         <div>
-          <label className="field-label mb-2">Available Departments to Add</label>
-          {availableDepts.length === 0 ? (
-            <p className="text-sm text-slate-500 py-3">All hospital departments are already involved.</p>
+          <label className="field-label mb-2">Select Category / Categories to Involve</label>
+          {availableCategories.length === 0 ? (
+            <p className="text-sm text-slate-500 py-3">All active incident categories are already involved.</p>
           ) : (
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
-              {availableDepts.map(d => (
-                <label key={d.id} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={selectedDeptIds.includes(d.id)}
-                    onChange={() => toggleDept(d.id)}
-                    className="w-4 h-4 accent-blue-600 rounded"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-slate-800">{d.name}</div>
-                    {d.hod_name && <div className="text-xs text-slate-500">HOD: {d.hod_name}</div>}
-                  </div>
-                </label>
-              ))}
-            </div>
+            <SearchableMultiSelect
+              options={availableCategories}
+              value={selectedCategories}
+              onChange={setSelectedCategories}
+              placeholder="Search and select categories to involve…"
+              searchPlaceholder="Search incident categories…"
+            />
           )}
         </div>
       </div>

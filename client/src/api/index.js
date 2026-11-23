@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { resetQueryCache } from '../utils/queryClient';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 export const UPLOADS_URL = API_BASE_URL.replace(/\/api$/, '/uploads');
@@ -48,7 +49,7 @@ api.interceptors.response.use(
       }
       sessionStorage.removeItem('ims_token');
       sessionStorage.removeItem('ims_user');
-      sessionStorage.removeItem('ims_query_cache');
+      resetQueryCache();
       sessionStorage.removeItem('ims_last_activity_at');
       try {
         localStorage.removeItem('ims_last_activity_at');
@@ -97,7 +98,7 @@ export const incidentsApi = {
   get: (id) => api.get(`/incidents/${id}`),
   create: (data) => api.post('/incidents', data),
   updateIncident: (id, data) => api.put(`/incidents/${id}`, data),
-  getStats: () => api.get('/incidents/stats'),
+  getStats: (params) => api.get('/incidents/stats', { params }),
   withdraw: (id, data) => api.post(`/incidents/${id}/withdraw`, data),
   hodFeedback: (id, data) => api.post(`/incidents/${id}/hod-feedback`, data),
   imcFeedback: (id, data) => api.post(`/incidents/${id}/imc-feedback`, data),
@@ -132,6 +133,7 @@ export const metaApi = {
   departments: () => api.get('/departments'),
   designations: () => api.get('/departments/designations'),
   employmentTypes: () => api.get('/departments/employment-types'),
+  categories: () => api.get('/categories'),
 };
 
 // ── IMC ───────────────────────────────────────────
@@ -157,12 +159,17 @@ export const adminApi = {
   removeImc: (id) => api.delete(`/admin/imc-members/${id}`),
   stopImcAccess: (data) => api.post('/admin/stop-imc', data),
   getAuditLogs: (params) => api.get('/admin/audit-logs', { params }),
+  getAuditActions: () => api.get('/admin/audit-logs/actions'),
+  exportAuditLogs: (params) => api.get('/admin/audit-logs/export', { params, responseType: 'blob' }),
   getAnalytics: () => api.get('/admin/analytics'),
   getUsers: (params) => api.get('/admin/users', { params }),
   getUserProfile: (id) => api.get(`/admin/users/${id}/profile`),
   getRoleAudit: () => api.get('/admin/role-audit'),
   getManagementMembers: () => api.get('/admin/management-members'),
   removeManagement: (id) => api.delete(`/admin/management-members/${id}`),
+  getCategoryMappings: () => api.get('/admin/category-mappings'),
+  mapCategoryFeedbackStaff: (data) => api.post('/admin/category-mappings', data),
+  removeCategoryFeedbackStaff: (id, params) => api.delete(`/admin/category-mappings/${id}`, { params }),
   mapDepartmentLeader: (data) => api.post('/admin/map-department-leader', data),
   removeDepartmentLeader: (data) => api.post('/admin/remove-department-leader', data),
   getDepartmentReviewers: (params) => api.get('/admin/department-reviewers', { params }),
@@ -175,7 +182,7 @@ export const adminApi = {
   removeSystemAdmin: (id) => api.delete(`/admin/system-admins/${id}`),
   toggleUserStatus: (id) => api.post(`/admin/users/${id}/toggle-status`),
   getCommunicationLogs: (params) => api.get('/admin/communication-logs', { params }),
-  broadcastNotification: (data) => api.post('/admin/broadcast-notification', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  broadcastNotification: (data) => api.post('/admin/broadcast-notification', data),
 };
 
 // ── Attachment Download (presigned) & Preview ───────

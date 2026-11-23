@@ -1,38 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, employeeApi } from '../../api';
-import { INCIDENT_CATEGORY_MAPPING, INCIDENT_CATEGORIES, OCCURRED_TO_OPTIONS } from '../../utils/helpers';
+import {
+  INCIDENT_CATEGORY_MAPPING, INCIDENT_CATEGORIES, OCCURRED_TO_OPTIONS, getApiErrorMessage
+} from '../../utils/helpers';
 import { Alert, Spinner, Modal, SearchableMultiSelect, SearchableSelect } from '../../components/ui';
 import {
-  ChevronRight, ChevronLeft, Check, MapPin, Calendar,
-  FileText, Users, Eye, Layers, Tag, Upload, Paperclip, X, Download,
-  Search, UserCheck, UserPlus
+  ChevronRight, ChevronLeft, Check, Calendar,
+  FileText, Users, Eye, Layers, Upload, Paperclip, X, Download,
+  Search, UserPlus
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const STEPS = [
-  { id: 1, label: 'Category',       icon: Layers },
-  { id: 2, label: 'Type',           icon: Tag },
-  { id: 3, label: 'Date & Time',    icon: Calendar },
-  { id: 4, label: 'Location',       icon: MapPin },
-  { id: 5, label: 'Details',        icon: FileText },
-  { id: 6, label: 'Accountability', icon: Users },
-  { id: 7, label: 'Review',         icon: Eye },
+  { id: 1, label: 'Category & Type',        icon: Layers },
+  { id: 2, label: 'Date, Time & Location',  icon: Calendar },
+  { id: 3, label: 'Details',                icon: FileText },
+  { id: 4, label: 'Accountability',         icon: Users },
+  { id: 5, label: 'Review',                 icon: Eye },
 ];
 
 export default function NewIncidentPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState({});
-  const [duplicateAlert, setDuplicateAlert] = useState(null);
 
-  // selectedCategories: string[]  (category names)
-  // selectedTypes: { [category]: string }  (one type per category)
   const [form, setForm] = useState({
-    selectedDepartments: [],
     selectedCategories: [],
-    selectedTypes: {},       // { "Nursing Care Related": "Injury or fall of patient", ... }
+    selectedTypes: {},
     incidentDate: '',
     incidentTime: '',
     mainLocationId: '',
@@ -45,7 +42,7 @@ export default function NewIncidentPage() {
   });
   const [previewFile, setPreviewFile] = useState(null);
 
-  // Step 6: Searchable employee picker state
+  // Step 4: Searchable employee picker state
   const [selectedResponsibleEmployees, setSelectedResponsibleEmployees] = useState([]);
   const [employeeSearchTerm, setEmployeeSearchTerm] = useState('');
   const [employeeSearchResults, setEmployeeSearchResults] = useState([]);
@@ -53,20 +50,46 @@ export default function NewIncidentPage() {
   const [customPersonName, setCustomPersonName] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
 
+  const dateBounds = useMemo(() => {
+    const now = new Date();
+    const tzOffsetMs = now.getTimezoneOffset() * 60000;
+    const max = new Date(now.getTime() - tzOffsetMs).toISOString().split('T')[0];
+    const minDate = new Date(now);
+    minDate.setDate(minDate.getDate() - 14);
+    const min = new Date(minDate.getTime() - tzOffsetMs).toISOString().split('T')[0];
+    return { min, max };
+  }, []);
+
+  // Manage preview Object URL cleanly without leaking memory
+  const previewUrl = useMemo(() => (previewFile ? URL.createObjectURL(previewFile) : ''), [previewFile]);
   useEffect(() => {
-    if (!employeeSearchTerm.trim() || employeeSearchTerm.trim().length < 2) {
-      setEmployeeSearchResults([]);
-      setIsSearchingEmployees(false);
-      return;
-    }
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  // Manage attachment review download URLs safely
+  const attachmentUrls = useMemo(
+    () => form.attachments.map(file => ({ file, url: URL.createObjectURL(file) })),
+    [form.attachments]
+  );
+  useEffect(() => {
+    return () => {
+      attachmentUrls.forEach(item => URL.revokeObjectURL(item.url));
+    };
+  }, [attachmentUrls]);
+
+  useEffect(() => {
+    const q = employeeSearchTerm.trim();
+    if (!q || q.length < 2) return undefined;
 
     const timer = setTimeout(async () => {
       setIsSearchingEmployees(true);
       try {
-        const res = await employeeApi.search(employeeSearchTerm.trim());
+        const res = await employeeApi.search(q);
         const list = Array.isArray(res.data) ? res.data : (res.data?.employees || []);
         setEmployeeSearchResults(list);
-      } catch (err) {
+      } catch {
         setEmployeeSearchResults([]);
       } finally {
         setIsSearchingEmployees(false);
@@ -96,18 +119,19 @@ export default function NewIncidentPage() {
   };
 
   const removeResponsibleEmployee = (key) => {
-    const updated = selectedResponsibleEmployees.filter(e => (e.employee_id || e.full_name) !== key);
+    const updated = selectedResponsibleEmployees.filter(e => e.employee_id !== key);
     setSelectedResponsibleEmployees(updated);
     updateResponsiblePersonNames(updated);
   };
 
   const addCustomPerson = () => {
     if (!customPersonName.trim()) return;
+    const uniqueKey = `EXTERNAL-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const customObj = {
-      employee_id: 'EXTERNAL',
+      employee_id: uniqueKey,
       full_name: customPersonName.trim(),
       department: 'External / Non-Directory',
-      is_custom: true
+      is_custom: true,
     };
     const updated = [...selectedResponsibleEmployees, customObj];
     setSelectedResponsibleEmployees(updated);
@@ -121,27 +145,31 @@ export default function NewIncidentPage() {
     queryFn: () => metaApi.locations().then(r => r.data),
   });
 
-  const { data: departmentsData, isLoading: isLoadingDepts } = useQuery({
-    queryKey: ['departments'],
-    queryFn: () => metaApi.departments().then(r => r.data || []),
+  const { data: categoriesData } = useQuery({
+    queryKey: ['incident-categories'],
+    queryFn: () => metaApi.categories().then(r => r.data || []),
   });
-  const departmentOptions = (departmentsData || []).map(d => d.name);
 
-  const queryClient = useQueryClient();
+  const categoryOptions = useMemo(() => {
+    if (Array.isArray(categoriesData) && categoriesData.length > 0) {
+      return categoriesData.filter(c => c.is_active !== false).map(c => c.name);
+    }
+    return INCIDENT_CATEGORIES;
+  }, [categoriesData]);
 
   const submitMutation = useMutation({
     mutationFn: (data) => incidentsApi.create(data),
     onSuccess: (res) => {
-      // Invalidate cache so lists update immediately
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
 
-      toast.success(`Incident ${res.data.incident?.referenceId || res.data.referenceId || res.data.reference_id} submitted!`);
+      const refId = res.data.incident?.referenceId || res.data.referenceId || res.data.reference_id;
+      toast.success(`Incident ${refId} submitted!`);
       navigate(`/incidents/${res.data.incident?.id || res.data.id}`);
     },
     onError: (err) => {
-      toast.error(err.response?.data?.error || 'Failed to submit incident');
-    }
+      toast.error(getApiErrorMessage(err, 'Failed to submit incident'));
+    },
   });
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
@@ -150,24 +178,21 @@ export default function NewIncidentPage() {
     setForm(f => ({ ...f, selectedTypes: { ...f.selectedTypes, [cat]: type } }));
   };
 
-
   const validate = () => {
     const e = {};
     if (step === 1) {
-      if (form.selectedCategories.length === 0)
+      if (form.selectedCategories.length === 0) {
         e.selectedCategories = 'Select at least one incident category';
-      if (form.selectedDepartments.length === 0)
-        e.selectedDepartments = 'Select at least one concerned department';
+      } else {
+        form.selectedCategories.forEach(cat => {
+          if (!form.selectedTypes[cat]) {
+            e[`type_${cat}`] = `Select an incident type for "${cat}"`;
+          }
+        });
+      }
     }
 
     if (step === 2) {
-      form.selectedCategories.forEach(cat => {
-        if (!form.selectedTypes[cat])
-          e[`type_${cat}`] = `Select a type for "${cat}"`;
-      });
-    }
-
-    if (step === 3) {
       if (!form.incidentDate) {
         e.incidentDate = 'Date is required';
       } else {
@@ -184,22 +209,20 @@ export default function NewIncidentPage() {
         }
       }
       if (!form.incidentTime) e.incidentTime = 'Time is required';
+      if (!form.mainLocationId) e.mainLocationId = 'Select a main location';
+      if (!form.subLocationText || !form.subLocationText.trim()) e.subLocationText = 'Sub-location is required';
     }
 
-    if (step === 4) {
-      if (!form.mainLocationId) e.mainLocationId = 'Select a location';
-      if (!form.subLocationText || !form.subLocationText.trim()) e.subLocationText  = 'Sub-location is required';
-    }
-
-    if (step === 5) {
-      if (!form.occurredTo)              e.occurredTo  = 'Required';
-      if (!form.description.trim())      e.description = 'Description is required';
+    if (step === 3) {
+      if (!form.occurredTo) e.occurredTo = 'Required';
+      if (!form.description.trim()) e.description = 'Description is required';
       if (form.description.length > 2000) e.description = 'Maximum 2000 characters';
     }
 
-    if (step === 6) {
-      if (form.hasResponsiblePerson && !form.responsiblePersonName.trim())
-        e.responsiblePersonName = 'Name is required';
+    if (step === 4) {
+      if (form.hasResponsiblePerson && !form.responsiblePersonName.trim()) {
+        e.responsiblePersonName = 'Responsible person details are required';
+      }
     }
 
     setErrors(e);
@@ -210,34 +233,24 @@ export default function NewIncidentPage() {
   const prev = () => setStep(s => s - 1);
 
   const handleSubmit = () => {
-    // Build flat arrays for API
     const categories = form.selectedCategories;
-    const types      = form.selectedCategories.map(c => form.selectedTypes[c]).filter(Boolean);
+    const types = form.selectedCategories.map(c => form.selectedTypes[c]).filter(Boolean);
 
     const formData = new FormData();
     formData.append('incidentDate', form.incidentDate);
     formData.append('incidentTime', form.incidentTime);
     formData.append('mainLocationId', form.mainLocationId);
-    formData.append('subLocationText', form.subLocationText);
+    formData.append('subLocationText', form.subLocationText.trim());
     formData.append('occurredTo', form.occurredTo);
     formData.append('incidentCategory', categories[0] || '');
     formData.append('incidentType', types[0] || '');
     formData.append('description', form.description);
     formData.append('hasResponsiblePerson', form.hasResponsiblePerson);
     formData.append('responsiblePersonName', form.responsiblePersonName);
-    
-    // Resolve real API-synced department IDs from selected department names (100% HRMS API-driven)
-    const selectedDeptIds = (departmentsData || [])
-      .filter(d => form.selectedDepartments.includes(d.name))
-      .map(d => d.id);
 
-    // Arrays need to be stringified for FormData if parsing as strings on backend
     formData.append('incidentCategories', JSON.stringify(categories));
     formData.append('incidentTypes', JSON.stringify(types));
-    formData.append('departmentIds', JSON.stringify(selectedDeptIds));
-    formData.append('derivedDepartments', JSON.stringify(form.selectedDepartments));
 
-    // Append attachments
     if (form.attachments && form.attachments.length > 0) {
       form.attachments.forEach(file => {
         formData.append('attachments', file);
@@ -247,7 +260,8 @@ export default function NewIncidentPage() {
     submitMutation.mutate(formData);
   };
 
-  // Removed subLocations array since it's now manual input
+  const selectedMainLocationName =
+    (meta?.mainLocations || []).find(l => String(l.id) === String(form.mainLocationId))?.name || '';
 
   return (
     <div className="w-full">
@@ -265,12 +279,14 @@ export default function NewIncidentPage() {
           {STEPS.map((s, i) => (
             <div key={s.id} className="flex items-center flex-1 last:flex-none">
               <div className="flex flex-col items-center">
-                <div className={`step-dot text-sm ${
-                  s.id < step ? 'step-dot-done' : s.id === step ? 'step-dot-active' : 'step-dot-pending'
-                }`}>
+                <div
+                  className={`step-dot text-sm ${
+                    s.id < step ? 'step-dot-done' : s.id === step ? 'step-dot-active' : 'step-dot-pending'
+                  }`}
+                >
                   {s.id < step ? <Check size={14} /> : s.id}
                 </div>
-                <span className="text-[10px] text-slate-500 mt-1 hidden sm:block">{s.label}</span>
+                <span className="text-[10px] text-slate-500 mt-1 hidden sm:block text-center">{s.label}</span>
               </div>
               {i < STEPS.length - 1 && (
                 <div className={`flex-1 h-px mx-1 ${s.id < step ? 'bg-green-500' : 'bg-slate-200'}`} />
@@ -284,28 +300,31 @@ export default function NewIncidentPage() {
       <div className="card">
         <div className="p-5 border-b border-slate-200 bg-slate-50">
           <div className="flex items-center gap-2">
-            {(() => { const S = STEPS[step - 1]; return <S.icon size={17} className="text-blue-600" />; })()}
+            {(() => {
+              const S = STEPS[step - 1];
+              return <S.icon size={17} className="text-blue-600" />;
+            })()}
             <h2 className="text-sm font-semibold text-slate-800">{STEPS[step - 1].label}</h2>
           </div>
         </div>
 
         <div className="p-5 space-y-5">
-
-          {/* ── STEP 1: Incident Category & Concerned Department(s) ── */}
+          {/* ── STEP 1: Incident Category & Type ── */}
           {step === 1 && (
             <div className="space-y-6">
               <div>
                 <label className="field-label field-required">Incident Category</label>
                 <p className="text-xs text-slate-500 mb-3">
-                  Search and select all categories that apply. You will choose a specific type for each in the next step.
+                  Search and select all incident categories that apply. Then choose the specific incident type for each selected category below.
                 </p>
                 <SearchableMultiSelect
-                  options={INCIDENT_CATEGORIES}
+                  options={categoryOptions}
                   value={form.selectedCategories}
                   onChange={(cats) => {
-                    // Remove type entries for deselected categories
                     const newTypes = { ...form.selectedTypes };
-                    Object.keys(newTypes).forEach(k => { if (!cats.includes(k)) delete newTypes[k]; });
+                    Object.keys(newTypes).forEach(k => {
+                      if (!cats.includes(k)) delete newTypes[k];
+                    });
                     setForm(f => ({ ...f, selectedCategories: cats, selectedTypes: newTypes }));
                   }}
                   placeholder="Click to search & select categories…"
@@ -313,144 +332,102 @@ export default function NewIncidentPage() {
                   error={!!errors.selectedCategories}
                 />
                 {errors.selectedCategories && <p className="field-error">{errors.selectedCategories}</p>}
+              </div>
 
-                {/* Preview of selected */}
-                {form.selectedCategories.length > 0 && (
-                  <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                    <p className="text-xs font-medium text-slate-500 mb-2">{form.selectedCategories.length} categor{form.selectedCategories.length === 1 ? 'y' : 'ies'} selected — you will pick a type for each on the next step</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {form.selectedCategories.map(cat => (
-                        <span key={cat} className="badge badge-blue">{cat}</span>
-                      ))}
-                    </div>
+              {form.selectedCategories.length > 0 && (
+                <div className="pt-4 border-t border-slate-200 space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-800">Incident Type per Selected Category</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Choose the specific incident type that best describes what happened for each category.
+                    </p>
                   </div>
-                )}
-              </div>
-
-              {/* Concerned Department(s) — 100% OfficePortal HRMS API-driven */}
-              <div className="pt-4 border-t border-slate-200">
-                <label className="field-label field-required">Concerned Department(s)</label>
-                <p className="text-xs text-slate-500 mb-3">
-                  Select the hospital department(s) involved in this incident. Departments are synced live from OfficePortal HRMS.
-                </p>
-                {!isLoadingDepts && departmentOptions.length === 0 ? (
-                  <Alert
-                    type="warning"
-                    title="No OfficePortal Departments Synced Yet"
-                    message="Departments are 100% API-driven (zero hardcoded departments). Please ask your System Administrator to run OfficePortal Full Bootstrap Sync before reporting an incident."
-                  />
-                ) : (
-                  <>
-                    <SearchableMultiSelect
-                      options={departmentOptions}
-                      value={form.selectedDepartments}
-                      onChange={(depts) => setForm(f => ({ ...f, selectedDepartments: depts }))}
-                      placeholder={isLoadingDepts ? 'Loading departments…' : 'Click to search & select concerned department(s)…'}
-                      searchPlaceholder="Search departments…"
-                      error={!!errors.selectedDepartments}
-                    />
-                    {errors.selectedDepartments && <p className="field-error">{errors.selectedDepartments}</p>}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ── STEP 2: Incident Type per Category ── */}
-          {step === 2 && (
-            <div className="space-y-5">
-              <p className="text-xs text-slate-500">
-                For each category you selected, search and choose the specific incident type that best describes what happened.
-              </p>
-              {form.selectedCategories.map((cat, idx) => (
-                <div key={cat}>
-                  <label className="field-label field-required">
-                    <span className="text-blue-700 font-semibold">#{idx + 1}</span>&nbsp;{cat}
-                  </label>
-                  <SearchableSelect
-                    options={INCIDENT_CATEGORY_MAPPING[cat] || []}
-                    value={form.selectedTypes[cat] || ''}
-                    onChange={(type) => setType(cat, type)}
-                    placeholder={`Search incident type for "${cat}"…`}
-                    error={!!errors[`type_${cat}`]}
-                  />
-                  {errors[`type_${cat}`] && <p className="field-error">{errors[`type_${cat}`]}</p>}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* ── STEP 3: Date & Time ── */}
-          {step === 3 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="field-label field-required">Incident Date</label>
-                <input
-                  type="date"
-                  value={form.incidentDate}
-                  min={(() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() - 14);
-                    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-                  })()}
-                  max={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]}
-                  onChange={e => set('incidentDate', e.target.value)}
-                  className={`input ${errors.incidentDate ? 'input-error' : ''}`}
-                />
-                {errors.incidentDate ? (
-                  <p className="field-error">{errors.incidentDate}</p>
-                ) : (
-                  <p className="text-xs text-slate-500 mt-1">Per policy, incidents must be reported within 14 days of occurrence.</p>
-                )}
-              </div>
-              <div>
-                <label className="field-label field-required">Incident Time</label>
-                <input
-                  type="time"
-                  value={form.incidentTime}
-                  onChange={e => set('incidentTime', e.target.value)}
-                  className={`input ${errors.incidentTime ? 'input-error' : ''}`}
-                />
-                {errors.incidentTime && <p className="field-error">{errors.incidentTime}</p>}
-              </div>
-            </div>
-          )}
-
-          {/* ── STEP 4: Location ── */}
-          {step === 4 && (
-            <div className="space-y-4">
-              <div>
-                <label className="field-label field-required">Main Location</label>
-                <select
-                  value={form.mainLocationId}
-                  onChange={e => { set('mainLocationId', e.target.value); set('subLocationId', ''); }}
-                  className={`select ${errors.mainLocationId ? 'input-error' : ''}`}
-                >
-                  <option value="">Select location…</option>
-                  {(meta?.mainLocations || []).map(l => (
-                    <option key={l.id} value={l.id}>{l.name}</option>
+                  {form.selectedCategories.map((cat, idx) => (
+                    <div key={cat}>
+                      <label className="field-label field-required">
+                        <span className="text-blue-700 font-semibold">#{idx + 1}</span>&nbsp;{cat}
+                      </label>
+                      <SearchableSelect
+                        options={INCIDENT_CATEGORY_MAPPING[cat] || ['Others']}
+                        value={form.selectedTypes[cat] || ''}
+                        onChange={(type) => setType(cat, type)}
+                        placeholder={`Search incident type for "${cat}"…`}
+                        error={!!errors[`type_${cat}`]}
+                      />
+                      {errors[`type_${cat}`] && <p className="field-error">{errors[`type_${cat}`]}</p>}
+                    </div>
                   ))}
-                </select>
-                {errors.mainLocationId && <p className="field-error">{errors.mainLocationId}</p>}
-              </div>
-              {form.mainLocationId && (
-                <div>
-                  <label className="field-label field-required">Exact Sub-Location</label>
-                  <input
-                    type="text"
-                    value={form.subLocationText}
-                    onChange={e => set('subLocationText', e.target.value)}
-                    placeholder="E.g., 2nd Floor, Room 102"
-                    className={`input ${errors.subLocationText ? 'input-error' : ''}`}
-                  />
-                  {errors.subLocationText && <p className="field-error">{errors.subLocationText}</p>}
                 </div>
               )}
             </div>
           )}
 
-          {/* ── STEP 5: Details ── */}
-          {step === 5 && (
+          {/* ── STEP 2: Date, Time & Location ── */}
+          {step === 2 && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="field-label field-required">Incident Date</label>
+                  <input
+                    type="date"
+                    value={form.incidentDate}
+                    min={dateBounds.min}
+                    max={dateBounds.max}
+                    onChange={e => set('incidentDate', e.target.value)}
+                    className={`input ${errors.incidentDate ? 'input-error' : ''}`}
+                  />
+                  {errors.incidentDate ? (
+                    <p className="field-error">{errors.incidentDate}</p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-1">Per policy, incidents must be reported within 14 days of occurrence.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="field-label field-required">Incident Time</label>
+                  <input
+                    type="time"
+                    value={form.incidentTime}
+                    onChange={e => set('incidentTime', e.target.value)}
+                    className={`input ${errors.incidentTime ? 'input-error' : ''}`}
+                  />
+                  {errors.incidentTime && <p className="field-error">{errors.incidentTime}</p>}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-200 space-y-4">
+                <div>
+                  <label className="field-label field-required">Main Location</label>
+                  <select
+                    value={form.mainLocationId}
+                    onChange={e => set('mainLocationId', e.target.value)}
+                    className={`select ${errors.mainLocationId ? 'input-error' : ''}`}
+                  >
+                    <option value="">Select location…</option>
+                    {(meta?.mainLocations || []).map(l => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                  {errors.mainLocationId && <p className="field-error">{errors.mainLocationId}</p>}
+                </div>
+                {form.mainLocationId && (
+                  <div>
+                    <label className="field-label field-required">Exact Sub-Location</label>
+                    <input
+                      type="text"
+                      value={form.subLocationText}
+                      onChange={e => set('subLocationText', e.target.value)}
+                      placeholder="E.g., 2nd Floor, Room 102"
+                      className={`input ${errors.subLocationText ? 'input-error' : ''}`}
+                    />
+                    {errors.subLocationText && <p className="field-error">{errors.subLocationText}</p>}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── STEP 3: Details ── */}
+          {step === 3 && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -479,17 +456,16 @@ export default function NewIncidentPage() {
                 {errors.description && <p className="field-error">{errors.description}</p>}
               </div>
 
-              {/* Attachments Section */}
               <div className="pt-2">
                 <label className="field-label">
                   Attachments (Optional)
-                  <span className="text-slate-400 font-normal ml-1">Images, PDFs, or Docs</span>
+                  <span className="text-slate-400 font-normal ml-1">Images or PDFs</span>
                 </label>
-                
+
                 {form.attachments.length > 0 && (
                   <div className="flex flex-col gap-2 mb-3 mt-2">
                     {form.attachments.map((file, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50">
+                      <div key={`${file.name}-${idx}`} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50">
                         <div className="flex items-center gap-3 overflow-hidden">
                           <div className="w-8 h-8 rounded bg-white border border-slate-200 flex items-center justify-center flex-shrink-0">
                             <Paperclip size={14} className="text-slate-500" />
@@ -528,7 +504,7 @@ export default function NewIncidentPage() {
                         const newFiles = Array.from(e.target.files);
                         const ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
                         const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-                        const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+                        const MAX_SIZE = 2 * 1024 * 1024;
                         const MAX_COUNT = 5;
 
                         const validFiles = [];
@@ -537,7 +513,6 @@ export default function NewIncidentPage() {
                             toast.error(`Maximum ${MAX_COUNT} attachments permitted per incident.`);
                             break;
                           }
-
                           const ext = '.' + file.name.split('.').pop().toLowerCase();
                           const isAllowedExt = ALLOWED_EXT.includes(ext);
                           const isAllowedMime = !file.type || ALLOWED_MIME.includes(file.type);
@@ -546,13 +521,11 @@ export default function NewIncidentPage() {
                             toast.error(`"${file.name}" is not an allowed file type. Only JPG, PNG, WebP, and PDF are permitted.`);
                             continue;
                           }
-
                           if (file.size > MAX_SIZE) {
                             const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
                             toast.error(`"${file.name}" exceeds the 2MB size limit (${sizeMb} MB).`);
                             continue;
                           }
-
                           validFiles.push(file);
                         }
 
@@ -560,7 +533,7 @@ export default function NewIncidentPage() {
                           set('attachments', [...form.attachments, ...validFiles]);
                         }
                       }
-                      e.target.value = null; // Reset input so same file can be selected again
+                      e.target.value = null;
                     }}
                   />
                   <div className="flex flex-col items-center justify-center py-6 px-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 hover:border-blue-400 transition-colors">
@@ -575,8 +548,8 @@ export default function NewIncidentPage() {
             </div>
           )}
 
-          {/* ── STEP 6: Accountability ── */}
-          {step === 6 && (
+          {/* ── STEP 4: Accountability ── */}
+          {step === 4 && (
             <div className="space-y-5">
               <div>
                 <label className="field-label">Is anyone responsible for this incident?</label>
@@ -614,15 +587,21 @@ export default function NewIncidentPage() {
                       Search and select hospital staff by their Name or Employee ID. You can select multiple people if applicable.
                     </p>
 
-                    {/* Search Input Box */}
                     <div className="relative">
                       <div className="relative">
                         <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
                           type="text"
                           value={employeeSearchTerm}
-                          onChange={e => setEmployeeSearchTerm(e.target.value)}
-                          placeholder="Search employee by name (e.g. Rahul, Priya) or ID (e.g. 1024, 1224)..."
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEmployeeSearchTerm(val);
+                            if (val.trim().length < 2) {
+                              setEmployeeSearchResults([]);
+                              setIsSearchingEmployees(false);
+                            }
+                          }}
+                          placeholder="Search employee by name or ID…"
                           className="input pl-10 pr-10 bg-white"
                         />
                         {isSearchingEmployees ? (
@@ -640,7 +619,6 @@ export default function NewIncidentPage() {
                         ) : null}
                       </div>
 
-                      {/* Dropdown Results */}
                       {employeeSearchResults.length > 0 && (
                         <div className="absolute z-30 left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200 divide-y divide-slate-100">
                           {employeeSearchResults.map((emp) => {
@@ -681,9 +659,7 @@ export default function NewIncidentPage() {
                                       Selected
                                     </span>
                                   ) : (
-                                    <span className="text-xs text-blue-600 font-semibold group-hover:underline">
-                                      + Add
-                                    </span>
+                                    <span className="text-xs text-blue-600 font-semibold">+ Add</span>
                                   )}
                                 </div>
                               </button>
@@ -692,10 +668,9 @@ export default function NewIncidentPage() {
                         </div>
                       )}
 
-                      {/* No results message */}
                       {employeeSearchTerm.trim().length >= 2 && !isSearchingEmployees && employeeSearchResults.length === 0 && (
                         <div className="absolute z-30 left-0 right-0 mt-1 p-4 bg-white rounded-xl shadow-lg border border-slate-200 text-center">
-                          <p className="text-xs text-slate-500">No hospital employees matching "{employeeSearchTerm}".</p>
+                          <p className="text-xs text-slate-500">No hospital employees matching &ldquo;{employeeSearchTerm}&rdquo;.</p>
                           <button
                             type="button"
                             onClick={() => {
@@ -705,14 +680,13 @@ export default function NewIncidentPage() {
                             }}
                             className="mt-2 text-xs font-semibold text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1"
                           >
-                            <UserPlus size={13} /> Add "{employeeSearchTerm}" as external/custom person
+                            <UserPlus size={13} /> Add &ldquo;{employeeSearchTerm}&rdquo; as external/custom person
                           </button>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Selected Responsible Persons Chips / Cards */}
                   {selectedResponsibleEmployees.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold text-slate-700 mb-2">
@@ -721,8 +695,8 @@ export default function NewIncidentPage() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {selectedResponsibleEmployees.map(emp => (
                           <div
-                            key={emp.employee_id || emp.full_name}
-                            className="flex items-center justify-between p-2.5 rounded-xl border border-blue-200 bg-blue-50/60 shadow-xs"
+                            key={emp.employee_id}
+                            className="flex items-center justify-between p-2.5 rounded-xl border border-blue-200 bg-blue-50/60"
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
                               <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0">
@@ -737,7 +711,7 @@ export default function NewIncidentPage() {
                             </div>
                             <button
                               type="button"
-                              onClick={() => removeResponsibleEmployee(emp.employee_id || emp.full_name)}
+                              onClick={() => removeResponsibleEmployee(emp.employee_id)}
                               className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0 ml-2"
                               title="Remove"
                             >
@@ -749,7 +723,6 @@ export default function NewIncidentPage() {
                     </div>
                   )}
 
-                  {/* Add person not in directory */}
                   <div className="pt-1">
                     {!showCustomInput ? (
                       <button
@@ -757,7 +730,7 @@ export default function NewIncidentPage() {
                         onClick={() => setShowCustomInput(true)}
                         className="text-xs text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1.5"
                       >
-                        <UserPlus size={14} /> + Add person not listed in directory (e.g. Visitor, Contractor, Third-Party)
+                        <UserPlus size={14} /> Add person not listed in directory (e.g. Visitor, Contractor, Third-Party)
                       </button>
                     ) : (
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
@@ -777,7 +750,7 @@ export default function NewIncidentPage() {
                             value={customPersonName}
                             onChange={e => setCustomPersonName(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomPerson(); } }}
-                            placeholder="Full name of person (e.g. Contractor John, Patient Attendant)..."
+                            placeholder="Full name of person (e.g. Contractor, Visitor)…"
                             className="input text-xs flex-1 bg-white"
                           />
                           <button
@@ -793,7 +766,6 @@ export default function NewIncidentPage() {
                     )}
                   </div>
 
-                  {/* Manual input fallback / formatted preview */}
                   <div>
                     <label className="field-label text-xs text-slate-500">
                       Summary Text (sent with report):
@@ -801,7 +773,7 @@ export default function NewIncidentPage() {
                     <input
                       value={form.responsiblePersonName}
                       onChange={e => set('responsiblePersonName', e.target.value)}
-                      placeholder="Selected responsible personnel summary..."
+                      placeholder="Selected responsible personnel summary…"
                       className={`input bg-slate-50 text-xs ${errors.responsiblePersonName ? 'input-error' : ''}`}
                     />
                     {errors.responsiblePersonName && (
@@ -813,20 +785,14 @@ export default function NewIncidentPage() {
             </div>
           )}
 
-          {/* ── STEP 7: Review ── */}
-          {step === 7 && (
+          {/* ── STEP 5: Review ── */}
+          {step === 5 && (
             <div className="space-y-4">
-              <Alert type="info" title="Review Before Submitting" message="Please verify all details. Once submitted, the incident cannot be edited." />
+              <Alert type="info" title="Review Before Submitting" message="Please verify all details before submitting your incident report." />
 
               <div className="space-y-3 divide-y divide-slate-100">
-                {/* Concerned Departments */}
-                <ReviewRow
-                  label="Concerned Dept(s)"
-                  value={form.selectedDepartments.join(', ') || '—'}
-                />
-                {/* Categories & types */}
                 <div className="flex gap-4 py-2.5 first:pt-0">
-                  <span className="text-xs font-medium text-slate-500 w-36 flex-shrink-0 pt-0.5">Categories & Types</span>
+                  <span className="text-xs font-medium text-slate-500 w-36 flex-shrink-0 pt-0.5">Categories &amp; Types</span>
                   <div className="flex-1 space-y-1">
                     {form.selectedCategories.map(cat => (
                       <div key={cat} className="text-sm text-slate-800">
@@ -840,7 +806,11 @@ export default function NewIncidentPage() {
                 <ReviewRow label="Date & Time" value={`${form.incidentDate} at ${form.incidentTime}`} />
                 <ReviewRow
                   label="Location"
-                  value={`${(meta?.mainLocations || []).find(l => l.id == form.mainLocationId)?.name || ''} › ${(meta?.subLocations || []).find(s => s.id == form.subLocationId)?.name || form.subLocationId}`}
+                  value={
+                    selectedMainLocationName
+                      ? `${selectedMainLocationName}${form.subLocationText ? ` › ${form.subLocationText}` : ''}`
+                      : form.subLocationText || '—'
+                  }
                 />
                 <ReviewRow label="Occurred To" value={form.occurredTo} />
                 <ReviewRow label="Description" value={form.description} multiline />
@@ -851,8 +821,8 @@ export default function NewIncidentPage() {
                 <div className="flex gap-4 py-2.5">
                   <span className="text-xs font-medium text-slate-500 w-36 flex-shrink-0 pt-0.5">Attachments ({form.attachments.length})</span>
                   <div className="flex-1 space-y-1">
-                    {form.attachments.length > 0 ? form.attachments.map((file, idx) => (
-                      <div key={idx} className="flex items-center justify-between w-full max-w-sm">
+                    {attachmentUrls.length > 0 ? attachmentUrls.map(({ file, url }, idx) => (
+                      <div key={`${file.name}-${idx}`} className="flex items-center justify-between w-full max-w-sm">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <Paperclip size={12} className="text-slate-400 flex-shrink-0" />
                           <button
@@ -863,8 +833,8 @@ export default function NewIncidentPage() {
                             {file.name}
                           </button>
                         </div>
-                        <a 
-                          href={URL.createObjectURL(file)} 
+                        <a
+                          href={url}
                           download={file.name}
                           className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
                           title="Download"
@@ -904,8 +874,6 @@ export default function NewIncidentPage() {
         </div>
       </div>
 
-
-
       {/* File Preview Modal */}
       <Modal
         open={!!previewFile}
@@ -914,9 +882,9 @@ export default function NewIncidentPage() {
         size="full"
         footer={
           <div className="flex justify-between w-full">
-            {previewFile ? (
-              <a 
-                href={URL.createObjectURL(previewFile)} 
+            {previewFile && previewUrl ? (
+              <a
+                href={previewUrl}
                 download={previewFile.name}
                 className="btn-primary flex items-center gap-2"
               >
@@ -928,19 +896,19 @@ export default function NewIncidentPage() {
           </div>
         }
       >
-        {previewFile && (
+        {previewFile && previewUrl && (
           <div className="flex justify-center bg-slate-900 rounded-xl overflow-hidden" style={{ minHeight: '50vh', maxHeight: '80vh' }}>
             {previewFile.type.startsWith('image/') ? (
-              <img src={URL.createObjectURL(previewFile)} alt="Preview" className="w-full h-full object-contain" />
+              <img src={previewUrl} alt="Preview" className="w-full h-full object-contain" />
             ) : previewFile.type === 'application/pdf' ? (
-              <iframe src={URL.createObjectURL(previewFile)} className="w-full h-[80vh]" title="PDF Preview" />
+              <iframe src={previewUrl} className="w-full h-[80vh]" title="PDF Preview" />
             ) : (
               <div className="p-8 text-center bg-white w-full flex flex-col items-center justify-center">
                 <FileText size={48} className="mx-auto text-slate-300 mb-3" />
                 <p className="text-slate-600 font-medium mb-2">Preview not available</p>
-                <a 
-                  href={URL.createObjectURL(previewFile)} 
-                  target="_blank" 
+                <a
+                  href={previewUrl}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="btn-primary inline-flex mt-2"
                 >
@@ -955,11 +923,11 @@ export default function NewIncidentPage() {
   );
 }
 
-function ReviewRow({ label, value, multiline, highlight }) {
+function ReviewRow({ label, value, multiline }) {
   return (
     <div className="flex gap-4 py-2.5 first:pt-0 last:pb-0">
       <span className="text-xs font-medium text-slate-500 w-36 flex-shrink-0 pt-0.5">{label}</span>
-      <span className={`text-sm text-slate-800 flex-1 ${multiline ? 'whitespace-pre-wrap' : ''} ${highlight ? 'font-semibold text-red-700' : ''}`}>
+      <span className={`text-sm text-slate-800 flex-1 ${multiline ? 'whitespace-pre-wrap' : ''}`}>
         {value || '—'}
       </span>
     </div>

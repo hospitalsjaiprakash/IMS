@@ -142,7 +142,7 @@ export function useIdleLogout({ timeoutMs = IDLE_TIMEOUT_MS } = {}) {
     };
 
     for (const evt of ACTIVITY_EVENTS) {
-      window.addEventListener(evt, recordActivity, { passive: true });
+      window.addEventListener(evt, recordActivity, { passive: true, capture: true });
     }
     window.addEventListener('storage', handleStorage);
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -150,7 +150,7 @@ export function useIdleLogout({ timeoutMs = IDLE_TIMEOUT_MS } = {}) {
 
     return () => {
       for (const evt of ACTIVITY_EVENTS) {
-        window.removeEventListener(evt, recordActivity);
+        window.removeEventListener(evt, recordActivity, { capture: true });
       }
       window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);

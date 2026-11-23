@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { GraduationCap, Calendar, BookOpen, User, Send, CheckSquare, Square, Users } from 'lucide-react';
+import { GraduationCap, CheckSquare, Square, Users } from 'lucide-react';
 import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi } from '../../api';
+import { getApiErrorMessage } from '../../utils/helpers';
 import ResponsibleEmployeePicker from './ResponsibleEmployeePicker';
 import toast from 'react-hot-toast';
 
@@ -98,14 +99,13 @@ export default function TrainerAssignmentModal({
       });
 
       toast.success('Trainer successfully assigned. Notification dispatched.');
-      queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+      queryClient.invalidateQueries({ queryKey: ['incident', String(incident?.id)] });
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to assign trainer.');
+      toast.error(getApiErrorMessage(err, 'Failed to assign trainer.'));
     } finally {
       setIsSubmitting(false);
     }

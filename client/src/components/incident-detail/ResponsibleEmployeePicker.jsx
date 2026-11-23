@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, UserPlus, X, User, Building2, Briefcase, GraduationCap, DollarSign, Copy, CheckCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, UserPlus, X, GraduationCap, DollarSign, Copy } from 'lucide-react';
 import { Spinner } from '../ui';
 import { employeeApi } from '../../api';
 import ProposedOutcomeMultiSelect from './ProposedOutcomeMultiSelect';
@@ -55,15 +55,11 @@ export default function ResponsibleEmployeePicker({
 
   useEffect(() => {
     const q = term.trim();
-    if (!q || q.length < 2) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
+    if (!q || q.length < 2) return undefined;
 
-    setLoading(true);
     let active = true;
     const timer = setTimeout(() => {
+      setLoading(true);
       employeeApi.search(q)
         .then(res => {
           if (!active) return;
@@ -149,7 +145,7 @@ export default function ResponsibleEmployeePicker({
         <div className="space-y-3 mb-2">
           {allowPerEmployeeOutcomes ? (
             /* Rich per-employee outcome cards */
-            selected.map((emp, index) => {
+            selected.map((emp) => {
               const key = emp.id || emp.employee_id;
               const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
               const empOutcomes = Array.isArray(emp.outcomes) ? emp.outcomes : [];
@@ -345,7 +341,12 @@ export default function ResponsibleEmployeePicker({
               type="text"
               value={term}
               onChange={e => {
-                setTerm(e.target.value);
+                const val = e.target.value;
+                setTerm(val);
+                if (val.trim().length < 2) {
+                  setResults([]);
+                  setLoading(false);
+                }
                 setOpen(true);
               }}
               onFocus={() => setOpen(true)}
