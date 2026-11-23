@@ -13,78 +13,122 @@ function formatDate(d) {
 }
 
 /**
- * Standard CC list generator based on template type and employee department/role
+ * Default CC list for formal letters — always empty so IMC/Admin selects real staff via employee search.
  */
-function getDefaultCcList(templateType, employee, incident) {
-  const empName = employee.name || employee.full_name || 'Concerned Employee';
-  const dept = employee.department || 'Concerned Department';
-  const isDoctor = (employee.designation || '').toLowerCase().includes('consultant') ||
-                   (employee.designation || '').toLowerCase().includes('dr.') ||
-                   (employee.name || '').toLowerCase().startsWith('dr.');
+function getDefaultCcList() {
+  return [];
+}
 
-  switch (templateType) {
-    case 'advisory_letter':
-      return [
-        { label: empName, role: 'Recipient Employee' },
-        { label: `Ward / Area In-charge, ${dept}`, role: 'In-charge' },
-        { label: isDoctor ? 'Medical Superintendent' : 'Nursing Superintendent', role: 'Superintendent' },
-        { label: 'Management Office', role: 'Executive Office' },
-        { label: 'HOD- HR', role: 'Human Resources' }
-      ];
-
-    case 'suggestion_letter':
-      return [
-        { label: empName, role: 'Recipient Lead' },
-        { label: 'Medical Superintendent', role: 'Clinical Governance' },
-        { label: 'Management Office', role: 'Executive Office' }
-      ];
-
-    case 'warning_letter':
-      return [
-        { label: empName, role: 'Recipient Employee' },
-        { label: `HOD- ${dept}`, role: 'Department Head' },
-        { label: 'Asst. COO / COO', role: 'Operations' },
-        { label: 'Management Office', role: 'Executive Office' },
-        { label: 'HOD- HR', role: 'Human Resources' }
-      ];
-
-    case 'warning_penalty_letter':
-      return [
-        { label: empName, role: 'Recipient Employee' },
-        { label: `Area In-charge, ${dept}`, role: 'Area Lead' },
-        { label: `HOD- ${dept}`, role: 'Department Head' },
-        { label: 'Asst. COO / COO', role: 'Operations' },
-        { label: 'Management Office', role: 'Executive Office' },
-        { label: 'HOD- HR', role: 'Human Resources' },
-        { label: 'HOD- Accounts', role: 'Finance & Accounts (Salary Deduction)' }
-      ];
-
-    case 'training_letter':
-      return [
-        { label: empName, role: 'Recipient Employee' },
-        { label: 'HOD- T&D', role: 'Training & Development' },
-        { label: `HOD- ${dept}`, role: 'Department Head' },
-        { label: 'Management Office', role: 'Executive Office' }
-      ];
-
-    case 'trainer_appointment_letter':
-    case 'trainer_appointment':
-      return [
-        { label: empName, role: 'Designated Trainer' },
-        { label: 'HOD- T&D', role: 'Training & Development' },
-        { label: 'Medical Superintendent / Nursing Superintendent', role: 'Clinical Governance' },
-        { label: 'Incident Management Committee (IMC)', role: 'Oversight Committee' },
-        { label: 'Management Office', role: 'Executive Office' }
-      ];
-
-    default:
-      return [
-        { label: empName, role: 'Recipient Employee' },
-        { label: `HOD- ${dept}`, role: 'Department Head' },
-        { label: 'Management Office', role: 'Executive Office' },
-        { label: 'HOD- HR', role: 'Human Resources' }
-      ];
+/**
+ * Consistent display formatter for CC entries on previews, PDFs, and email notifications.
+ * New directory-backed entries render strictly as: "Full Name — Complete Designation".
+ * Preserves safe rendering for historical/legacy { label, role } entries.
+ */
+function formatCcEntryDisplay(cc) {
+  if (!cc) return '';
+  if (typeof cc === 'string') return cc.trim();
+  const name = String(cc.name || cc.full_name || '').trim();
+  const designation = String(cc.designation || '').trim();
+  if (name) {
+    return designation ? `${name} — ${designation}` : name;
   }
+  const label = String(cc.label || '').trim();
+  if (!label) return '';
+  if (designation) return `${label} — ${designation}`;
+  const role = String(cc.role || '').trim();
+  return role ? `${label} (${role})` : label;
+}
+
+/**
+ * Resolve & hydrate CC recipients strictly against active hospital employees in users / master_employees.
+ * Preserves user selection order, deduplicates by employee_id / user_id, and ignores non-directory strings
+ * or spoofed client emails/designations.
+ */
+async function resolveCcRecipients(rawCcList, dbQuery) {
+  let list = rawCcList;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch (_) { list = []; }
+  }
+  if (!Array.isArray(list) || list.length === 0) {
+    return [];
+  }
+
+  const resolved = [];
+  const seenKeys = new Set();
+
+  for (const item of list) {
+    if (!item) continue;
+    let idCandidates = [];
+    let empCodeCandidates = [];
+
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      if (!trimmed) continue;
+      idCandidates.push(trimmed);
+      empCodeCandidates.push(trimmed.toLowerCase());
+    } else if (typeof item === 'object') {
+      [item.user_id, item.userId, item.id].forEach((v) => {
+        if (v !== undefined && v !== null && String(v).trim()) {
+          idCandidates.push(String(v).trim());
+        }
+      });
+      [item.employee_id, item.employeeId, item.emp_id, item.employee_code, item.employee_no].forEach((v) => {
+        if (v !== undefined && v !== null && String(v).trim()) {
+          const s = String(v).trim();
+          idCandidates.push(s);
+          empCodeCandidates.push(s.toLowerCase());
+        }
+      });
+    }
+
+    idCandidates = [...new Set(idCandidates)];
+    empCodeCandidates = [...new Set(empCodeCandidates)];
+    if (idCandidates.length === 0 && empCodeCandidates.length === 0) {
+      continue;
+    }
+
+    const res = await dbQuery(
+      `SELECT
+         u.id AS user_id,
+         m.id AS master_id,
+         COALESCE(u.employee_id, m.employee_id) AS employee_id,
+         COALESCE(u.full_name, m.name) AS full_name,
+         COALESCE(NULLIF(TRIM(u.designation), ''), NULLIF(TRIM(m.designation), ''), '') AS designation,
+         COALESCE(NULLIF(TRIM(u.email), ''), NULLIF(TRIM(m.email), '')) AS email
+       FROM master_employees m
+       FULL OUTER JOIN users u ON u.employee_id = m.employee_id
+       WHERE COALESCE(m.status, 'active') NOT IN ('terminated', 'inactive', 'deleted')
+         AND COALESCE(u.is_active, TRUE) = TRUE
+         AND (
+           u.id::text = ANY($1::text[])
+           OR m.id::text = ANY($1::text[])
+           OR LOWER(COALESCE(u.employee_id, m.employee_id, '')) = ANY($2::text[])
+         )
+       LIMIT 1`,
+      [idCandidates, empCodeCandidates]
+    );
+
+    if (!res.rows.length) continue;
+    const row = res.rows[0];
+    const dedupeKey = String(row.employee_id || row.user_id || row.master_id || '').trim().toLowerCase();
+    if (!dedupeKey || seenKeys.has(dedupeKey)) continue;
+    seenKeys.add(dedupeKey);
+
+    const fullName = String(row.full_name || '').trim();
+    const designation = String(row.designation || '').trim();
+    resolved.push({
+      user_id: row.user_id || null,
+      id: row.user_id || row.master_id || null,
+      employee_id: row.employee_id || null,
+      name: fullName,
+      full_name: fullName,
+      designation,
+      email: row.email || null,
+      label: designation ? `${fullName} — ${designation}` : fullName
+    });
+  }
+
+  return resolved;
 }
 
 /**
@@ -279,7 +323,7 @@ function buildInitialLetterData({ templateType, employee, incident, yearSeq = '0
 /**
  * Pre-populate all fields for an official Trainer Appointment Letter
  */
-function buildTrainerAppointmentLetterData({ trainer, incident, trainingTopic, trainingInstructions, targetDate, trainees = [], yearSeq = '001' }) {
+function buildTrainerAppointmentLetterData({ trainer, incident, trainingTopic, trainingInstructions, targetDate, trainees = [], yearSeq = '001', ccRecipients = [] }) {
   const currentYear = new Date().getFullYear();
   const refNum = `JPHRC/TRN/${currentYear}/${yearSeq}`;
   const def = TEMPLATE_DEFINITIONS.trainer_appointment_letter;
@@ -298,7 +342,7 @@ function buildTrainerAppointmentLetterData({ trainer, incident, trainingTopic, t
     ? 'Dear Doctor,'
     : `Dear ${trainerName.split(' ')[0] || trainerName},`;
 
-  const ccList = getDefaultCcList('trainer_appointment_letter', trainer, incident);
+  const ccList = Array.isArray(ccRecipients) ? ccRecipients : [];
 
   return {
     templateType: 'trainer_appointment_letter',
@@ -321,6 +365,8 @@ function buildTrainerAppointmentLetterData({ trainer, incident, trainingTopic, t
 module.exports = {
   TEMPLATE_DEFINITIONS,
   getDefaultCcList,
+  formatCcEntryDisplay,
+  resolveCcRecipients,
   buildInitialLetterData,
   buildTrainerAppointmentLetterData,
   formatDate

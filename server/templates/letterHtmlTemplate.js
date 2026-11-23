@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getIncidentUrl } = require('../utils/qrCodeService');
+const { formatCcEntryDisplay } = require('../utils/letterTemplates');
 
 /**
  * Strict HTML entity escaping to prevent HTML/XSS/SSRF injection inside
@@ -352,6 +353,7 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
   } else if (typeof letter.cc_recipients === 'string') {
     try { ccList = JSON.parse(letter.cc_recipients); } catch (_) { ccList = []; }
   }
+  const formattedCcEntries = ccList.map(formatCcEntryDisplay).filter(Boolean);
 
   const drafterName = approvers.draftedByName || letter.drafted_by_name || 'Incident Management Committee Lead';
   const approverName = approvers.approvedByName || letter.approved_by_name || 'Executive Management Authority';
@@ -677,10 +679,12 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
       <!-- Carbon Copy & QR Code -->
       <div class="footer-cc-qr-row">
         <div class="cc-container">
-          <div class="cc-title">Copy Communicated for Information & Record To:</div>
-          <ul class="cc-list">
-            ${ccList.map((cc, i) => `<li>${i + 1}. ${escapeHtml(cc?.label || cc?.name || '')} (${escapeHtml(cc?.role || 'Member')})</li>`).join('')}
-          </ul>
+          ${formattedCcEntries.length > 0 ? `
+            <div class="cc-title">Copy Communicated for Information & Record To:</div>
+            <ul class="cc-list">
+              ${formattedCcEntries.map((entry, i) => `<li>${i + 1}. ${escapeHtml(entry)}</li>`).join('')}
+            </ul>
+          ` : ''}
         </div>
 
         ${safeQrDataUrl ? `
@@ -703,12 +707,17 @@ function buildLetterHtml({ letter, incident = {}, approvers = {}, qrCodeDataUrl 
  * Concise Email Dispatch Notification Body
  * The official letterhead is attached as a signed A4 PDF
  */
-function buildEmailDispatchNoticeHtml({ letter, incident, portalUrl }) {
+function buildEmailDispatchNoticeHtml({ letter, incident, portalUrl, ccRecipient = null }) {
   const refNumber = escapeHtml(letter.reference_number || letter.ref_number || '');
   const recipientName = escapeHtml(letter.recipient_name || letter.employee_name || 'Staff Member');
   const subject = escapeHtml(letter.subject || 'Incident Management Notice');
   const incRef = escapeHtml(incident.reference_id || 'Incident');
   const safePortalUrl = sanitizeHttpUrl(portalUrl);
+  const ccName = ccRecipient ? escapeHtml(ccRecipient.name || ccRecipient.full_name || ccRecipient.label || 'Colleague') : null;
+  const greetingName = ccName || recipientName;
+  const introParagraph = ccRecipient
+    ? `You have been copied (<strong>CC</strong>) for information and record on the official communication letter issued to <strong>${recipientName}</strong> regarding incident <strong>${incRef}</strong>:`
+    : `Please be informed that Executive Management and the Incident Management Committee have concluded the review for incident <strong>${incRef}</strong> and formally issued the following directive:`;
 
   return `
     <div style="max-width: 620px; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; background: #ffffff; color: #1e293b; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
@@ -721,15 +730,15 @@ function buildEmailDispatchNoticeHtml({ letter, incident, portalUrl }) {
       <!-- Notification Body -->
       <div style="padding: 28px 24px; line-height: 1.6;">
         <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 12px;">
-          Formal Communication Regarding Incident Ref: ${incRef}
+          ${ccRecipient ? '[CC] ' : ''}Formal Communication Regarding Incident Ref: ${incRef}
         </div>
 
         <p style="font-size: 13.5px; color: #334155; margin-top: 0;">
-          Dear <strong>${recipientName}</strong>,
+          Dear <strong>${greetingName}</strong>,
         </p>
 
         <p style="font-size: 13.5px; color: #334155;">
-          Please be informed that Executive Management and the Incident Management Committee have concluded the review for incident <strong>${incRef}</strong> and formally issued the following directive:
+          ${introParagraph}
         </p>
 
         <div style="background: #f8fafc; border-left: 4px solid #146537; padding: 12px 16px; border-radius: 6px; margin: 16px 0;">

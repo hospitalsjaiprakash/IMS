@@ -404,6 +404,26 @@ exports.getIncidents = async (req, res) => {
           SELECT 1 FROM incident_responsible_employees ire
           WHERE ire.incident_id = i.id AND ire.employee_id = $${paramIdx}
         )
+        OR EXISTS (
+          SELECT 1
+          FROM incident_letters l_cc
+          WHERE l_cc.incident_id = i.id
+            AND l_cc.status IN ('approved', 'dispatched')
+            AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(COALESCE(l_cc.cc_recipients, '[]'::jsonb)) = 'array'
+                     THEN COALESCE(l_cc.cc_recipients, '[]'::jsonb)
+                     ELSE '[]'::jsonb END
+              ) AS cc_item
+              WHERE jsonb_typeof(cc_item) = 'object'
+                AND (
+                  cc_item->>'user_id' = $${paramIdx}::text
+                  OR cc_item->>'id' = $${paramIdx}::text
+                  OR ($${paramIdx + 1} <> '' AND LOWER(COALESCE(cc_item->>'employee_id', '')) = LOWER($${paramIdx + 1}))
+                )
+            )
+        )
         OR ${categoryReviewerPredicate(paramIdx)}
         OR EXISTS (
           SELECT 1 FROM incident_departments id2
@@ -414,8 +434,8 @@ exports.getIncidents = async (req, res) => {
           )
         )
       )`;
-      params.push(userId);
-      paramIdx++;
+      params.push(userId, String(req.user.employee_id || '').trim());
+      paramIdx += 2;
     } else if (role === 'employee' && viewMode === 'dept_reviews') {
       whereClause += ` AND (
         ${categoryReviewerPredicate(paramIdx)}

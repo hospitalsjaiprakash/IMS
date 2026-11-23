@@ -5,6 +5,7 @@ import { Modal, Spinner, Alert } from '../ui';
 import { trainersApi } from '../../api';
 import { getApiErrorMessage } from '../../utils/helpers';
 import ResponsibleEmployeePicker from './ResponsibleEmployeePicker';
+import CcEmployeePicker from './CcEmployeePicker';
 import toast from 'react-hot-toast';
 
 export default function TrainerAssignmentModal({
@@ -20,11 +21,15 @@ export default function TrainerAssignmentModal({
   const [topic, setTopic] = useState('');
   const [instructions, setInstructions] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  const [ccRecipients, setCcRecipients] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Pre-fill topic and trainees when modal opens
   useEffect(() => {
-    if (!show) return;
+    if (!show) {
+      setCcRecipients([]);
+      return;
+    }
 
     if (responsibleEmployees.length > 0) {
       // Prioritize trainees whose outcomes explicitly include training/counselling or have needs_training flag
@@ -95,7 +100,8 @@ export default function TrainerAssignmentModal({
         traineeName,
         traineeDepartment: traineeDept,
         traineeDesignation: traineeDesig,
-        traineeIds: selectedTraineeIds
+        traineeIds: selectedTraineeIds,
+        ccRecipients
       });
 
       toast.success('Trainer successfully assigned. Notification dispatched.');
@@ -255,6 +261,13 @@ export default function TrainerAssignmentModal({
             placeholder="Detail the failure points observed, mandatory practical demonstration requirements, or evaluation criteria..."
           />
         </div>
+
+        <CcEmployeePicker
+          label="Copy Forwarded To (CC Staff — Optional)"
+          selected={ccRecipients}
+          onChange={setCcRecipients}
+          excludeIds={selectedTrainer.flatMap(t => [t.id, t.employee_id, t.emp_id].filter(Boolean))}
+        />
       </div>
     </Modal>
   );

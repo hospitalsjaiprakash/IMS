@@ -8,6 +8,7 @@ import {
 import { Modal, Spinner, Alert, ConfirmDialog } from '../ui';
 import { trainersApi, attachmentsApi } from '../../api';
 import { formatDate, getApiErrorMessage } from '../../utils/helpers';
+import { formatCcDisplay } from './CcEmployeePicker';
 import toast from 'react-hot-toast';
 
 export default function TrainingProgressCard({
@@ -648,21 +649,26 @@ export default function TrainingProgressCard({
               </div>
 
               {/* CC List */}
-              {letterTarget.letter_cc_recipients && (
-                <div className="pt-3 border-t border-slate-100 text-[10px] text-slate-500 space-y-0.5">
-                  <div className="font-semibold text-slate-700">Carbon Copy (CC):</div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {(Array.isArray(letterTarget.letter_cc_recipients)
-                      ? letterTarget.letter_cc_recipients
-                      : typeof letterTarget.letter_cc_recipients === 'string'
-                        ? JSON.parse(letterTarget.letter_cc_recipients || '[]')
-                        : []
-                    ).map((cc, idx) => (
-                      <span key={idx}>• {cc.label || cc.name || cc}</span>
-                    ))}
+              {(() => {
+                let rawCc = [];
+                if (Array.isArray(letterTarget.letter_cc_recipients)) {
+                  rawCc = letterTarget.letter_cc_recipients;
+                } else if (typeof letterTarget.letter_cc_recipients === 'string') {
+                  try { rawCc = JSON.parse(letterTarget.letter_cc_recipients || '[]'); } catch { rawCc = []; }
+                }
+                const formattedCc = rawCc.map(formatCcDisplay).filter(Boolean);
+                if (formattedCc.length === 0) return null;
+                return (
+                  <div className="pt-3 border-t border-slate-100 text-[10px] text-slate-500 space-y-0.5">
+                    <div className="font-semibold text-slate-700">Carbon Copy (CC):</div>
+                    <ol className="list-decimal list-inside space-y-0.5 text-slate-600">
+                      {formattedCc.map((entry, idx) => (
+                        <li key={idx}>{entry}</li>
+                      ))}
+                    </ol>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           </Modal>
         );

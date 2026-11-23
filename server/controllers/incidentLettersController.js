@@ -3,7 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail } = require('../utils/emailService');
 const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeService');
-const { buildInitialLetterData, TEMPLATE_DEFINITIONS, formatDate } = require('../utils/letterTemplates');
+const { buildInitialLetterData, TEMPLATE_DEFINITIONS, formatDate, resolveCcRecipients, formatCcEntryDisplay } = require('../utils/letterTemplates');
 const { numberToWords } = require('../utils/numberToWords');
 const { recordEvent, recordLetterVersion, getNextRoundNo } = require('../utils/incidentEvents');
 const { generateLetterPdf } = require('../services/pdfService');
@@ -328,7 +328,7 @@ exports.saveLetterDraft = async (req, res) => {
     const finalTemplateType = normalizeTemplateType(templateType || letterType);
     const finalRefNumber = referenceNumber || refNumber || `JPHRC/IMC/${new Date().getFullYear()}/001`;
     const finalBodyText = bodyText || bodyContent || '';
-    const finalCcRecipients = ccRecipients || ccList || [];
+    const finalCcRecipients = await resolveCcRecipients(ccRecipients || ccList || [], query);
 
     if (!employeeId || !finalBodyText) {
       return res.status(400).json({ error: 'Please provide employeeId and letter body content.' });
@@ -931,13 +931,34 @@ exports.submitManagementLetterDecision = async (req, res) => {
           }
 
           for (const cc of ccList) {
-            if (cc && cc.email) {
+            if (!cc || typeof cc !== 'object') continue;
+            if (cc.email) {
+              const ccEmailHtml = buildEmailDispatchNoticeHtml({
+                letter,
+                incident,
+                portalUrl: incidentUrl,
+                ccRecipient: cc
+              });
               sendEmail(cc.email, {
                 subject: `[CC] ${letter.subject} - Ref: ${letter.reference_number}`,
-                html: emailHtml,
-                text: `[CARBON COPY]\n\n${letter.subject}\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nTo: ${letter.recipient_name}\n\nOfficial signed letter is attached.\nIncident URL: ${incidentUrl}`,
+                html: ccEmailHtml,
+                text: `[CARBON COPY]\n\nDear ${cc.name || cc.full_name || 'Colleague'},\n\nYou have been copied (CC) on the formal letter "${letter.subject}" issued to ${letter.recipient_name}.\n\nRef: ${letter.reference_number}\nDate: ${formatDate(letter.letter_date)}\n\nOfficial signed letter is attached.\nIncident URL: ${incidentUrl}`,
                 attachments: emailAttachments
               }).catch(err => console.error('[Letter Dispatch] CC email failed:', err.message));
+            }
+            let ccUserId = cc.user_id || null;
+            if (!ccUserId && cc.employee_id) {
+              const uLookup = await query('SELECT id FROM users WHERE LOWER(employee_id) = LOWER($1) AND is_active = TRUE LIMIT 1', [cc.employee_id]);
+              ccUserId = uLookup.rows[0]?.id || null;
+            }
+            if (ccUserId) {
+              await createNotification(
+                ccUserId,
+                id,
+                `Formal Letter Copy (CC) — ${letter.reference_number}`,
+                `You have been copied (CC) on formal letter "${letter.subject}" issued to ${letter.recipient_name} for incident ${incident.reference_id}.`,
+                'letter_cc'
+              ).catch(() => {});
             }
           }
         } catch (lErr) {
@@ -1014,7 +1035,9 @@ exports.submitManagementLetterDecision = async (req, res) => {
  */
 function buildLetterEmailHtml(letter, incident, incidentUrl, qrCodeDataUrl) {
   const ccRows = (Array.isArray(letter.cc_recipients) ? letter.cc_recipients : [])
-    .map((cc, i) => `<li style="margin-bottom: 4px;">${i + 1}. ${cc.label || cc.name || ''}</li>`)
+    .map(formatCcEntryDisplay)
+    .filter(Boolean)
+    .map((entry, i) => `<li style="margin-bottom: 4px;">${i + 1}. ${entry}</li>`)
     .join('');
 
   return `

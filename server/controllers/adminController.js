@@ -1293,6 +1293,7 @@ exports.searchEmployeeProfile = async (req, res) => {
            COALESCE(u.employee_id, m.employee_id) ILIKE $1 
            OR COALESCE(u.full_name, m.name) ILIKE $2
            OR COALESCE(u.department, m.department) ILIKE $3
+           OR COALESCE(u.designation, m.designation) ILIKE $3
          )
          ${statusCondition}
          ORDER BY COALESCE(u.employee_id, m.employee_id), COALESCE(u.full_name, m.name) ASC

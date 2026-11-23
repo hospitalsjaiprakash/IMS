@@ -7,6 +7,7 @@ process.env.NODE_ENV = 'test';
 
 const { app, server } = require('../index');
 const { query, pool } = require('../config/database');
+const { buildLetterHtml } = require('../templates/letterHtmlTemplate');
 
 function signTestJwt(user) {
   return jwt.sign(
@@ -43,6 +44,9 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
   let reviewerEmp;
   let reviewerEmpC;
   let reporterEmp;
+  let ccEmp;
+  let bystanderEmp;
+  let penIncId;
 
   let adminToken;
   let imcLeadToken;
@@ -51,6 +55,8 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
   let reviewerToken;
   let reviewerCToken;
   let reporterToken;
+  let ccEmpToken;
+  let bystanderToken;
 
   let catA;
   let catB;
@@ -72,21 +78,21 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     );
     savedAssigneesSnapshot = snapRes.rows;
 
-    const createUser = async ({ suffix, role = 'employee', isAdmin = false, isImc = false, isImcLead = false, isMgmt = false }) => {
+    const createUser = async ({ suffix, role = 'employee', designation = 'Executive', isAdmin = false, isImc = false, isImcLead = false, isMgmt = false }) => {
       const empId = `${tag}_${suffix}`;
       const email = `${empId.toLowerCase()}@test.jphrc.local`;
       await query(
         `INSERT INTO master_employees (employee_id, name, email, phone, department, designation, role, status)
-         VALUES ($1, $2, $3, '9876500000', 'Quality Control', 'Executive', $4, 'active')`,
-        [empId, `CatTest ${suffix} ${tag}`, email, role]
+         VALUES ($1, $2, $3, '9876500000', 'Quality Control', $5, $4, 'active')`,
+        [empId, `CatTest ${suffix} ${tag}`, email, role, designation]
       );
       createdMasterEmpIds.push(empId);
 
       const uRes = await query(
         `INSERT INTO users (employee_id, full_name, email, phone, department, designation, role, is_active, is_system_admin, is_imc_member, is_imc_lead, is_management_member)
-         VALUES ($1, $2, $3, '9876500000', 'Quality Control', 'Executive', $4, TRUE, $5, $6, $7, $8)
+         VALUES ($1, $2, $3, '9876500000', 'Quality Control', $9, $4, TRUE, $5, $6, $7, $8)
          RETURNING *`,
-        [empId, `CatTest ${suffix} ${tag}`, email, role, isAdmin, isImc, isImcLead, isMgmt]
+        [empId, `CatTest ${suffix} ${tag}`, email, role, isAdmin, isImc, isImcLead, isMgmt, designation]
       );
       createdUserIds.push(uRes.rows[0].id);
       return uRes.rows[0];
@@ -99,6 +105,8 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     reviewerEmp = await createUser({ suffix: 'REV', role: 'employee' });
     reviewerEmpC = await createUser({ suffix: 'REVC', role: 'employee' });
     reporterEmp = await createUser({ suffix: 'REP', role: 'employee' });
+    ccEmp = await createUser({ suffix: 'CCSTAFF', role: 'employee', designation: `Senior Medical Superintendent ${tag}` });
+    bystanderEmp = await createUser({ suffix: 'BYST', role: 'employee', designation: 'Front Desk Associate' });
 
     adminToken = signTestJwt(adminUser);
     imcLeadToken = signTestJwt(imcLeadUser);
@@ -107,6 +115,8 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     reviewerToken = signTestJwt(reviewerEmp);
     reviewerCToken = signTestJwt(reviewerEmpC);
     reporterToken = signTestJwt(reporterEmp);
+    ccEmpToken = signTestJwt(ccEmp);
+    bystanderToken = signTestJwt(bystanderEmp);
   });
 
   after(async () => {
@@ -123,6 +133,9 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     if (createdIncidentIds.length) {
       await query('DELETE FROM audit_logs WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM notifications WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
+      await query('DELETE FROM incident_letter_versions WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
+      await query('DELETE FROM incident_trainers WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
+      await query('DELETE FROM incident_letters WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM incident_events WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM incident_responsible_employees WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM feedbacks WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
@@ -462,7 +475,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
       })
       .expect(201);
 
-    const penIncId = createRes.body.incident.id;
+    penIncId = createRes.body.incident.id;
     createdIncidentIds.push(penIncId);
 
     // Category C reviewer submits feedback -> moves to with_imc
@@ -573,5 +586,216 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
 
     const evtRow = await query(`SELECT payload FROM incident_events WHERE incident_id = $1 AND event_type = 'MGMT_DECISION_AGREED' ORDER BY seq DESC LIMIT 1`, [penIncId]);
     assert.equal(Number(evtRow.rows[0]?.payload?.penalty_amount), 1500);
+  });
+
+  test('10. Letter defaults have no predefined CC; CC search by designation hydrates complete designation, prints on PDF, notifies & grants portal view access', async () => {
+    // 1. Search employee by complete designation
+    const searchRes = await request(app)
+      .get('/api/employee/search')
+      .query({ q: `Medical Superintendent ${tag}` })
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .expect(200);
+
+    const foundList = Array.isArray(searchRes.body) ? searchRes.body : (searchRes.body.employees || []);
+    assert.ok(foundList.some((e) => e.employee_id === ccEmp.employee_id), 'Employee search must match by designation');
+
+    // 2. Letter defaults must return empty ccRecipients (no predefined CC)
+    const defRes = await request(app)
+      .get(`/api/incidents/${penIncId}/letters/defaults`)
+      .query({ employeeId: reviewerEmp.id, templateType: 'warning_penalty_letter' })
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .expect(200);
+
+    assert.deepEqual(defRes.body.ccRecipients, [], 'Letter defaults must not include predefined CC recipients');
+
+    // 3. Save draft with directory employee (with spoofed email/designation) + raw free-text string
+    const draftRes = await request(app)
+      .post(`/api/incidents/${penIncId}/letters/draft`)
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .send({
+        employeeId: reviewerEmp.id,
+        recipientName: reviewerEmp.full_name,
+        recipientEmpNo: reviewerEmp.employee_id,
+        recipientEmail: reviewerEmp.email,
+        recipientDepartment: reviewerEmp.department,
+        recipientDesignation: reviewerEmp.designation,
+        templateType: 'warning_penalty_letter',
+        refNumber: `JPHRC/IMC/2026/CC-${tag}`,
+        letterDate: getLocalTodayIso(),
+        subject: `Warning & Penalty Letter ${tag}`,
+        bodyContent: `Formal disciplinary notice for ${tag}`,
+        penaltyAmount: 1500,
+        ccList: [
+          {
+            employee_id: ccEmp.employee_id,
+            name: 'Spoofed Name',
+            designation: 'Spoofed Desig',
+            email: 'spoofed@evil.invalid'
+          },
+          'Arbitrary Free Text Office'
+        ]
+      })
+      .expect(200);
+
+    const savedLetter = draftRes.body.letter;
+    assert.ok(savedLetter?.id);
+    const savedCc = Array.isArray(savedLetter.cc_recipients)
+      ? savedLetter.cc_recipients
+      : JSON.parse(savedLetter.cc_recipients || '[]');
+
+    assert.equal(savedCc.length, 1, 'Free-text CC strings must be ignored and only directory employee kept');
+    assert.equal(savedCc[0].employee_id, ccEmp.employee_id);
+    assert.equal(savedCc[0].name, ccEmp.full_name);
+    assert.equal(savedCc[0].designation, ccEmp.designation);
+    assert.equal(savedCc[0].email, ccEmp.email, 'Server must hydrate authoritative directory email');
+    assert.equal(savedCc[0].label, `${ccEmp.full_name} — ${ccEmp.designation}`);
+
+    // 4. Verify letter HTML rendering includes Full Name — Complete Designation & hides section when empty
+    const htmlWithCc = buildLetterHtml({
+      letter: savedLetter,
+      incident: { id: penIncId, reference_id: `JPHRC/IMS/2026/${tag}` },
+      approvers: { draftedByName: imcLeadUser.full_name, approvedByName: mgmtUser.full_name }
+    });
+    assert.ok(htmlWithCc.includes(`${ccEmp.full_name} — ${ccEmp.designation}`));
+    assert.equal(htmlWithCc.includes('(Member)'), false);
+
+    const htmlNoCc = buildLetterHtml({
+      letter: { ...savedLetter, cc_recipients: [] },
+      incident: { id: penIncId, reference_id: `JPHRC/IMS/2026/${tag}` }
+    });
+    assert.equal(htmlNoCc.includes('Copy Communicated for Information & Record To:'), false);
+
+    // 5. Submit to management and approve -> CC employee gets in-app notification & portal access to approved letter
+    await request(app)
+      .post(`/api/incidents/${penIncId}/letters/submit-to-management`)
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .expect(200);
+
+    await request(app)
+      .post(`/api/incidents/${penIncId}/letters/management-decision`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({ action: 'APPROVE' })
+      .expect(200);
+
+    const ccNotif = await query(
+      `SELECT id, type FROM notifications WHERE incident_id = $1 AND user_id = $2 AND type = 'letter_cc'`,
+      [penIncId, ccEmp.id]
+    );
+    assert.ok(ccNotif.rows.length >= 1, 'CC employee must receive in-app notification on letter dispatch');
+
+    // CC employee can open incident, see the approved letter, and fetch its PDF
+    await request(app)
+      .get(`/api/incidents/${penIncId}`)
+      .set('Authorization', `Bearer ${ccEmpToken}`)
+      .expect(200);
+
+    const ccLettersRes = await request(app)
+      .get(`/api/incidents/${penIncId}/letters`)
+      .set('Authorization', `Bearer ${ccEmpToken}`)
+      .expect(200);
+    assert.ok(ccLettersRes.body.some((l) => l.id === savedLetter.id), 'CC employee must be able to view approved CC letter');
+
+    const ccPdfRes = await request(app)
+      .get(`/api/incidents/${penIncId}/letters/${savedLetter.id}/pdf`)
+      .set('Authorization', `Bearer ${ccEmpToken}`)
+      .expect(200);
+    assert.equal(ccPdfRes.headers['content-type'], 'application/pdf');
+
+    // Unrelated bystander employee remains blocked (403)
+    await request(app)
+      .get(`/api/incidents/${penIncId}`)
+      .set('Authorization', `Bearer ${bystanderToken}`)
+      .expect(403);
+    await request(app)
+      .get(`/api/incidents/${penIncId}/letters/${savedLetter.id}/pdf`)
+      .set('Authorization', `Bearer ${bystanderToken}`)
+      .expect(403);
+  });
+
+  test('11. Trainer appointment letter defaults to empty CC and hydrates selected CC staff with complete designation', async () => {
+    // Create incident and advance through IMC + Management with Training mandate
+    const createRes = await request(app)
+      .post('/api/incidents')
+      .set('Authorization', `Bearer ${reporterToken}`)
+      .send({
+        incidentCategories: [catC.name],
+        incidentCategory: catC.name,
+        incidentType: 'Trainer CC Verification Case',
+        incidentDate: getLocalTodayIso(),
+        incidentTime: '14:15',
+        occurredTo: 'Patient',
+        description: `Trainer CC verification ${tag}`,
+        hasResponsiblePerson: true,
+        responsiblePersonName: reviewerEmp.full_name
+      })
+      .expect(201);
+
+    const trIncId = createRes.body.incident.id;
+    createdIncidentIds.push(trIncId);
+
+    await request(app)
+      .post(`/api/incidents/${trIncId}/hod-feedback`)
+      .set('Authorization', `Bearer ${reviewerCToken}`)
+      .send({ feedbackText: `Category C review for trainer test ${tag}` })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/incidents/${trIncId}/imc-feedback`)
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .send({
+        feedbackText: `Training required ${tag}`,
+        forwardToMd: true,
+        severity: 'Minor',
+        proposedOutcome: 'Training',
+        responsibleEmployees: JSON.stringify([
+          {
+            id: reviewerEmp.id,
+            employee_id: reviewerEmp.employee_id,
+            full_name: reviewerEmp.full_name,
+            outcomes: ['Training'],
+            needs_training: true
+          }
+        ])
+      })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/incidents/${trIncId}/management-action`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({
+        decision: 'AGREE',
+        notes: 'Approved training mandate',
+        responsibleEmployees: JSON.stringify([
+          {
+            id: reviewerEmp.id,
+            employee_id: reviewerEmp.employee_id,
+            full_name: reviewerEmp.full_name,
+            outcomes: ['Training'],
+            needs_training: true
+          }
+        ])
+      })
+      .expect(200);
+
+    const assignRes = await request(app)
+      .post(`/api/incidents/${trIncId}/trainers/assign`)
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .send({
+        trainerId: imcMemberUser.id,
+        trainingTopic: `Safety Protocol ${tag}`,
+        traineeIds: [reviewerEmp.id],
+        ccRecipients: [{ employee_id: ccEmp.employee_id }]
+      })
+      .expect(200);
+
+    const apptLetter = assignRes.body.assignment?.appointment_letter;
+    assert.ok(apptLetter?.id);
+    const apptCc = Array.isArray(apptLetter.cc_recipients)
+      ? apptLetter.cc_recipients
+      : JSON.parse(apptLetter.cc_recipients || '[]');
+    assert.equal(apptCc.length, 1, 'Trainer appointment letter must only contain selected CC staff (no predefined CC)');
+    assert.equal(apptCc[0].employee_id, ccEmp.employee_id);
+    assert.equal(apptCc[0].designation, ccEmp.designation);
+    assert.equal(apptCc[0].label, `${ccEmp.full_name} — ${ccEmp.designation}`);
   });
 });

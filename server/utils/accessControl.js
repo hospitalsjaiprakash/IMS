@@ -101,6 +101,20 @@ async function canUserAccessIncident(user, incidentId) {
          l.employee_id = $2::text
          OR ($3 <> '' AND LOWER(l.employee_id) = LOWER($3))
          OR ($3 <> '' AND LOWER(COALESCE(l.recipient_emp_no, '')) = LOWER($3))
+         OR EXISTS (
+           SELECT 1
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(COALESCE(l.cc_recipients, '[]'::jsonb)) = 'array'
+                  THEN COALESCE(l.cc_recipients, '[]'::jsonb)
+                  ELSE '[]'::jsonb END
+           ) AS cc
+           WHERE jsonb_typeof(cc) = 'object'
+             AND (
+               cc->>'user_id' = $2::text
+               OR cc->>'id' = $2::text
+               OR ($3 <> '' AND LOWER(COALESCE(cc->>'employee_id', '')) = LOWER($3))
+             )
+         )
        )
      LIMIT 1`,
     [incident.id, userId, empCode]
@@ -183,6 +197,22 @@ function canNonPrivilegedUserViewLetter(user, letter, managedDeptsSet = new Set(
     if (String(letter.recipient_emp_no || '').trim().toLowerCase() === empCodeLower) return true;
     if (String(letter.employee_code || '').trim().toLowerCase() === empCodeLower) return true;
     if (String(letter.user_employee_id || '').trim().toLowerCase() === empCodeLower) return true;
+  }
+
+  // CC recipients on approved/dispatched letters are authorized to view that letter
+  let ccEntries = letter.cc_recipients ?? letter.cc_list ?? [];
+  if (typeof ccEntries === 'string') {
+    try { ccEntries = JSON.parse(ccEntries); } catch (_) { ccEntries = []; }
+  }
+  if (Array.isArray(ccEntries)) {
+    const isCcRecipient = ccEntries.some((cc) => {
+      if (!cc || typeof cc !== 'object') return false;
+      if (cc.user_id && String(cc.user_id) === userIdStr) return true;
+      if (cc.id && String(cc.id) === userIdStr) return true;
+      if (empCodeLower && cc.employee_id && String(cc.employee_id).trim().toLowerCase() === empCodeLower) return true;
+      return false;
+    });
+    if (isCcRecipient) return true;
   }
 
   if (managedDeptsSet && managedDeptsSet.size > 0) {

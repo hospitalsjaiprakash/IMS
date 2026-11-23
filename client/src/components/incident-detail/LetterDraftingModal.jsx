@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  FileText, Save, X, RefreshCw, ShieldAlert, Sparkles, Eye, User, GraduationCap
+  FileText, Save, RefreshCw, ShieldAlert, Sparkles, Eye, User, GraduationCap
 } from 'lucide-react';
 import { Modal, Spinner } from '../ui';
 import { lettersApi } from '../../api';
 import { convertNumberToWords, parseProposedOutcomes, formatDate, getApiErrorMessage } from '../../utils/helpers';
 import HospitalLetterhead from './HospitalLetterhead';
+import CcEmployeePicker from './CcEmployeePicker';
 import toast from 'react-hot-toast';
 
 const LETTER_TYPES = [
@@ -41,7 +42,6 @@ export default function LetterDraftingModal({
   const [recipientDepartment, setRecipientDepartment] = useState('');
   const [recipientDesignation, setRecipientDesignation] = useState('');
   const [ccList, setCcList] = useState([]);
-  const [customCc, setCustomCc] = useState('');
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [incidentUrl, setIncidentUrl] = useState('');
   const [activeTab, setActiveTab] = useState('editor'); // 'editor' | 'preview'
@@ -91,7 +91,6 @@ export default function LetterDraftingModal({
         setRecipientDepartment(def.recipientDepartment || '');
         setRecipientDesignation(def.recipientDesignation || '');
 
-        setCcList(def.ccRecipients || def.ccList || []);
         if (def.qrCodeUrl || def.qrCodeData) {
           setQrCodeUrl(def.qrCodeUrl || def.qrCodeData);
         }
@@ -150,6 +149,7 @@ export default function LetterDraftingModal({
       else if (outJoined.includes('penalty') || outJoined.includes('deduction')) defaultType = 'warning_penalty_letter';
 
       setLetterType(defaultType);
+      setCcList([]);
 
       let empPenalty = null;
       if (targetEmpObj.penalty_amount) {
@@ -230,18 +230,6 @@ export default function LetterDraftingModal({
       setBodyContent(prev => `${prev}\n\nFurther, as recommended by the Incident Management Committee and approved by Management, ${replacement}.`);
       toast.success('Added deduction clause into letter text.');
     }
-  };
-
-  const handleAddCustomCc = (e) => {
-    e.preventDefault();
-    if (customCc.trim() && !ccList.includes(customCc.trim())) {
-      setCcList([...ccList, customCc.trim()]);
-      setCustomCc('');
-    }
-  };
-
-  const handleRemoveCc = (item) => {
-    setCcList(ccList.filter(c => c !== item));
   };
 
   const selectedEmployeeObj = responsibleEmployees.find(
@@ -675,50 +663,18 @@ export default function LetterDraftingModal({
               />
             </div>
 
-            {/* CC List Management */}
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <label className="field-label text-xs">Copy Forwarded To (CC Recipients)</label>
-              <div className="flex flex-wrap gap-1.5">
-                {ccList.map((cc, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-[11px] text-slate-700 shadow-2xs"
-                  >
-                    {typeof cc === 'object' ? (cc.label || cc.name || JSON.stringify(cc)) : cc}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveCc(cc)}
-                      className="text-slate-400 hover:text-rose-600 transition-colors ml-1"
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-
-              <div className="flex gap-2 mt-2">
-                <input
-                  type="text"
-                  value={customCc}
-                  onChange={e => setCustomCc(e.target.value)}
-                  placeholder="Add another CC (e.g. Quality Head, Medical Superintendent, Accounts)…"
-                  className="input text-xs flex-1"
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddCustomCc(e);
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={handleAddCustomCc}
-                  className="btn-secondary text-xs px-3"
-                >
-                  Add CC
-                </button>
-              </div>
-            </div>
+            {/* CC List Management — Active Employee Search Only */}
+            <CcEmployeePicker
+              selected={ccList}
+              onChange={setCcList}
+              excludeIds={[
+                selectedEmpId,
+                recipientEmpNo,
+                selectedEmployeeObj.employee_id,
+                selectedEmployeeObj.emp_id,
+                selectedEmployeeObj.id,
+              ]}
+            />
           </div>
         )}
 
