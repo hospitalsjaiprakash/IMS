@@ -865,9 +865,12 @@ exports.getIncident = async (req, res) => {
              AND f.role = 'hod'
              AND (
                f.category_id = ic.id
-               OR EXISTS (
-                 SELECT 1 FROM category_feedback_assignees cfa
-                 WHERE cfa.category_id = ic.id AND cfa.user_id = f.author_id AND cfa.is_active = TRUE
+               OR (
+                 f.category_id IS NULL
+                 AND EXISTS (
+                   SELECT 1 FROM category_feedback_assignees cfa
+                   WHERE cfa.category_id = ic.id AND cfa.user_id = f.author_id AND cfa.is_active = TRUE
+                 )
                )
              )
          ) AS has_feedback
@@ -922,16 +925,11 @@ exports.getIncident = async (req, res) => {
     const allHodFeedbackSubmitted = pendingHodDepartments.length === 0;
     const hasImcFeedback = feedbacks.rows.some(f => f.role === 'imc');
 
-    // Check if current user is assigned to a category/department that has already submitted feedback
-    let userHodDeptSubmitted = false;
+    // Check if current user has submitted feedback for ALL their assigned categories / legacy departments
     const userAssignedCats = await getUserAssignedCategoriesForIncident(req.user, incident.id);
-    if (userAssignedCats.length > 0) {
-      const myCatIds = new Set(userAssignedCats.map(c => c.id));
-      const matchedCats = cats.rows.filter(c => myCatIds.has(c.id));
-      if (matchedCats.length > 0) {
-        userHodDeptSubmitted = matchedCats.every(c => c.has_feedback);
-      }
-    }
+    const myCatIds = new Set(userAssignedCats.map(c => c.id));
+    const matchedCats = cats.rows.filter(c => myCatIds.has(c.id));
+
     const userDept = (req.user.department || '').trim().toLowerCase();
     const reviewerDeptsRes = await query(
       `SELECT department_id FROM department_reviewers WHERE user_id = $1 AND is_active = true`,
@@ -945,9 +943,11 @@ exports.getIncident = async (req, res) => {
       reviewerDeptIds.has(d.id) ||
       (d.name && userDept && d.name.toLowerCase() === userDept)
     );
-    if (myDept) {
-      userHodDeptSubmitted = userHodDeptSubmitted || !!myDept.has_feedback;
-    }
+
+    const pendingUserCats = matchedCats.filter(c => !c.has_feedback);
+    const hasPendingLegacyDept = Boolean(myDept && !myDept.has_feedback);
+    const hasAnyAssignedScope = matchedCats.length > 0 || Boolean(myDept);
+    const userHodDeptSubmitted = hasAnyAssignedScope && pendingUserCats.length === 0 && !hasPendingLegacyDept;
 
     // Get attachments
     const attachments = await query(
@@ -1076,7 +1076,12 @@ exports.getIncident = async (req, res) => {
        )`,
        [incident.id, userId]
     );
-    isTargetHod = targetHodCheck.rows.length > 0 || (incident.redirect_requested_by_user_id === userId);
+    const isRejectedRedirectRequester = Boolean(
+      incident.redirect_rejected_at &&
+      incident.status !== 'redirect_requested' &&
+      incident.redirect_requested_by_user_id === userId
+    );
+    isTargetHod = targetHodCheck.rows.length > 0 || isRejectedRedirectRequester;
 
     // Track reviewer first view
     if ((role === 'hod' || isTargetHod) && !incident.hod_first_viewed_at) {

@@ -85,12 +85,17 @@ export function ManagementDecisionModal({
     if (!show) {
       setDecision('AGREE');
     } else {
+      const imcDefaults = parseProposedOutcomes(incidentProposedOutcome);
       if (!mdProposedOutcome && incidentProposedOutcome) {
         setMdProposedOutcome(incidentProposedOutcome);
       }
       if (setMdResponsibleEmployees) {
         if (responsibleEmployees && responsibleEmployees.length > 0) {
-          setMdResponsibleEmployees(JSON.parse(JSON.stringify(responsibleEmployees)));
+          const cloned = JSON.parse(JSON.stringify(responsibleEmployees)).map(emp => ({
+            ...emp,
+            outcomes: Array.isArray(emp.outcomes) && emp.outcomes.length > 0 ? emp.outcomes : [...imcDefaults],
+          }));
+          setMdResponsibleEmployees(cloned);
         } else if (!mdResponsibleEmployees) {
           setMdResponsibleEmployees([]);
         }
@@ -98,26 +103,37 @@ export function ManagementDecisionModal({
     }
   }, [show]);
 
+  const isPenaltyOutcomeItem = (o) => {
+    const lower = String(o || '').toLowerCase();
+    return lower.includes('penalty') || lower.includes('deduction');
+  };
+
   const effectiveOutcome = (decision === 'DISAGREE_MODIFY' ? mdProposedOutcome : incidentProposedOutcome) || '';
+  const effectiveOutcomeList = parseProposedOutcomes(effectiveOutcome);
   const allCurrentOutcomes = [
     effectiveOutcome,
     ...(mdResponsibleEmployees || []).flatMap(e => e.outcomes || [])
   ].join(' ').toLowerCase();
 
   const employeesWithPenalty = useMemo(() => {
-    return (mdResponsibleEmployees || []).filter(e =>
-      (e.outcomes || []).some(o => o.toLowerCase().includes('penalty'))
-    );
-  }, [mdResponsibleEmployees]);
+    return (mdResponsibleEmployees || []).filter(e => {
+      const empOutcomes = Array.isArray(e.outcomes) && e.outcomes.length > 0 ? e.outcomes : effectiveOutcomeList;
+      return empOutcomes.some(isPenaltyOutcomeItem);
+    });
+  }, [mdResponsibleEmployees, effectiveOutcome]);
 
   const hasEmployeePenalties = employeesWithPenalty.length > 0;
   const totalEmployeePenalty = useMemo(() => {
-    return employeesWithPenalty.reduce((sum, e) => sum + (Number(e.penalty_amount) || 0), 0);
+    return employeesWithPenalty.reduce((sum, e) => sum + (Number(e.penalty_amount) > 0 ? Number(e.penalty_amount) : 0), 0);
   }, [employeesWithPenalty]);
 
-  // Keep penaltyAmount synchronized with employee penalties when specified
+  const missingEmployeePenalties = useMemo(() => {
+    return employeesWithPenalty.filter(e => !(Number(e.penalty_amount) > 0));
+  }, [employeesWithPenalty]);
+
+  // Keep incident-level penaltyAmount synchronized with per-employee penalties in BOTH AGREE and DISAGREE_MODIFY modes
   useEffect(() => {
-    if (decision === 'DISAGREE_MODIFY' && hasEmployeePenalties) {
+    if (['AGREE', 'DISAGREE_MODIFY'].includes(decision) && hasEmployeePenalties) {
       if (setPenaltyAmount && Number(penaltyAmount) !== totalEmployeePenalty) {
         setPenaltyAmount(totalEmployeePenalty > 0 ? String(totalEmployeePenalty) : '');
       }
@@ -125,6 +141,13 @@ export function ManagementDecisionModal({
   }, [decision, hasEmployeePenalties, totalEmployeePenalty]);
 
   const isPenaltyOutcome = allCurrentOutcomes.includes('penalty') || allCurrentOutcomes.includes('deduction');
+  const isPenaltyValid =
+    !['AGREE', 'DISAGREE_MODIFY'].includes(decision) ||
+    !isPenaltyOutcome ||
+    (hasEmployeePenalties
+      ? missingEmployeePenalties.length === 0
+      : Number(penaltyAmount) > 0);
+
   const isLetterOutcome = [
     'warning', 'advisory', 'suggestion', 'penalty', 'salary deduction',
     'suspension', 'transfer', 'demotion', 'termination', 'disciplinary'
@@ -134,6 +157,17 @@ export function ManagementDecisionModal({
 
   const penaltyWordsPreview = convertNumberToWords(hasEmployeePenalties ? totalEmployeePenalty : penaltyAmount);
 
+  const handleUpdateAgreedEmployeePenalty = (empKey, rawValue) => {
+    if (!setMdResponsibleEmployees) return;
+    const numericVal = rawValue === '' ? null : Number(rawValue);
+    setMdResponsibleEmployees((mdResponsibleEmployees || []).map(emp => {
+      if ((emp.id || emp.employee_id) === empKey) {
+        return { ...emp, penalty_amount: numericVal };
+      }
+      return emp;
+    }));
+  };
+
   return (
     <Modal open={show} onClose={onClose} title="Executive Management Decision & Governance" size="lg"
       footer={<>
@@ -142,6 +176,7 @@ export function ManagementDecisionModal({
           onClick={() => mutate(decision)}
           disabled={
             isPending ||
+            !isPenaltyValid ||
             (['DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision)
               ? !mdActions?.trim()
               : (decision === 'DISAGREE_MODIFY' && parseProposedOutcomes(mdProposedOutcome).length === 0))
@@ -166,7 +201,8 @@ export function ManagementDecisionModal({
         {decision === 'AGREE' && (() => {
           const imcOutcomesList = parseProposedOutcomes(incidentProposedOutcome);
           const isNoAction = imcOutcomesList.length === 0 || imcOutcomesList.some(o => o.toLowerCase() === 'no action');
-          const hasStaff = responsibleEmployees && responsibleEmployees.length > 0;
+          const agreedStaffList = (mdResponsibleEmployees && mdResponsibleEmployees.length > 0) ? mdResponsibleEmployees : responsibleEmployees;
+          const hasStaff = agreedStaffList && agreedStaffList.length > 0;
 
           if (isNoAction) {
             return (
@@ -209,49 +245,94 @@ export function ManagementDecisionModal({
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-xs font-bold text-slate-800 block">
-                        Personnel & Assigned Outcomes ({responsibleEmployees.length})
+                        Personnel & Assigned Outcomes ({agreedStaffList.length})
                       </span>
                       <p className="text-[11px] text-slate-500">
                         Agreed with IMC recommendations. To adjust personnel or change outcomes, select &quot;Modify Proposed Outcomes&quot; above.
                       </p>
                     </div>
                     <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full shrink-0">
-                      {responsibleEmployees.length} staff
+                      {agreedStaffList.length} staff
                     </span>
                   </div>
 
-                  <div className="space-y-1.5">
-                    {responsibleEmployees.map((emp) => {
+                  <div className="space-y-2">
+                    {agreedStaffList.map((emp) => {
+                      const empKey = emp.id || emp.employee_id;
                       const empCode = emp.emp_id || emp.employee_code || emp.employee_no || (emp.employee_id && emp.employee_id.length < 20 ? emp.employee_id : '') || '';
                       const empOutcomes = Array.isArray(emp.outcomes) && emp.outcomes.length > 0 ? emp.outcomes : imcOutcomesList;
+                      const empHasPenalty = empOutcomes.some(isPenaltyOutcomeItem);
+                      const empPenaltyNum = Number(emp.penalty_amount);
+                      const empPenaltyValid = Number.isFinite(empPenaltyNum) && empPenaltyNum > 0;
+                      const empPenaltyWords = empPenaltyValid ? convertNumberToWords(empPenaltyNum) : '';
+
                       return (
                         <div
-                          key={emp.id || emp.employee_id}
-                          className="p-2.5 bg-white rounded-lg border border-slate-200 flex items-center justify-between gap-3 text-xs shadow-2xs"
+                          key={empKey}
+                          className="p-2.5 bg-white rounded-lg border border-slate-200 space-y-2.5 text-xs shadow-2xs"
                         >
-                          <div className="min-w-0">
-                            <div className="font-bold text-slate-800 flex items-center gap-1.5 truncate">
-                              <span>{emp.full_name || emp.name}</span>
-                              {empCode && (
-                                <span className="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
-                                  {empCode}
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-800 flex items-center gap-1.5 truncate">
+                                <span>{emp.full_name || emp.name}</span>
+                                {empCode && (
+                                  <span className="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                                    {empCode}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-500 truncate">
+                                {[emp.designation, emp.department || emp.department_name].filter(Boolean).join(' • ')}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1 items-center justify-end shrink-0">
+                              {empOutcomes.map((out, idx) => (
+                                <span
+                                  key={idx}
+                                  className="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                >
+                                  {out}
                                 </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {empHasPenalty && (
+                            <div className="p-2.5 bg-rose-50/70 border border-rose-200 rounded-lg space-y-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <label className="text-[11px] font-bold text-rose-900 flex items-center gap-1 mb-0">
+                                  <DollarSign size={13} className="text-rose-600" />
+                                  Required Penalty Amount (₹) <span className="text-red-600">*</span>
+                                </label>
+                                <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded font-medium">
+                                  Mandatory before approval
+                                </span>
+                              </div>
+                              <input
+                                type="number"
+                                min="1"
+                                step="100"
+                                required
+                                value={emp.penalty_amount ?? ''}
+                                onChange={(e) => handleUpdateAgreedEmployeePenalty(empKey, e.target.value)}
+                                placeholder="Enter penalty amount in INR (e.g. 1000)..."
+                                className={`w-full text-xs bg-white border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 font-semibold ${
+                                  !empPenaltyValid
+                                    ? 'border-rose-400 focus:ring-rose-500'
+                                    : 'border-rose-300 focus:ring-rose-400'
+                                }`}
+                              />
+                              {empPenaltyValid ? (
+                                <p className="text-[11px] text-rose-800 italic font-medium">
+                                  Amount in words: {empPenaltyWords}
+                                </p>
+                              ) : (
+                                <p className="text-[11px] text-rose-700 font-medium">
+                                  Enter a valid penalty amount greater than ₹0 for {emp.full_name || emp.name}.
+                                </p>
                               )}
                             </div>
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {[emp.designation, emp.department || emp.department_name].filter(Boolean).join(' • ')}
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-1 items-center justify-end shrink-0">
-                            {empOutcomes.map((out, idx) => (
-                              <span
-                                key={idx}
-                                className="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
-                              >
-                                {out}
-                              </span>
-                            ))}
-                          </div>
+                          )}
                         </div>
                       );
                     })}
@@ -342,10 +423,12 @@ export function ManagementDecisionModal({
                     </div>
                     <div>
                       <div className="font-bold text-rose-950">
-                        Disciplinary Penalty Deductions: ₹{totalEmployeePenalty.toLocaleString('en-IN')}
+                        Total Disciplinary Penalty Deductions: ₹{totalEmployeePenalty.toLocaleString('en-IN')}
                       </div>
-                      <div className="text-[11px] text-rose-700 italic">
-                        {totalEmployeePenalty > 0 ? penaltyWordsPreview : 'Enter deduction amounts on employee card(s) above'}
+                      <div className={`text-[11px] ${missingEmployeePenalties.length > 0 ? 'text-rose-700 font-semibold' : 'text-rose-700 italic'}`}>
+                        {missingEmployeePenalties.length > 0
+                          ? `Required: Enter a penalty amount (> ₹0) for ${missingEmployeePenalties.length} remaining staff card(s) above before submitting.`
+                          : penaltyWordsPreview}
                       </div>
                     </div>
                   </div>
@@ -360,21 +443,26 @@ export function ManagementDecisionModal({
                       Penalty Deduction Amount (₹)
                     </label>
                     <span className="text-[10px] text-rose-700 font-semibold bg-rose-100 px-2 py-0.5 rounded">
-                      Management Discretion
+                      Required before decision
                     </span>
                   </div>
                   <input
                     type="number"
-                    min="0"
+                    min="1"
                     step="100"
+                    required
                     value={penaltyAmount}
                     onChange={e => setPenaltyAmount && setPenaltyAmount(e.target.value)}
                     placeholder="Enter amount in Rupees (e.g. 1000)..."
-                    className="input text-xs font-bold"
+                    className={`input text-xs font-bold ${!(Number(penaltyAmount) > 0) ? 'border-rose-400' : ''}`}
                   />
-                  {penaltyWordsPreview && (
+                  {Number(penaltyAmount) > 0 && penaltyWordsPreview ? (
                     <p className="text-xs font-semibold text-rose-800 italic">
                       Amount in words: {penaltyWordsPreview}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] font-medium text-rose-700">
+                      Enter a valid financial penalty amount greater than ₹0 to enable submission.
                     </p>
                   )}
                 </div>

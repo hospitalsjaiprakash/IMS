@@ -232,7 +232,7 @@ export default function ResponsibleEmployeePicker({
                         <div className="flex items-center justify-between">
                           <label className="text-[11px] font-bold text-rose-900 flex items-center gap-1 mb-0">
                             <DollarSign size={13} className="text-rose-600" />
-                            Individual Penalty Deduction Amount (₹)
+                            Individual Penalty Deduction Amount (₹) <span className="text-red-600">*</span>
                           </label>
                           <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded font-medium">
                             Specific to {emp.full_name || emp.name}
@@ -240,20 +240,29 @@ export default function ResponsibleEmployeePicker({
                         </div>
                         <input
                           type="number"
-                          min="0"
+                          min="1"
                           step="100"
-                          value={emp.penalty_amount || ''}
+                          required
+                          value={emp.penalty_amount ?? ''}
                           disabled={disabled}
                           onChange={(e) => {
                             const val = e.target.value === '' ? null : Number(e.target.value);
                             handleUpdateEmployee(key, { penalty_amount: val });
                           }}
                           placeholder="Enter penalty amount in INR (e.g. 1000)..."
-                          className="w-full text-xs bg-white border border-rose-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-rose-400 font-semibold"
+                          className={`w-full text-xs bg-white border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 font-semibold ${
+                            !(Number(emp.penalty_amount) > 0)
+                              ? 'border-rose-400 focus:ring-rose-500'
+                              : 'border-rose-300 focus:ring-rose-400'
+                          }`}
                         />
-                        {penaltyWords && (
+                        {Number(emp.penalty_amount) > 0 && penaltyWords ? (
                           <p className="text-[11px] text-rose-800 italic font-medium">
                             Amount in words: {penaltyWords}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-rose-700 font-medium">
+                            Required: enter a penalty amount greater than ₹0.
                           </p>
                         )}
                       </div>

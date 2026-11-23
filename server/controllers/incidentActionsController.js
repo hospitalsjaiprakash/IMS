@@ -171,7 +171,8 @@ exports.requestRedirect = async (req, res) => {
       LIMIT 1
     `, [id, req.user.id]);
 
-    if (!isPrivilegedRole(req.user) && assignedCategories.length === 0 && incidentDeptRes.rows.length === 0) {
+    const isSystemAdmin = Boolean(req.user.role === 'system_admin' || req.user.is_system_admin);
+    if (!isSystemAdmin && assignedCategories.length === 0 && incidentDeptRes.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Access denied: You are not an assigned reviewer for this incident.' });
     }
@@ -330,6 +331,9 @@ exports.approveRedirect = async (req, res) => {
         );
       }
 
+      // Clear any stale legacy department links once redirected onto category links
+      await client.query('DELETE FROM incident_departments WHERE incident_id = $1', [id]);
+
       const finalNamesRes = await client.query(
         `SELECT name FROM incident_categories WHERE id = ANY($1::int[]) ORDER BY name ASC`,
         [finalCatIds]
@@ -337,17 +341,51 @@ exports.approveRedirect = async (req, res) => {
       const targetNames = targetCats.map(c => c.name);
       const updatedCategoryLabel = finalNamesRes.rows.map(r => r.name).join(', ') || targetNames.join(', ');
 
+      const catCompletionRes = await client.query(
+        `SELECT
+           COUNT(DISTINCT ic.id) FILTER (
+             WHERE EXISTS (
+               SELECT 1 FROM feedbacks f
+               WHERE f.incident_id = $1
+                 AND f.role = 'hod'
+                 AND (f.category_id = ic.id OR (f.category_id IS NULL AND f.author_id = cfa.user_id))
+             )
+           )::int AS responded_count,
+           COUNT(DISTINCT ic.id) FILTER (
+             WHERE NOT EXISTS (
+               SELECT 1 FROM feedbacks f
+               WHERE f.incident_id = $1
+                 AND f.role = 'hod'
+                 AND (f.category_id = ic.id OR (f.category_id IS NULL AND f.author_id = cfa.user_id))
+             )
+           )::int AS pending_count
+         FROM incident_category_links icl
+         JOIN incident_categories ic ON ic.id = icl.category_id
+         JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
+         JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
+         WHERE icl.incident_id = $1`,
+        [id]
+      );
+      const respondedCount = catCompletionRes.rows[0]?.responded_count || 0;
+      const pendingCount = catCompletionRes.rows[0]?.pending_count || 0;
+      const resolvedNextStatus = (respondedCount > 0 && pendingCount === 0)
+        ? (incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_imc')
+        : newStatus;
+
       await client.query(
         `UPDATE incidents SET
            incident_category = $1,
            status = $2,
            redirect_reason = NULL,
            redirect_requested_at = NULL,
+           redirect_requested_by_user_id = NULL,
+           redirect_requested_by_category = NULL,
+           redirect_requested_by_dept = NULL,
            redirect_rejected_reason = NULL,
            redirect_rejected_at = NULL,
            updated_at = NOW()
          WHERE id = $3`,
-        [updatedCategoryLabel, newStatus, id]
+        [updatedCategoryLabel, resolvedNextStatus, id]
       );
 
       await recordEvent(client, {
@@ -355,7 +393,7 @@ exports.approveRedirect = async (req, res) => {
         eventType: 'REDIRECT_APPROVED',
         actor: req.user,
         statusBefore: incident.status,
-        statusAfter: newStatus,
+        statusAfter: resolvedNextStatus,
         title: 'Category Redirection Approved',
         summary: `IMC Convenor redirected incident to: ${targetNames.join(', ')}`,
         payload: {
