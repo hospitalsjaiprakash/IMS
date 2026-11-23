@@ -3,7 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
 const { recordEvent } = require('../utils/incidentEvents');
-const { isPrivilegedRole, getUserManagedDepartmentsForIncident } = require('../utils/accessControl');
+const { isPrivilegedRole, getUserAssignedCategoriesForIncident, getUserManagedDepartmentsForIncident } = require('../utils/accessControl');
 
 // ── UPDATE INCIDENT (employee, while submitted) ────────────────────────────
 exports.updateIncident = async (req, res) => {
@@ -69,11 +69,14 @@ exports.updateIncident = async (req, res) => {
   }
 };
 
-// ── ESCALATE PRIORITY ────────────────────────────────────────────────────
+// ── ESCALATE PRIORITY (IMC Convenor / Lead Only) ──────────────────────────
 exports.escalatePriority = async (req, res) => {
   try {
     const { id } = req.params;
-    const role = req.user.role;
+
+    if (!req.user.is_imc_lead) {
+      return res.status(403).json({ error: 'Only the IMC Lead / Convenor can escalate incident priority.' });
+    }
 
     const result = await query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -83,16 +86,19 @@ exports.escalatePriority = async (req, res) => {
       return res.status(400).json({ error: 'Priority already escalated.' });
     }
 
-    const escalatedBy = role === 'head_management' ? 'Management' : 'IMC';
+    const escalatedBy = `${req.user.full_name} (IMC Convenor)`;
 
     await query(
       `UPDATE incidents SET priority_escalated_by = $1, priority_escalated_at = NOW(), updated_at = NOW() WHERE id = $2`,
       [escalatedBy, id]
     );
 
-    // Notify all IMC and management
+    // Notify all active IMC and Management members
     const notifyUsers = await query(
-      "SELECT id, email, full_name FROM users WHERE role IN ('imc','head_management') AND id != $1",
+      `SELECT id, email, full_name FROM users
+       WHERE (role IN ('imc','head_management') OR is_imc_member = TRUE OR is_imc_lead = TRUE OR is_management_member = TRUE)
+         AND is_active = TRUE
+         AND id != $1`,
       [req.user.id]
     );
     for (const u of notifyUsers.rows) {
@@ -115,13 +121,17 @@ exports.escalatePriority = async (req, res) => {
       payload: { escalated_by: escalatedBy }
     });
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to escalate priority.' });
   }
 };
 
-// ── REQUEST REDIRECT (HOD) ─────────────────────────────────────────────────
+// ── REQUEST REDIRECT (Assigned Reviewer) ───────────────────────────────────
 exports.requestRedirect = async (req, res) => {
   const client = await getClient();
   try {
@@ -140,10 +150,11 @@ exports.requestRedirect = async (req, res) => {
 
     if (!['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status)) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Incident is not in HOD review status.' });
+      return res.status(400).json({ error: 'Incident is not currently in initial review status.' });
     }
 
-    // Object-level authorization: only assigned HOD/reviewer for a department targeted by THIS incident (or privileged role)
+    // Object-level authorization: assigned category reviewer OR legacy department reviewer/HOD OR privileged role
+    const assignedCategories = await getUserAssignedCategoriesForIncident(req.user, id);
     const incidentDeptRes = await client.query(`
       SELECT d.id, d.name
       FROM incident_departments idp
@@ -160,39 +171,31 @@ exports.requestRedirect = async (req, res) => {
       LIMIT 1
     `, [id, req.user.id]);
 
-    if (!isPrivilegedRole(req.user) && incidentDeptRes.rows.length === 0) {
+    if (!isPrivilegedRole(req.user) && assignedCategories.length === 0 && incidentDeptRes.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Access denied: You are not assigned as HOD or reviewer for this incident.' });
+      return res.status(403).json({ error: 'Access denied: You are not an assigned reviewer for this incident.' });
     }
 
-    const deptName = incidentDeptRes.rows[0]?.name || req.user.department || 'Unknown';
+    const sourceLabel = assignedCategories.length > 0
+      ? assignedCategories.map(c => c.name).join(', ')
+      : (incidentDeptRes.rows[0]?.name || incident.incident_category || req.user.department || 'Assigned Reviewer');
+
+    const cleanReason = reason.trim();
 
     await client.query(
       `UPDATE incidents SET 
          status = 'redirect_requested', 
          redirect_reason = $1,
-         redirect_requested_by_dept = $2, 
+         redirect_requested_by_dept = $2,
+         redirect_requested_by_category = $2,
          redirect_requested_by_user_id = $3,
          redirect_requested_at = NOW(), 
          redirect_rejected_reason = NULL,
          redirect_rejected_at = NULL,
          updated_at = NOW() 
        WHERE id = $4`,
-      [reason, deptName, req.user.id, id]
+      [cleanReason, sourceLabel, req.user.id, id]
     );
-
-    await client.query('COMMIT');
-
-    // Notify IMC
-    const imcMembers = await query("SELECT id, email, full_name FROM users WHERE role = 'imc'");
-    for (const m of imcMembers.rows) {
-      await createNotification(m.id, id, 'Redirect Requested',
-        `HOD of ${deptName} has requested a redirect for incident ${incident.reference_id}. Reason: "${reason}"`,
-        'redirect_requested');
-      if (m.email) {
-        sendEmail(m.email, templates.redirectRequested(incident, m, deptName, reason)).catch(() => { });
-      }
-    }
 
     await recordEvent(client, {
       incidentId: id,
@@ -200,12 +203,32 @@ exports.requestRedirect = async (req, res) => {
       actor: req.user,
       statusBefore: incident.status,
       statusAfter: 'redirect_requested',
-      title: 'Department Redirection Requested',
-      summary: `HOD of ${deptName} requested routing to another department. Reason: "${reason}"`,
-      payload: { from_department: deptName, reason }
+      title: 'Category Redirection Requested',
+      summary: `Redirection requested by ${req.user.full_name} (${sourceLabel}).`,
+      payload: { from_category: sourceLabel, from_department: sourceLabel, reason: cleanReason }
     });
 
-    await auditLog(req.user.id, 'REDIRECT_REQUESTED', id, { reason, fromDept: deptName }, req.ip);
+    await client.query('COMMIT');
+
+    // Notify active IMC members
+    const imcMembers = await query(
+      "SELECT id, email, full_name FROM users WHERE (role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE) AND is_active = TRUE"
+    );
+    for (const m of imcMembers.rows) {
+      await createNotification(m.id, id, 'Redirect Requested',
+        `${req.user.full_name} (${sourceLabel}) requested redirection for incident ${incident.reference_id}. Reason: "${cleanReason}"`,
+        'redirect_requested');
+      if (m.email) {
+        sendEmail(m.email, templates.redirectRequested(incident, m, sourceLabel, cleanReason)).catch(() => { });
+      }
+    }
+
+    await auditLog(req.user.id, 'REDIRECT_REQUESTED', id, { reason: cleanReason, fromSource: sourceLabel }, req.ip);
+
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
     res.json({ success: true });
   } catch (e) {
     await client.query('ROLLBACK');
@@ -221,11 +244,21 @@ exports.approveRedirect = async (req, res) => {
   try {
     await client.query('BEGIN');
     const { id } = req.params;
-    const { targetDepartment, targetDepartments, retainedDepartments, actionType } = req.body;
+    const {
+      targetCategories, targetCategory, retainedCategories,
+      targetDepartment, targetDepartments, retainedDepartments, actionType
+    } = req.body;
 
     if (!req.user.is_imc_lead && !req.user.is_system_admin) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Only the IMC Convenor can approve redirection requests.' });
+    }
+
+    let categoryInputs = [];
+    if (Array.isArray(targetCategories) && targetCategories.length > 0) {
+      categoryInputs = [...new Set(targetCategories.map(c => String(c || '').trim()).filter(Boolean))];
+    } else if (targetCategory) {
+      categoryInputs = [String(targetCategory).trim()];
     }
 
     let deptNames = [];
@@ -235,16 +268,137 @@ exports.approveRedirect = async (req, res) => {
       deptNames = [targetDepartment];
     }
 
-    if (!deptNames.length) {
+    if (!categoryInputs.length && !deptNames.length) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'At least one target department is required for redirection.' });
+      return res.status(400).json({ error: 'At least one target incident category is required for redirection.' });
     }
 
     const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
     if (!incResult.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
     const incident = incResult.rows[0];
+    const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
 
-    // Find all target departments
+    if (categoryInputs.length > 0) {
+      const catRes = await client.query(
+        `SELECT id, name FROM incident_categories
+         WHERE is_active = TRUE AND (LOWER(TRIM(name)) = ANY($1::text[]) OR id::text = ANY($2::text[]))`,
+        [categoryInputs.map(c => c.toLowerCase()), categoryInputs]
+      );
+      if (!catRes.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Selected target incident category not found.' });
+      }
+      const targetCats = catRes.rows;
+
+      const existingCatsRes = await client.query(
+        `SELECT category_id FROM incident_category_links WHERE incident_id = $1`,
+        [id]
+      );
+      const existingCatIds = existingCatsRes.rows.map(r => r.category_id);
+
+      let requestingCatIds = [];
+      const reqCatLabel = incident.redirect_requested_by_category || incident.redirect_requested_by_dept;
+      if (reqCatLabel) {
+        const parts = reqCatLabel.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        if (parts.length > 0) {
+          const rCatRes = await client.query(
+            `SELECT id FROM incident_categories WHERE LOWER(TRIM(name)) = ANY($1::text[])`,
+            [parts]
+          );
+          requestingCatIds = rCatRes.rows.map(r => r.id);
+        }
+      }
+
+      const uninvolvedCatIds = existingCatIds.filter(cid => !requestingCatIds.includes(cid));
+      let finalCatIds = [...new Set([...uninvolvedCatIds, ...targetCats.map(c => c.id)])];
+
+      if (Array.isArray(retainedCategories) && retainedCategories.length > 0) {
+        const retRes = await client.query(
+          `SELECT id FROM incident_categories WHERE LOWER(TRIM(name)) = ANY($1::text[]) OR id::text = ANY($2::text[])`,
+          [retainedCategories.map(c => String(c).trim().toLowerCase()), retainedCategories.map(String)]
+        );
+        finalCatIds = [...new Set([...finalCatIds, ...retRes.rows.map(c => c.id)])];
+      } else if (actionType === 'partial' && requestingCatIds.length > 0) {
+        finalCatIds = [...new Set([...finalCatIds, ...requestingCatIds])];
+      }
+
+      await client.query('DELETE FROM incident_category_links WHERE incident_id = $1', [id]);
+      for (const cId of finalCatIds) {
+        await client.query(
+          'INSERT INTO incident_category_links (incident_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [id, cId]
+        );
+      }
+
+      const finalNamesRes = await client.query(
+        `SELECT name FROM incident_categories WHERE id = ANY($1::int[]) ORDER BY name ASC`,
+        [finalCatIds]
+      );
+      const targetNames = targetCats.map(c => c.name);
+      const updatedCategoryLabel = finalNamesRes.rows.map(r => r.name).join(', ') || targetNames.join(', ');
+
+      await client.query(
+        `UPDATE incidents SET
+           incident_category = $1,
+           status = $2,
+           redirect_reason = NULL,
+           redirect_requested_at = NULL,
+           redirect_rejected_reason = NULL,
+           redirect_rejected_at = NULL,
+           updated_at = NOW()
+         WHERE id = $3`,
+        [updatedCategoryLabel, newStatus, id]
+      );
+
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: 'REDIRECT_APPROVED',
+        actor: req.user,
+        statusBefore: incident.status,
+        statusAfter: newStatus,
+        title: 'Category Redirection Approved',
+        summary: `IMC Convenor redirected incident to: ${targetNames.join(', ')}`,
+        payload: {
+          target_categories: targetNames,
+          target_departments: targetNames,
+          is_partial: actionType === 'partial'
+        }
+      });
+
+      await client.query('COMMIT');
+
+      const targetCatIds = targetCats.map(c => c.id);
+      const newAssigneesRes = await query(
+        `SELECT DISTINCT u.id, u.email, u.full_name
+         FROM category_feedback_assignees cfa
+         JOIN users u ON u.id = cfa.user_id
+         WHERE cfa.category_id = ANY($1::int[]) AND cfa.is_active = TRUE AND u.is_active = TRUE`,
+        [targetCatIds]
+      );
+      for (const reviewer of newAssigneesRes.rows) {
+        await createNotification(reviewer.id, id, 'Incident Redirected to You',
+          `Incident ${incident.reference_id} has been redirected to your assigned category by IMC.`,
+          'incident_redirected');
+        if (reviewer?.email) {
+          sendEmail(reviewer.email, templates.newIncidentHod(incident, reviewer)).catch(() => { });
+        }
+      }
+
+      const redirectedStr = targetNames.join(', ');
+      if (incident.redirect_requested_by_user_id) {
+        const origUserRes = await query('SELECT email, full_name FROM users WHERE id = $1', [incident.redirect_requested_by_user_id]);
+        if (origUserRes.rows[0]?.email) {
+          sendEmail(origUserRes.rows[0].email, templates.redirectDecision(incident, origUserRes.rows[0], true, redirectedStr, null)).catch(() => { });
+        }
+      }
+
+      await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetCategories: targetNames, isPartial: actionType === 'partial' }, req.ip);
+      if (req.io) req.io.emit('incident_updated', { id });
+
+      return res.json({ success: true, message: 'Redirect processed successfully.', targetCategories: targetNames });
+    }
+
+    // Legacy department-based redirect fallback
     const deptRes = await client.query('SELECT id, name, hod_user_id FROM departments WHERE name = ANY($1)', [deptNames]);
     if (!deptRes.rows.length) {
       await client.query('ROLLBACK');
@@ -252,23 +406,18 @@ exports.approveRedirect = async (req, res) => {
     }
     const targetDepts = deptRes.rows;
 
-    // Fetch currently attached departments to this incident
     const existingDeptsRes = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1', [id]);
     const existingDeptIds = existingDeptsRes.rows.map(r => r.department_id);
 
-    // Identify requesting department
     let requestingDeptId = null;
     if (incident.redirect_requested_by_dept) {
       const reqDeptRes = await client.query('SELECT id FROM departments WHERE name = $1', [incident.redirect_requested_by_dept]);
       if (reqDeptRes.rows.length) requestingDeptId = reqDeptRes.rows[0].id;
     }
 
-    // By default in multi-department incidents, preserve all co-involved departments that did NOT request redirect
     const uninvolvedDeptIds = existingDeptIds.filter(dId => dId !== requestingDeptId);
-
     let finalDeptIds = [...new Set([...uninvolvedDeptIds, ...targetDepts.map(d => d.id)])];
 
-    // Support Partial Redirection: retain requesting department if requested
     if (Array.isArray(retainedDepartments) && retainedDepartments.length > 0) {
       const retainedRes = await client.query('SELECT id, name FROM departments WHERE name = ANY($1) OR id::text = ANY($1)', [retainedDepartments]);
       finalDeptIds = [...new Set([...finalDeptIds, ...retainedRes.rows.map(d => d.id)])];
@@ -276,9 +425,6 @@ exports.approveRedirect = async (req, res) => {
       finalDeptIds = [...new Set([...finalDeptIds, requestingDeptId])];
     }
 
-    const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
-
-    // Update incident departments
     await client.query('DELETE FROM incident_departments WHERE incident_id = $1', [id]);
     for (const dId of finalDeptIds) {
       await client.query('INSERT INTO incident_departments (incident_id, department_id) VALUES ($1, $2)', [id, dId]);
@@ -296,57 +442,46 @@ exports.approveRedirect = async (req, res) => {
       [newStatus, id]
     );
 
+    await recordEvent(client, {
+      incidentId: id,
+      eventType: 'REDIRECT_APPROVED',
+      actor: req.user,
+      statusBefore: incident.status,
+      statusAfter: newStatus,
+      title: 'Redirection Approved',
+      summary: `IMC Convenor approved redirection to: ${deptNames.join(', ')}`,
+      payload: { target_departments: deptNames, is_partial: actionType === 'partial' }
+    });
+
     await client.query('COMMIT');
 
-    // Notify assigned staff of all targeted departments
     const targetDeptIds = targetDepts.map(d => d.id);
     const newLeadersRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
        JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
-       WHERE d.id = ANY($1)`,
+       WHERE d.id = ANY($1) AND u.is_active = TRUE
+       UNION
+       SELECT DISTINCT u.id, u.email, u.full_name FROM users u
+       JOIN department_reviewers dr ON dr.user_id = u.id AND dr.is_active = TRUE
+       WHERE dr.department_id = ANY($1) AND u.is_active = TRUE`,
       [targetDeptIds]
     );
     for (const leader of newLeadersRes.rows) {
       await createNotification(leader.id, id, 'Incident Redirected to You',
-        `Incident ${incident.reference_id} has been redirected to your department by IMC.`,
+        `Incident ${incident.reference_id} has been redirected to your assigned scope by IMC.`,
         'incident_redirected');
       if (leader?.email) {
         sendEmail(leader.email, templates.newIncidentHod(incident, leader)).catch(() => { });
       }
     }
 
-    // Notify original HOD of decision
     const redirectedDeptNamesStr = targetDepts.map(d => d.name).join(', ');
     if (incident.redirect_requested_by_user_id) {
       const origUserRes = await query('SELECT email, full_name FROM users WHERE id = $1', [incident.redirect_requested_by_user_id]);
       if (origUserRes.rows[0]?.email) {
         sendEmail(origUserRes.rows[0].email, templates.redirectDecision(incident, origUserRes.rows[0], true, redirectedDeptNamesStr, null)).catch(() => { });
       }
-    } else if (incident.redirect_requested_by_dept) {
-      const origHodRes = await query(
-        `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-         JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
-         WHERE d.name = $1`,
-        [incident.redirect_requested_by_dept]
-      );
-      if (origHodRes.rows.length) {
-        const origHod = origHodRes.rows[0];
-        if (origHod.email) {
-          sendEmail(origHod.email, templates.redirectDecision(incident, origHod, true, redirectedDeptNamesStr, null)).catch(() => { });
-        }
-      }
     }
-
-    await recordEvent(client, {
-      incidentId: id,
-      eventType: 'REDIRECT_APPROVED',
-      actor: req.user,
-      statusBefore: incident.status,
-      statusAfter: (incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod'),
-      title: 'Department Redirection Approved',
-      summary: `IMC Convenor approved redirection to: ${deptNames.join(', ')}`,
-      payload: { target_departments: deptNames, is_partial: actionType === 'partial' }
-    });
 
     await auditLog(req.user.id, 'REDIRECT_APPROVED', id, { targetDepartments: deptNames, isPartial: actionType === 'partial' }, req.ip);
 
@@ -394,46 +529,7 @@ exports.rejectRedirect = async (req, res) => {
       [newStatus, reason, id]
     );
 
-    await client.query('COMMIT');
-
-    // Notify the user who requested the redirect directly
-    let notified = false;
-    if (incident.redirect_requested_by_user_id) {
-      await createNotification(
-        incident.redirect_requested_by_user_id,
-        id,
-        'Redirect Request Rejected',
-        `IMC has rejected the redirect request for incident ${incident.reference_id}. Reason: "${reason}". Please review and provide your department feedback.`,
-        'redirect_rejected'
-      );
-      const userRes = await query('SELECT id, email, full_name FROM users WHERE id = $1', [incident.redirect_requested_by_user_id]);
-      if (userRes.rows[0]?.email) {
-        sendEmail(userRes.rows[0].email, templates.redirectDecision(incident, userRes.rows[0], false, null, reason)).catch(() => { });
-      }
-      notified = true;
-    }
-
-    if (incident.redirect_requested_by_dept) {
-      const origHodRes = await query(
-        `SELECT u.id, u.email, u.full_name FROM users u
-         JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
-         WHERE d.name = $1`, [incident.redirect_requested_by_dept]
-      );
-      for (const hodUser of origHodRes.rows) {
-        if (hodUser.id !== incident.redirect_requested_by_user_id) {
-          await createNotification(
-            hodUser.id,
-            id,
-            'Redirect Request Rejected',
-            `IMC has rejected the redirect request for incident ${incident.reference_id}. Reason: "${reason}". Please review and provide feedback.`,
-            'redirect_rejected'
-          );
-          if (hodUser.email) {
-            sendEmail(hodUser.email, templates.redirectDecision(incident, hodUser, false, null, reason)).catch(() => { });
-          }
-        }
-      }
-    }
+    const requestedByScope = incident.redirect_requested_by_category || incident.redirect_requested_by_dept;
 
     await recordEvent(client, {
       incidentId: id,
@@ -441,12 +537,28 @@ exports.rejectRedirect = async (req, res) => {
       actor: req.user,
       statusBefore: incident.status,
       statusAfter: newStatus,
-      title: 'Department Redirection Rejected',
-      summary: `IMC Convenor rejected redirection. Reason: "${reason}". Original department stays responsible.`,
-      payload: { reason, requested_by_dept: incident.redirect_requested_by_dept }
+      title: 'Redirection Rejected',
+      summary: `IMC Convenor rejected redirection. Reason: "${reason}". Original assignee stays responsible.`,
+      payload: { reason, requested_by_dept: requestedByScope, requested_by_category: requestedByScope }
     });
 
-    await auditLog(req.user.id, 'REDIRECT_REJECTED', id, { reason, requestedByDept: incident.redirect_requested_by_dept, requestedByUserId: incident.redirect_requested_by_user_id }, req.ip);
+    await client.query('COMMIT');
+
+    if (incident.redirect_requested_by_user_id) {
+      await createNotification(
+        incident.redirect_requested_by_user_id,
+        id,
+        'Redirect Request Rejected',
+        `IMC has rejected the redirect request for incident ${incident.reference_id}. Reason: "${reason}". Please review and provide your feedback.`,
+        'redirect_rejected'
+      );
+      const userRes = await query('SELECT id, email, full_name FROM users WHERE id = $1', [incident.redirect_requested_by_user_id]);
+      if (userRes.rows[0]?.email) {
+        sendEmail(userRes.rows[0].email, templates.redirectDecision(incident, userRes.rows[0], false, null, reason)).catch(() => { });
+      }
+    }
+
+    await auditLog(req.user.id, 'REDIRECT_REJECTED', id, { reason, requestedByScope, requestedByUserId: incident.redirect_requested_by_user_id }, req.ip);
 
     if (req.io) {
       req.io.emit('incident_updated', { id });
@@ -506,13 +618,14 @@ exports.verifyEmployeeTraining = async (req, res) => {
           );
         }
       } else {
+        const managedCats = await getUserAssignedCategoriesForIncident(req.user, id);
         const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
-        authorized = managedDepts.size > 0;
+        authorized = managedCats.length > 0 || managedDepts.size > 0;
       }
 
       if (!authorized) {
         await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'You are not the designated feedback staff for this employee’s department.' });
+        return res.status(403).json({ error: 'You are not the designated reviewer for this employee or incident.' });
       }
     }
 
@@ -523,31 +636,30 @@ exports.verifyEmployeeTraining = async (req, res) => {
       [req.user.id, id, employeeId]
     );
 
-    // Check if all trainings are completed
     const pendingTrainings = await client.query(
       'SELECT COUNT(*) FROM incident_responsible_employees WHERE incident_id = $1 AND needs_training = TRUE AND (training_completed IS NULL OR training_completed = FALSE)',
       [id]
     );
 
-    await client.query('COMMIT');
-
-    if (parseInt(pendingTrainings.rows[0].count) === 0) {
-      const imcMembers = await query("SELECT id FROM users WHERE role = 'imc' AND is_imc_lead = TRUE");
-      for (const imc of imcMembers.rows) {
-        await createNotification(imc.id, id, 'All Training Verified',
-          `All mandated training for incident ${incident.reference_id} has been verified by HODs. You can now close the incident.`,
-          'training_all_verified');
-      }
-    }
-
     await recordEvent(client, {
       incidentId: id,
       eventType: 'EMPLOYEE_TRAINING_VERIFIED',
       actor: req.user,
-      title: 'Employee Training Verified by HOD',
-      summary: `HOD verified training completion for staff member`,
+      title: 'Employee Training Verified',
+      summary: `Assigned reviewer verified training completion for staff member`,
       payload: { employee_id: employeeId }
     });
+
+    await client.query('COMMIT');
+
+    if (parseInt(pendingTrainings.rows[0].count) === 0) {
+      const imcMembers = await query("SELECT id FROM users WHERE role = 'imc' AND is_imc_lead = TRUE AND is_active = TRUE");
+      for (const imc of imcMembers.rows) {
+        await createNotification(imc.id, id, 'All Training Verified',
+          `All mandated training for incident ${incident.reference_id} has been verified. You can now close the incident.`,
+          'training_all_verified');
+      }
+    }
 
     await auditLog(req.user.id, 'EMPLOYEE_TRAINING_VERIFIED', id, { employeeId }, req.ip);
     res.json({ success: true, message: 'Employee training verified.' });
@@ -560,7 +672,7 @@ exports.verifyEmployeeTraining = async (req, res) => {
   }
 };
 
-// ── VERIFY TRAINING (IMC) ──────────────────────────────────────────────────
+// ── VERIFY TRAINING (Reviewer / IMC) ──────────────────────────────────────
 exports.verifyTraining = async (req, res) => {
   const client = await getClient();
   try {
@@ -572,10 +684,11 @@ exports.verifyTraining = async (req, res) => {
     const incident = incResult.rows[0];
 
     if (!isPrivilegedRole(req.user)) {
+      const managedCats = await getUserAssignedCategoriesForIncident(req.user, id);
       const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
-      if (managedDepts.size === 0) {
+      if (managedCats.length === 0 && managedDepts.size === 0) {
         await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'Access denied: You are not assigned to any department for this incident.' });
+        return res.status(403).json({ error: 'Access denied: You are not assigned to review this incident.' });
       }
     }
 
@@ -660,14 +773,14 @@ exports.editFeedback = async (req, res) => {
       return res.status(403).json({ error: 'Feedbacks cannot be modified after the incident has been resolved or closed.' });
     }
 
-    // Rule 1: HOD feedback cannot be modified once IMC or Management has submitted feedback / decision
+    // Rule 1: Department/category feedback cannot be modified once IMC or Management has submitted feedback / decision
     if (fb.role === 'hod') {
       const upperCheck = await query(
         "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role IN ('imc', 'head_management') AND created_at >= $2",
         [id, fb.created_at]
       );
       if (upperCheck.rows.length > 0) {
-        return res.status(403).json({ error: 'HOD feedback cannot be modified after upper-level review (IMC/Management) has been submitted.' });
+        return res.status(403).json({ error: 'Department feedback cannot be modified after upper-level review (IMC/Management) has been submitted.' });
       }
     }
 
@@ -708,12 +821,13 @@ exports.editFeedback = async (req, res) => {
       [feedbackText, fb.id]
     );
 
+    const roleLabel = fb.role === 'hod' ? 'Department' : fb.role === 'head_management' ? 'Management' : fb.role.toUpperCase();
     await recordEvent(query, {
       incidentId: id,
       eventType: 'FEEDBACK_EDITED',
       actor: req.user,
       title: 'Feedback Edited',
-      summary: `${fb.role.toUpperCase()} feedback updated`,
+      summary: `${roleLabel} feedback updated`,
       payload: { feedback_id: fb.id, role: fb.role, previous_text: fb.feedback_text, new_text: feedbackText }
     });
 
@@ -724,7 +838,7 @@ exports.editFeedback = async (req, res) => {
   }
 };
 
-// ── REMIND HOD TO SUBMIT FEEDBACK (IMC/Management) ──────────────────────────
+// ── REMIND ASSIGNED REVIEWERS TO SUBMIT FEEDBACK (IMC/Management) ──────────
 exports.remindHod = async (req, res) => {
   try {
     const { id } = req.params;
@@ -735,13 +849,26 @@ exports.remindHod = async (req, res) => {
     if (!incResult.rows.length) return res.status(404).json({ error: 'Incident not found' });
     const incident = incResult.rows[0];
 
-    // Find assigned staff of concerned department(s) who haven't submitted feedback yet
-    const deptRes = await query(
+    // Find active assigned reviewers (via incident_category_links or legacy incident_departments) who haven't submitted feedback yet
+    const pendingReviewersRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name
-       FROM incident_departments id
-       JOIN departments d ON d.id = id.department_id
-       JOIN users u ON (u.id = COALESCE(d.assigned_user_id, d.hod_user_id))
-       WHERE id.incident_id = $1
+       FROM incident_category_links icl
+       JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id AND cfa.is_active = TRUE
+       JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
+       WHERE icl.incident_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM feedbacks f
+           WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.category_id = icl.category_id OR f.author_id = u.id)
+         )
+       UNION
+       SELECT DISTINCT u.id, u.email, u.full_name
+       FROM incident_departments idp
+       JOIN departments d ON d.id = idp.department_id
+       JOIN users u ON (
+         u.id = COALESCE(d.assigned_user_id, d.hod_user_id)
+         OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = u.id AND dr.is_active = TRUE)
+       ) AND u.is_active = TRUE
+       WHERE idp.incident_id = $1
          AND NOT EXISTS (
            SELECT 1 FROM feedbacks f
            WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.author_id = u.id OR f.department_id = d.id)
@@ -749,45 +876,23 @@ exports.remindHod = async (req, res) => {
       [id]
     );
 
-    let hodUsers = deptRes.rows;
+    const reviewerUsers = pendingReviewersRes.rows;
 
-    if (!hodUsers.length) {
-      const fallbackRes = await query(
-        `SELECT DISTINCT id, email, full_name FROM users
-         WHERE role = 'hod'
-           AND (department IN (SELECT d.name FROM incident_departments id JOIN departments d ON d.id = id.department_id WHERE id.incident_id = $1)
-                OR department = (SELECT department FROM users WHERE id = $2))
-           AND NOT EXISTS (
-             SELECT 1 FROM feedbacks f WHERE f.incident_id = $1 AND f.role = 'hod' AND f.author_id = users.id
-           )`
-      , [id, incident.reporter_id]);
-      hodUsers = fallbackRes.rows;
+    if (!reviewerUsers.length) {
+      return res.status(400).json({ error: 'All assigned reviewers have already submitted feedback (or no active feedback staff are mapped).' });
     }
 
-    if (!hodUsers.length) {
-      const allHodRes = await query(
-        `SELECT id, email, full_name FROM users 
-         WHERE role = 'hod' 
-           AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = $1 AND f.role = 'hod' AND f.author_id = users.id)`
-      , [id]);
-      hodUsers = allHodRes.rows;
-    }
-
-    if (!hodUsers.length) {
-      return res.status(400).json({ error: 'No HOD user found in the system to remind.' });
-    }
-
-    for (const hod of hodUsers) {
+    for (const rev of reviewerUsers) {
       await createNotification(
-        hod.id,
+        rev.id,
         id,
-        `🔔 Reminder: HOD Feedback Required (${incident.reference_id})`,
-        `You have been reminded by ${remindedBy} to submit your HOD feedback/review for Incident ${incident.reference_id}.`,
+        `🔔 Reminder: Feedback Required (${incident.reference_id})`,
+        `You have been reminded by ${remindedBy} to submit your feedback for Incident ${incident.reference_id}.`,
         'hod_feedback_reminder'
       );
-      if (hod.email) {
-        sendEmail(hod.email, templates.hodFeedbackReminder(incident, hod, remindedBy)).catch(e =>
-          console.warn('[RemindHOD] Email failed:', e.message)
+      if (rev.email) {
+        sendEmail(rev.email, templates.hodFeedbackReminder(incident, rev, remindedBy)).catch(e =>
+          console.warn('[RemindReviewer] Email failed:', e.message)
         );
       }
     }
@@ -796,17 +901,17 @@ exports.remindHod = async (req, res) => {
       incidentId: id,
       eventType: 'HOD_REMINDER_SENT',
       actor: req.user,
-      title: 'HOD Feedback Reminder Sent',
-      summary: `Reminder sent to ${hodUsers.length} HOD(s) by ${remindedBy}`,
-      payload: { reminded_by: remindedBy, hod_count: hodUsers.length },
+      title: 'Feedback Reminder Sent',
+      summary: `Reminder sent to ${reviewerUsers.length} assigned reviewer(s) by ${remindedBy}`,
+      payload: { reminded_by: remindedBy, reviewer_count: reviewerUsers.length, hod_count: reviewerUsers.length },
       isSystemEvent: true
     });
 
-    await auditLog(req.user.id, 'HOD_REMINDED', id, { remindedBy, hodCount: hodUsers.length }, req.ip);
-    res.json({ success: true, count: hodUsers.length, message: `Reminder sent to ${hodUsers.length} HOD(s) via Mail and In-App Notification.` });
+    await auditLog(req.user.id, 'HOD_REMINDED', id, { remindedBy, reviewerCount: reviewerUsers.length }, req.ip);
+    res.json({ success: true, count: reviewerUsers.length, message: `Reminder sent to ${reviewerUsers.length} assigned reviewer(s) via Mail and In-App Notification.` });
   } catch (e) {
     console.error('remindHod error:', e);
-    res.status(500).json({ error: 'Failed to send reminder to HOD.' });
+    res.status(500).json({ error: 'Failed to send reminder to assigned reviewer(s).' });
   }
 };
 

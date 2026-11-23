@@ -64,7 +64,7 @@ exports.sendOtp = async (employeeId, email, action, options = {}) => {
 
       if (!bypassCooldown) {
         const recentRes = await dbClient.query(
-          `SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000 AS elapsed_ms
+          `SELECT EXTRACT(EPOCH FROM (clock_timestamp() - created_at)) * 1000 AS elapsed_ms
            FROM security_otps
            WHERE UPPER(TRIM(employee_id)) = $1 AND action = $2
            ORDER BY created_at DESC, id DESC

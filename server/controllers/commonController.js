@@ -19,6 +19,24 @@ exports.getLocations = async (req, res) => {
 };
 
 /**
+ * Get active incident categories
+ */
+exports.getCategories = async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, name, is_active
+       FROM incident_categories
+       WHERE is_active = TRUE
+       ORDER BY name ASC`
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('[GET /categories] error:', e);
+    res.status(500).json({ error: 'Failed to retrieve incident categories' });
+  }
+};
+
+/**
  * Get departments with leaders (STRICT: 100% API-driven — returns ONLY departments fetched via OfficePortal HRMS API)
  */
 exports.getDepartments = async (req, res) => {

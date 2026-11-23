@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { 
-  FileText, QrCode, Save, Send, AlertCircle, CheckCircle2, Building, 
-  Printer, Eye, X, RefreshCw, ShieldAlert, Sparkles, ExternalLink, Mail, User, Briefcase, GraduationCap 
+import {
+  FileText, Save, X, RefreshCw, ShieldAlert, Sparkles, Eye, User, GraduationCap
 } from 'lucide-react';
-import { Modal, Spinner, Alert } from '../ui';
+import { Modal, Spinner } from '../ui';
 import { lettersApi } from '../../api';
-import { convertNumberToWords, parseProposedOutcomes, formatDate } from '../../utils/helpers';
+import { convertNumberToWords, parseProposedOutcomes, formatDate, getApiErrorMessage } from '../../utils/helpers';
+import HospitalLetterhead from './HospitalLetterhead';
 import toast from 'react-hot-toast';
 
 const LETTER_TYPES = [
@@ -47,6 +47,64 @@ export default function LetterDraftingModal({
   const [activeTab, setActiveTab] = useState('editor'); // 'editor' | 'preview'
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingDefaults, setIsLoadingDefaults] = useState(false);
+
+  const loadDefaults = useCallback(async (empId, type, customPenalty = null) => {
+    if (!incident?.id || !empId) return;
+    setIsLoadingDefaults(true);
+    try {
+      const pAmt = customPenalty !== null ? customPenalty : (penaltyAmount || incident?.penalty_amount || '');
+      const res = await lettersApi.getDefaults(incident.id, {
+        employeeId: empId,
+        templateType: type,
+        letterType: type,
+        penaltyAmount: pAmt
+      });
+      const def = res.data;
+      if (def) {
+        setRefNumber(def.referenceNumber || def.refNumber || '');
+        setLetterDate(def.letterDate || new Date().toISOString().split('T')[0]);
+        setSubject(def.subject || '');
+        setBodyContent(def.bodyText || def.bodyContent || '');
+
+        if (def.penaltyAmount !== undefined && def.penaltyAmount !== null && def.penaltyAmount !== '') {
+          setPenaltyAmount(String(def.penaltyAmount));
+        } else if (incident?.penalty_amount && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
+          setPenaltyAmount(String(incident.penalty_amount));
+        } else {
+          setPenaltyAmount('');
+        }
+
+        if (def.penaltyAmountWords) {
+          setPenaltyAmountWords(def.penaltyAmountWords);
+        } else if (incident?.penalty_amount_words && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
+          setPenaltyAmountWords(incident.penalty_amount_words);
+        } else if (pAmt) {
+          setPenaltyAmountWords(convertNumberToWords(pAmt));
+        } else {
+          setPenaltyAmountWords('');
+        }
+
+        if (def.recipientEmpNo && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(def.recipientEmpNo)) {
+          setRecipientEmpNo(def.recipientEmpNo);
+        }
+        setRecipientEmail(def.recipientEmail || '');
+        setRecipientDepartment(def.recipientDepartment || '');
+        setRecipientDesignation(def.recipientDesignation || '');
+
+        setCcList(def.ccRecipients || def.ccList || []);
+        if (def.qrCodeUrl || def.qrCodeData) {
+          setQrCodeUrl(def.qrCodeUrl || def.qrCodeData);
+        }
+        if (def.incidentUrl) {
+          setIncidentUrl(def.incidentUrl);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load letter defaults:', err);
+    } finally {
+      setIsLoadingDefaults(false);
+    }
+  }, [incident, penaltyAmount]);
 
   // Initialize from existingLetter, initialEmployee, or first employee
   useEffect(() => {
@@ -112,65 +170,8 @@ export default function LetterDraftingModal({
         loadDefaults(targetEmpId, defaultType, empPenalty);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show, existingLetter, initialEmployee, incident]);
-
-  const loadDefaults = async (empId, type, customPenalty = null) => {
-    if (!incident?.id || !empId) return;
-    setIsLoadingDefaults(true);
-    try {
-      const pAmt = customPenalty !== null ? customPenalty : (penaltyAmount || incident?.penalty_amount || '');
-      const res = await lettersApi.getDefaults(incident.id, {
-        employeeId: empId,
-        templateType: type,
-        letterType: type,
-        penaltyAmount: pAmt
-      });
-      const def = res.data;
-      if (def) {
-        setRefNumber(def.referenceNumber || def.refNumber || '');
-        setLetterDate(def.letterDate || new Date().toISOString().split('T')[0]);
-        setSubject(def.subject || '');
-        setBodyContent(def.bodyText || def.bodyContent || '');
-        
-        if (def.penaltyAmount !== undefined && def.penaltyAmount !== null && def.penaltyAmount !== '') {
-          setPenaltyAmount(String(def.penaltyAmount));
-        } else if (incident?.penalty_amount && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
-          setPenaltyAmount(String(incident.penalty_amount));
-        } else {
-          setPenaltyAmount('');
-        }
-
-        if (def.penaltyAmountWords) {
-          setPenaltyAmountWords(def.penaltyAmountWords);
-        } else if (incident?.penalty_amount_words && (type === 'warning_penalty_letter' || type === 'warning_penalty')) {
-          setPenaltyAmountWords(incident.penalty_amount_words);
-        } else if (penaltyAmount) {
-          setPenaltyAmountWords(convertNumberToWords(penaltyAmount));
-        } else {
-          setPenaltyAmountWords('');
-        }
-
-        if (def.recipientEmpNo && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(def.recipientEmpNo)) {
-          setRecipientEmpNo(def.recipientEmpNo);
-        }
-        setRecipientEmail(def.recipientEmail || '');
-        setRecipientDepartment(def.recipientDepartment || '');
-        setRecipientDesignation(def.recipientDesignation || '');
-
-        setCcList(def.ccRecipients || def.ccList || []);
-        if (def.qrCodeUrl || def.qrCodeData) {
-          setQrCodeUrl(def.qrCodeUrl || def.qrCodeData);
-        }
-        if (def.incidentUrl) {
-          setIncidentUrl(def.incidentUrl);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load letter defaults:', err);
-    } finally {
-      setIsLoadingDefaults(false);
-    }
-  };
 
   const handleEmployeeChange = (empId) => {
     setSelectedEmpId(empId);
@@ -296,15 +297,13 @@ export default function LetterDraftingModal({
       });
 
       toast.success(existingLetter ? 'Letter draft updated.' : 'Letter draft saved successfully.');
-      queryClient.invalidateQueries({ queryKey: ['incident', incident?.id] });
+      queryClient.invalidateQueries({ queryKey: ['incident', String(incident?.id)] });
       queryClient.invalidateQueries({ queryKey: ['incidents'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['all-incidents-analytics'] });
       if (onSaveSuccess) onSaveSuccess();
       onClose();
     } catch (err) {
-      console.error('Save draft error:', err);
-      toast.error(err.response?.data?.error || 'Failed to save letter draft.');
+      toast.error(getApiErrorMessage(err, 'Failed to save letter draft.'));
     } finally {
       setIsSaving(false);
     }
@@ -702,7 +701,7 @@ export default function LetterDraftingModal({
                   type="text"
                   value={customCc}
                   onChange={e => setCustomCc(e.target.value)}
-                  placeholder="Add another CC (e.g. Quality Head, Medical Superintendent, HOD Accounts)..."
+                  placeholder="Add another CC (e.g. Quality Head, Medical Superintendent, Accounts)…"
                   className="input text-xs flex-1"
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
@@ -725,225 +724,38 @@ export default function LetterDraftingModal({
 
         {/* --- TAB 2: LIVE LETTERHEAD PREVIEW --- */}
         {activeTab === 'preview' && (
-          <div className="bg-slate-300/80 -m-5 p-4 sm:p-8 flex justify-center overflow-y-auto max-h-[70vh]">
-            {/* Authentic A4 Sheet (210mm x 297mm proportions) */}
-            <div className="w-full max-w-[210mm] min-h-[297mm] bg-white text-slate-800 shadow-[0_8px_30px_rgba(0,0,0,0.18),0_1px_4px_rgba(0,0,0,0.08)] border border-slate-300 relative flex flex-col justify-between select-text my-auto font-sans">
-              
-              {/* Central Watermark (60% width, 7% opacity) */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
-                <img
-                  src="/letterhead/jph-round-watermark.png"
-                  alt="JPH Watermark"
-                  className="w-[125mm] max-w-[58%] opacity-[0.07] object-contain select-none"
-                />
-              </div>
-
-              {/* Draft Watermark Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
-                <span className="text-5xl font-black text-rose-500/[0.08] uppercase tracking-[0.35em] -rotate-45 select-none whitespace-nowrap">
-                  DRAFT — FOR REVIEW
-                </span>
-              </div>
-
-              {/* Top Section: Official Letterhead Header */}
-              <div className="relative z-10 bg-white">
-                {/* Top Green Band with Lime Wedge & White Accent */}
-                <div className="relative w-full h-3 bg-[#146537] overflow-hidden">
-                  <div className="absolute top-0 left-0 w-9 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
-                  <div className="absolute top-0 left-8 w-1.5 h-full bg-white -skew-x-[35deg]"></div>
-                </div>
-
-                {/* Header Content */}
-                <div className="px-6 sm:px-[18mm] py-2.5 flex items-center justify-between border-b border-slate-200 bg-white">
-                  {/* Brand Logo & Doc Control */}
-                  <div className="flex flex-col justify-center">
-                    <img
-                      src="/letterhead/jph-header-logo.png"
-                      alt="Jaiprakash Hospital"
-                      className="h-10 object-contain object-left"
-                    />
-                    <div className="text-[9px] font-semibold text-slate-600 mt-1 tracking-tight">
-                      Doc. No.: JPHRC/GNR/FRM/004A
-                    </div>
-                  </div>
-
-                  {/* Hospital Info & NABH (Single Unit, Aligned to Right) */}
-                  <div className="flex items-center gap-2.5 shrink-0">
-                    {/* Vertical Divider */}
-                    <div className="w-[1.5px] h-14 bg-slate-300 shrink-0"></div>
-
-                    {/* Contact Information */}
-                    <div className="text-[8.5px] leading-[1.38] text-slate-700 whitespace-nowrap">
-                      <div>
-                        <span className="text-[#146537] font-bold">📍 Main Hospital :</span> Dayanand Nagar, Rourkela-769004, Odisha
-                      </div>
-                      <div>
-                        <span className="text-[#146537] font-bold">📞 Helpline No. :</span> 9779 109 109
-                      </div>
-                      <div>✉️ info@jaiprakashhospitals.com</div>
-                      <div>🌐 www.jaiprakashhospitals.com</div>
-                      <div className="font-bold text-slate-900 mt-0.5">
-                        CIN : U85120OR2008PTC029111
-                      </div>
-                    </div>
-
-                    {/* NABH Badge */}
-                    <div className="shrink-0 pl-1">
-                      <img
-                        src="/letterhead/nabh-accredited-logo.svg"
-                        alt="NABH Accredited"
-                        className="h-14 w-auto object-contain"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Middle Section: Printable Letter Body (18mm margins matching PDF) */}
-              <div className="relative z-10 px-6 sm:px-[18mm] pt-4 pb-6 flex-1 flex flex-col justify-between text-[10pt] text-slate-800 leading-relaxed">
-                <div className="space-y-3.5">
-                  {/* Ref No & Date */}
-                  <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-[10pt] font-semibold text-slate-900">
-                    <div>
-                      Ref No: <span className="font-mono text-slate-900 font-bold">{refNumber || 'JPHRC/IMC/PENDING'}</span>
-                    </div>
-                    <div>
-                      Date: <span className="text-slate-900">{letterDate}</span>
-                    </div>
-                  </div>
-
-                  {/* Recipient Addressee Block */}
-                  <div className="bg-[#f8fafc] border-l-[3.5px] border-[#146537] px-3.5 py-2 rounded text-[9.5pt] leading-[1.45] text-slate-800 space-y-0.5">
-                    <p className="font-bold text-slate-900 text-[10pt]">To,</p>
-                    <p className="font-bold text-[10.5pt] text-[#146537]">
-                      {selectedEmployeeObj.full_name || selectedEmployeeObj.name || '[Employee Name]'}
-                    </p>
-                    {(recipientEmpNo || selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || (selectedEmployeeObj.employee_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedEmployeeObj.employee_id) ? selectedEmployeeObj.employee_id : '')) && (
-                      <p className="text-slate-600 font-medium text-[9pt]">
-                        Emp. ID: <span className="font-mono text-slate-800">{recipientEmpNo || selectedEmployeeObj.emp_id || selectedEmployeeObj.employee_code || selectedEmployeeObj.employee_no || selectedEmployeeObj.employee_id}</span>
-                      </p>
-                    )}
-                    <p className="text-slate-600 text-[9pt]">
-                      Department: <span className="font-semibold text-slate-800">{recipientDepartment || selectedEmployeeObj.department || selectedEmployeeObj.department_name || '[Department]'}</span>
-                      {(recipientDesignation || selectedEmployeeObj.designation) && (
-                        <span> • Designation: <span className="font-semibold text-slate-800">{recipientDesignation || selectedEmployeeObj.designation}</span></span>
-                      )}
-                    </p>
-                  </div>
-
-                  {/* Subject */}
-                  <div className="font-bold text-slate-900 text-[10pt]">
-                    Subject: <u className="underline decoration-[#146537] underline-offset-3">{subject || '[Subject line pending]'}</u>
-                  </div>
-
-                  {/* Context Badge */}
-                  <div className="text-[9pt] bg-amber-50 border border-amber-200 rounded p-2 text-amber-900">
-                    <strong>Incident Context:</strong> {incident?.reference_id} • Occurred on {formatDate(incident?.incident_date)}
-                  </div>
-
-                  {/* Salutation */}
-                  <div className="font-semibold text-slate-800 text-[10pt]">
-                    Dear Staff,
-                  </div>
-
-                  {/* Body Paragraphs */}
-                  <div className="space-y-2 text-[10pt] leading-[1.6] text-justify text-slate-800">
-                    {(bodyContent || 'No letter content written yet. Switch to Editor tab to write content.')
-                      .split(/\n\s*\n/)
-                      .map((p, idx) => (
-                        <p key={idx} className="whitespace-pre-line">
-                          {p}
-                        </p>
-                      ))}
-                  </div>
-
-                  {/* Monetary Penalty Box (if applicable) */}
-                  {penaltyAmount && (
-                    <div className="my-3 bg-[#fff1f2] border border-[#fecdd3] border-l-4 border-l-[#e11d48] px-3.5 py-2.5 rounded text-[9.5pt] text-[#9f1239]">
-                      <div className="font-bold">
-                        Monetary Penalty Ordered: ₹{Number(penaltyAmount).toLocaleString('en-IN')} {penaltyAmountWords ? `(${penaltyAmountWords})` : ''}
-                      </div>
-                      <div className="text-[8pt] text-[#4c0519] mt-0.5">
-                        Recovery shall be processed through Accounts / Payroll as per hospital disciplinary regulations.
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Sign-off & CC Block */}
-                <div className="mt-6 pt-3 space-y-3.5">
-                  <div className="border-t border-slate-200 pt-2.5 space-y-0.5">
-                    <div className="font-bold text-slate-900 text-[9.5pt]">By Order of,</div>
-                    <div className="font-semibold text-slate-800 text-[9pt]">Incident Management Committee & Executive Management</div>
-                    <div className="text-[8.5pt] text-slate-500">Jaiprakash Hospital and Research Centre Pvt. Ltd.</div>
-
-                    <div className="inline-block mt-2 bg-amber-50 border border-amber-300 text-amber-800 px-2.5 py-1 rounded text-[7.5pt] font-semibold">
-                      ⏳ Draft Directive — Pending Executive Management Approval
-                    </div>
-                  </div>
-
-                  <div className="pt-2.5 border-t border-dashed border-slate-200 flex items-end justify-between gap-4 text-[8.5pt]">
-                    <div className="flex-1 space-y-1 text-slate-600">
-                      <div className="font-bold text-slate-700 uppercase tracking-wider text-[8pt]">
-                        Copy Communicated for Information & Record To:
-                      </div>
-                      <ol className="list-decimal list-inside space-y-0.5 text-slate-600 text-[8pt]">
-                        {ccList.map((cc, i) => (
-                          <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
-                        ))}
-                      </ol>
-                    </div>
-
-                    {qrCodeUrl && (
-                      <div className="shrink-0 text-center w-28">
-                        <a
-                          href={incidentUrl || `${window.location.origin}/incidents/${incident?.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-block group transition-transform hover:scale-105"
-                          title="Click to open Incident Dossier in IMS"
-                        >
-                          <img
-                            src={qrCodeUrl}
-                            alt="IMS QR Verification"
-                            className="w-[96px] h-[96px] mx-auto border border-slate-300 rounded-md p-1 bg-white shadow-xs group-hover:border-[#146537] group-hover:shadow-md transition-all cursor-pointer"
-                          />
-                        </a>
-                        <div className="text-[7pt] text-slate-500 mt-1 leading-tight">
-                          Scan or click to verify incident dossier
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom Section: Letterhead Footer */}
-              <div className="relative z-10 bg-white border-t border-slate-200 mt-auto">
-                <div className="px-6 sm:px-[18mm] py-2 text-[7pt] text-slate-600 space-y-0.5">
-                  <div className="flex items-center gap-3">
-                    <span>📍 <strong>City Centre,</strong> Ambedkar Chowk, Uditnagar, Rourkela-769012</span>
-                    <span>📞 : 7606000999 / 7682860043</span>
-                    <span>✉️ : citycentre@jaiprakashhospitals.com</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span>📍 <strong>City Centre,</strong> Main Road, Rajgangpur-770017</span>
-                    <span>📞 : 9078884831 / 9078884832</span>
-                    <span>✉️ : citycentre.rgp@jaiprakashhospitals.com</span>
-                  </div>
-                  <div className="flex justify-between items-center pt-1 border-t border-dotted border-slate-200 text-[7pt] font-semibold text-slate-500">
-                    <span>Ref: {refNumber || 'JPHRC/IMC/PENDING'}</span>
-                    <span>Page 1 of 1 • Official Form: JPHRC/GNR/FRM/004A</span>
-                  </div>
-                </div>
-
-                <div className="relative w-full h-[11px] bg-[#146537] overflow-hidden">
-                  <div className="absolute top-0 left-0 w-8 h-full bg-[#8DC63F] -skew-x-[35deg] -ml-2"></div>
-                </div>
-              </div>
-
-            </div>
-          </div>
+          <HospitalLetterhead
+            refNumber={refNumber}
+            letterDate={letterDate}
+            recipientName={selectedEmployeeObj.full_name || selectedEmployeeObj.name}
+            recipientEmpNo={
+              recipientEmpNo ||
+              selectedEmployeeObj.emp_id ||
+              selectedEmployeeObj.employee_code ||
+              selectedEmployeeObj.employee_no ||
+              (selectedEmployeeObj.employee_id &&
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedEmployeeObj.employee_id)
+                ? selectedEmployeeObj.employee_id
+                : '')
+            }
+            recipientDepartment={recipientDepartment || selectedEmployeeObj.department || selectedEmployeeObj.department_name}
+            recipientDesignation={recipientDesignation || selectedEmployeeObj.designation}
+            subject={subject}
+            salutation="Dear Staff,"
+            bodyContent={bodyContent || 'No letter content written yet. Switch to Editor tab to write content.'}
+            contextBanner={
+              <>
+                <strong>Incident Context:</strong> {incident?.reference_id} • Occurred on {formatDate(incident?.incident_date)}
+              </>
+            }
+            penaltyAmount={penaltyAmount}
+            penaltyAmountWords={penaltyAmountWords}
+            status="draft"
+            ccList={ccList}
+            qrCodeUrl={qrCodeUrl}
+            verifyUrl={incidentUrl || `${window.location.origin}/incidents/${incident?.id}`}
+            maxDeskHeightClass="max-h-[70vh]"
+          />
         )}
       </div>
     </Modal>

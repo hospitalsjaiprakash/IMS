@@ -150,6 +150,24 @@ const isUserHod = (user) => {
   return desig === 'HOD' || desig.includes('HEAD OF DEPARTMENT') || desig.includes('HEAD OF DEPT') || desig.startsWith('HEAD OF ') || desig.includes('(HOD)');
 };
 
+// ─── Helper: Fetch assigned incident categories for any user ────────────────
+const getUserAssignedCategories = async (userId) => {
+  if (!userId) return [];
+  try {
+    const res = await query(
+      `SELECT ic.id, ic.name
+       FROM category_feedback_assignees cfa
+       JOIN incident_categories ic ON ic.id = cfa.category_id
+       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
+       ORDER BY ic.name ASC`,
+      [userId]
+    );
+    return res.rows;
+  } catch (err) {
+    return [];
+  }
+};
+
 // ─── Helper: Check if user has Department Reviewer / HOD access in DB ───────
 const checkUserHodAccess = async (user) => {
   if (!user || isGenericSystemAccount(user.employee_id)) return false;
@@ -638,6 +656,9 @@ exports.login = async (req, res) => {
       }
     }
 
+    const assignedCategories = await getUserAssignedCategories(user.id);
+    const isCategoryReviewer = assignedCategories.length > 0;
+
     res.json({
       token,
       user: {
@@ -650,6 +671,9 @@ exports.login = async (req, res) => {
         designation: user.designation,
         role: activeRole,
         isHod: hasHodAccess,
+        isCategoryReviewer,
+        isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+        assignedCategories,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
@@ -711,6 +735,9 @@ exports.getMe = async (req, res) => {
         await query('UPDATE users SET phone = $1 WHERE id = $2', [user.phone, user.id]).catch(() => {});
       }
     }
+    const assignedCategories = await getUserAssignedCategories(user.id);
+    const isCategoryReviewer = assignedCategories.length > 0;
+
     res.json({
       id: user.id,
       employeeId: user.employee_id,
@@ -721,6 +748,9 @@ exports.getMe = async (req, res) => {
       designation: user.designation,
       role: user.role,
       isHod: hasHodAccess,
+      isCategoryReviewer,
+      isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+      assignedCategories,
       isImcLead: user.is_imc_lead,
       isImcMember: user.is_imc_member,
       isManagementMember: user.is_management_member,
@@ -980,6 +1010,9 @@ exports.switchRole = async (req, res) => {
 
     await auditLog(user.id, 'ROLE_SWITCH', null, { targetRole: finalTargetRole }, req.ip);
 
+    const assignedCategories = await getUserAssignedCategories(user.id);
+    const isCategoryReviewer = assignedCategories.length > 0;
+
     res.json({
       success: true,
       token,
@@ -993,6 +1026,9 @@ exports.switchRole = async (req, res) => {
         designation: user.designation,
         role: finalTargetRole,
         isHod: hasHodAccess,
+        isCategoryReviewer,
+        isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+        assignedCategories,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
@@ -1243,6 +1279,9 @@ exports.leaveRole = async (req, res) => {
     // Generate new token bound to bumped token_version (immediately invalidates old elevated tokens)
     const token = signAuthToken(updatedUser, updatedUser.role);
 
+    const assignedCategories = await getUserAssignedCategories(updatedUser.id);
+    const isCategoryReviewer = assignedCategories.length > 0;
+
     res.json({
       success: true,
       token,
@@ -1256,6 +1295,9 @@ exports.leaveRole = async (req, res) => {
         designation: updatedUser.designation,
         role: updatedUser.role,
         isHod: hasHodAccess,
+        isCategoryReviewer,
+        isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+        assignedCategories,
         isImcLead: updatedUser.is_imc_lead,
         isImcMember: updatedUser.is_imc_member,
         isManagementMember: updatedUser.is_management_member,

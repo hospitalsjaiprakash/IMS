@@ -14,6 +14,11 @@ function SortableItem({ id, incident, onClick }) {
     opacity: isDragging ? 0.8 : 1,
   };
 
+  const categoryLabel =
+    incident.incident_category ||
+    (Array.isArray(incident.incident_categories) && incident.incident_categories[0]) ||
+    'General Incident';
+
   return (
     <div
       ref={setNodeRef}
@@ -23,25 +28,26 @@ function SortableItem({ id, incident, onClick }) {
       onClick={() => onClick(incident)}
       className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm cursor-grab active:cursor-grabbing hover:border-blue-300 hover:shadow-md transition-shadow relative"
     >
-      <div className="flex justify-between items-start mb-2">
+      <div className="flex justify-between items-start gap-2 mb-2">
         <span className="font-mono text-xs font-bold text-slate-700">{incident.reference_id}</span>
         <span className={getStatusClass(incident.status)}>{getStatusLabel(incident.status)}</span>
       </div>
-      <p className="text-sm font-medium text-slate-800 line-clamp-2 mb-2 leading-snug">
-        {incident.departments?.[0] || 'Unknown Dept'}
-      </p>
+      <p className="text-sm font-semibold text-slate-800 line-clamp-1 leading-snug">{categoryLabel}</p>
+      {incident.incident_type && (
+        <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">{incident.incident_type}</p>
+      )}
 
       <div className="flex items-center justify-between mt-3 text-xs text-slate-500">
         <span className="truncate max-w-[120px]">{timeAgo(incident.created_at)}</span>
         <div className="flex gap-1.5">
-          {incident.attachments && incident.attachments.length > 0 && (
-            <span className="flex items-center gap-0.5 text-[10px] bg-slate-100 px-1 rounded">
+          {incident.attachments?.length > 0 && (
+            <span className="flex items-center gap-0.5 text-[10px] bg-slate-100 px-1.5 py-0.5 rounded">
               <Paperclip size={10} /> {incident.attachments.length}
             </span>
           )}
           {incident.priority_escalated_by && (
-            <span className="flex items-center gap-0.5 text-[10px] text-red-600 bg-red-50 px-1 rounded">
-              <Flame size={10} /> Esc
+            <span className="flex items-center gap-0.5 text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded font-semibold">
+              <Flame size={10} /> Escalated
             </span>
           )}
         </div>
@@ -50,15 +56,17 @@ function SortableItem({ id, incident, onClick }) {
   );
 }
 
-function Column({ id, title, incidents, onIncidentClick }) {
+function Column({ title, incidents, onIncidentClick }) {
   return (
-    <div className="flex flex-col bg-slate-50/80 rounded-2xl p-3 border border-slate-100 min-w-[280px] w-1/4 max-h-[70vh]">
+    <div className="flex flex-col bg-slate-50/80 rounded-2xl p-3 border border-slate-200/80 min-w-[280px] flex-1 max-h-[70vh]">
       <div className="flex items-center justify-between mb-4 px-2">
         <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide">{title}</h3>
-        <span className="bg-slate-200 text-slate-600 text-xs font-bold px-2 py-0.5 rounded-full">{incidents.length}</span>
+        <span className="bg-slate-200 text-slate-700 text-xs font-bold px-2 py-0.5 rounded-full">
+          {incidents.length}
+        </span>
       </div>
       <div className="flex-1 overflow-y-auto pr-1 pb-4">
-        <SortableContext items={incidents.map(i => i.id)} strategy={verticalListSortingStrategy}>
+        <SortableContext items={incidents.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="flex flex-col gap-3 min-h-[150px]">
             {incidents.map((inc) => (
               <SortableItem key={inc.id} id={inc.id} incident={inc} onClick={onIncidentClick} />
@@ -73,7 +81,7 @@ function Column({ id, title, incidents, onIncidentClick }) {
 export function KanbanBoard({ columns, incidents, onDragEnd, onIncidentClick }) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 }, // Allows clicking without triggering drag
+      activationConstraint: { distance: 5 },
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
@@ -83,12 +91,11 @@ export function KanbanBoard({ columns, incidents, onDragEnd, onIncidentClick }) 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
       <div className="flex gap-4 overflow-x-auto pb-4 pt-2 px-2 -mx-2 items-start">
-        {columns.map(col => {
-          const colIncidents = incidents.filter(inc => col.statusIds.includes(inc.status));
+        {columns.map((col) => {
+          const colIncidents = incidents.filter((inc) => col.statusIds.includes(inc.status));
           return (
             <Column
               key={col.id}
-              id={col.id}
               title={col.title}
               incidents={colIncidents}
               onIncidentClick={onIncidentClick}

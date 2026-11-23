@@ -46,7 +46,7 @@ const baseTemplate = (content, title = 'JPHRC Incident Management System') => `
             <td style="background:#f8fafc; border-top:1px solid #e2e8f0; padding: 20px 36px;">
               <p style="margin:0; color:#94a3b8; font-size:12px; line-height:1.6;">
                 This is an automated notification from <strong>JPHRC Incident Management System</strong>.<br />
-                Do not reply to this email. For assistance, contact <a href="mailto:digitalmarketing@jaiprakashhospitals.com" style="color:#059669; text-decoration:none;">admin@jaiprakashhospital.com</a>
+                Do not reply to this email. For assistance, contact <a href="mailto:admin@jaiprakashhospital.com" style="color:#059669; text-decoration:none;">admin@jaiprakashhospital.com</a>
               </p>
               <p style="margin:8px 0 0; color:#cbd5e1; font-size:11px;">
                 © ${new Date().getFullYear()} Jaiprakash Hospital & Research Centre. All rights reserved.
@@ -119,47 +119,50 @@ const templates = {
     html: baseTemplate(`
       <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Hello ${reporter.full_name},</p>
       <h2 style="margin:0 0 20px; color:#0f172a; font-size:22px;">Your incident has been submitted</h2>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">Your incident report has been successfully submitted to the JPHRC Incident Management System. The relevant Head of Department will review it within the stipulated SLA period.</p>
+      <p style="color:#475569; font-size:14px; line-height:1.7;">Your incident report has been successfully submitted to the JPHRC Incident Management System. The assigned category reviewer(s) will review it within the stipulated SLA period.</p>
       ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'submitted')}
       <p style="color:#475569; font-size:14px; line-height:1.7;">You will receive email notifications as the incident progresses through the review process. Please retain your reference ID for tracking purposes.</p>
       <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:#065f46; font-size:13px; font-weight:600;">📋 What happens next?</p>
-        <p style="margin:6px 0 0; color:#047857; font-size:13px;">The concerned department HOD will review and provide feedback within 7 days.</p>
+        <p style="margin:6px 0 0; color:#047857; font-size:13px;">The concerned department staff assigned to this category will review and provide feedback within 7 days.</p>
       </div>
     `)
   }),
 
-  // ── 2. New Incident for HOD ───────────────────────────────────────────────
-  newIncidentHod: (incident, hod) => ({
-    subject: `[JPHRC IMS] Action Required: New Incident ${incident.reference_id} – HOD Review`,
+  // ── 2. New Incident for Assigned Reviewer ─────────────────────────────────
+  newIncidentHod: (incident, reviewer) => ({
+    subject: `[JPHRC IMS] Action Required: New Incident ${incident.reference_id} – Category Review`,
     html: baseTemplate(`
-      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${hod.full_name},</p>
+      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${reviewer.full_name},</p>
       <h2 style="margin:0 0 20px; color:#0f172a; font-size:22px;">New incident requires your review</h2>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">A new incident has been reported for your department and is awaiting your review and feedback.</p>
+      <p style="color:#475569; font-size:14px; line-height:1.7;">A new incident has been reported under your assigned incident category and is awaiting your review and feedback.</p>
       ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'with_hod')}
       <div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:#92400e; font-size:13px; font-weight:600;">⏱ SLA Reminder</p>
         <p style="margin:6px 0 0; color:#b45309; font-size:13px;">You have <strong>7 days</strong> to provide your feedback. Reminders will be sent after Day 5.</p>
       </div>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">Please log in to the IMS portal to review the incident details and provide your department feedback.</p>
+      <p style="color:#475569; font-size:14px; line-height:1.7;">Please log in to the IMS portal to review the incident details and provide your feedback.</p>
     `)
   }),
 
-  // ── 3. HOD SLA Reminder (Day 5) ──────────────────────────────────────────
-  hodSlaReminder: (incident, hod, daysElapsed) => ({
-    subject: `[JPHRC IMS] ⚠️ SLA Reminder: Incident ${incident.reference_id} Awaits Your Feedback`,
-    html: baseTemplate(`
-      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${hod.full_name},</p>
-      <h2 style="margin:0 0 20px; color:#b45309; font-size:22px;">⚠️ Feedback Pending – Day ${daysElapsed} of 7</h2>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">This is an automated reminder that the following incident is still awaiting your feedback. Please action it at the earliest to avoid an SLA breach.</p>
-      ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'with_hod')}
-      <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px 18px; margin:20px 0;">
-        <p style="margin:0; color:#991b1b; font-size:13px; font-weight:600;">🚨 SLA Alert</p>
-        <p style="margin:6px 0 0; color:#dc2626; font-size:13px;">Day ${daysElapsed}/7 – Only <strong>${7 - daysElapsed} day(s) remaining</strong> before this incident breaches SLA.</p>
-      </div>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">Failure to respond within the SLA window will trigger an escalation to the IMC and Management.</p>
-    `)
-  }),
+  // ── 3. Reviewer SLA Reminder ──────────────────────────────────────────────
+  hodSlaReminder: (incident, reviewer, daysElapsed, slaDays = 7) => {
+    const remaining = Math.max(0, slaDays - daysElapsed);
+    return {
+      subject: `[JPHRC IMS] ⚠️ SLA Reminder: Incident ${incident.reference_id} Awaits Your Feedback`,
+      html: baseTemplate(`
+        <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${reviewer.full_name},</p>
+        <h2 style="margin:0 0 20px; color:#b45309; font-size:22px;">⚠️ Feedback Pending – Day ${daysElapsed} of ${slaDays}</h2>
+        <p style="color:#475569; font-size:14px; line-height:1.7;">This is an automated reminder that the following incident is still awaiting your feedback. Please action it at the earliest to avoid an SLA breach.</p>
+        ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'with_hod')}
+        <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:14px 18px; margin:20px 0;">
+          <p style="margin:0; color:#991b1b; font-size:13px; font-weight:600;">🚨 SLA Alert</p>
+          <p style="margin:6px 0 0; color:#dc2626; font-size:13px;">${remaining > 0 ? `Day ${daysElapsed}/${slaDays} – Only <strong>${remaining} day(s) remaining</strong> before this incident breaches SLA.` : `Day ${daysElapsed}/${slaDays} – This incident has exceeded the SLA feedback window.`}</p>
+        </div>
+        <p style="color:#475569; font-size:14px; line-height:1.7;">Failure to respond within the SLA window will trigger an escalation to the IMC and Management.</p>
+      `)
+    };
+  },
 
   // ── 4. Incident Forwarded to IMC ─────────────────────────────────────────
   incidentToImc: (incident, imcMember) => ({
@@ -167,18 +170,18 @@ const templates = {
     html: baseTemplate(`
       <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${imcMember.full_name},</p>
       <h2 style="margin:0 0 20px; color:#0f172a; font-size:22px;">Incident added to IMC Review Queue</h2>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">An incident has completed the HOD review stage and has been forwarded to the IMC for quality review and further action.</p>
+      <p style="color:#475569; font-size:14px; line-height:1.7;">An incident has completed the initial department feedback stage and has been forwarded to the IMC for quality review and further action.</p>
       ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'with_imc')}
     `)
   }),
 
   // ── 5. Redirect Requested (to IMC) ───────────────────────────────────────
-  redirectRequested: (incident, imcMember, fromDept, reason) => ({
+  redirectRequested: (incident, imcMember, fromSource, reason) => ({
     subject: `[JPHRC IMS] Redirect Request: Incident ${incident.reference_id}`,
     html: baseTemplate(`
       <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${imcMember.full_name},</p>
-      <h2 style="margin:0 0 20px; color:#0f172a; font-size:22px;">HOD has requested a department redirect</h2>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">The HOD of <strong>${fromDept}</strong> has submitted a redirection request for the following incident, indicating it may be misrouted.</p>
+      <h2 style="margin:0 0 20px; color:#0f172a; font-size:22px;">Assigned Reviewer requested a category redirect</h2>
+      <p style="color:#475569; font-size:14px; line-height:1.7;">The assigned reviewer for <strong>${fromSource}</strong> has submitted a redirection request for the following incident, indicating it may belong under a different incident category.</p>
       ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'redirect_requested')}
       <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:#9a3412; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">Redirection Reason</p>
@@ -188,18 +191,18 @@ const templates = {
     `)
   }),
 
-  // ── 6. Redirect Approved/Rejected (to original HOD) ─────────────────────
-  redirectDecision: (incident, hod, approved, newDept, imcReason) => ({
+  // ── 6. Redirect Approved/Rejected (to requesting reviewer) ───────────────
+  redirectDecision: (incident, reviewer, approved, newTargets, imcReason) => ({
     subject: `[JPHRC IMS] Redirect ${approved ? 'Approved' : 'Rejected'}: Incident ${incident.reference_id}`,
     html: baseTemplate(`
-      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${hod.full_name},</p>
+      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${reviewer.full_name},</p>
       <h2 style="margin:0 0 20px; color:#0f172a; font-size:22px;">Redirect Request ${approved ? 'Approved ✓' : 'Rejected ✗'}</h2>
-      ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, approved ? 'with_hod' : 'with_hod')}
+      ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'with_hod')}
       <div style="background:${approved ? '#ecfdf5' : '#fef2f2'}; border:1px solid ${approved ? '#a7f3d0' : '#fca5a5'}; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:${approved ? '#065f46' : '#991b1b'}; font-size:13px;">
           ${approved
-        ? `✅ IMC has approved the redirect. The incident has been forwarded to <strong>${newDept}</strong>.`
-        : `❌ IMC has rejected the redirect request. The incident has been returned to your queue for action.`
+        ? `✅ IMC has approved the redirect. The incident has been forwarded to <strong>${newTargets}</strong>.`
+        : `❌ IMC has rejected the redirect request. The incident has been returned to your queue for feedback.`
       }
         </p>
         ${imcReason ? `<p style="margin:8px 0 0; color:#475569; font-size:12px; font-style:italic;">"${imcReason}"</p>` : ''}
@@ -240,7 +243,7 @@ const templates = {
       ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, 'pending_training')}
       <div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:#92400e; font-size:13px; font-weight:600;">Required Action</p>
-        <p style="margin:6px 0 0; color:#b45309; font-size:13px;">Please complete the assigned training modules at the earliest. Upon completion, your HOD or the IMC will verify and close the incident.</p>
+        <p style="margin:6px 0 0; color:#b45309; font-size:13px;">Please complete the assigned training modules at the earliest. Upon completion, the assigned department reviewer or the IMC will verify and close the incident.</p>
       </div>
     `)
   }),
@@ -268,18 +271,28 @@ const templates = {
     `)
   }),
 
-  // ── 13. HOD Feedback Reminder (Manual or Automated from IMC/Management) ───
-  hodFeedbackReminder: (incident, hod, remindedBy) => ({
+  // ── 13. Reviewer Feedback Reminder (Manual or Automated from IMC/Management)
+  hodFeedbackReminder: (incident, reviewer, remindedBy) => ({
     subject: `[JPHRC IMS] 🔔 Reminder: Incident ${incident.reference_id} Awaits Your Feedback`,
     html: baseTemplate(`
-      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${hod.full_name},</p>
+      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${reviewer.full_name},</p>
       <h2 style="margin:0 0 20px; color:#b45309; font-size:22px;">🔔 Feedback Requested by ${remindedBy}</h2>
-      <p style="color:#475569; font-size:14px; line-height:1.7;">This is a reminder from <strong>${remindedBy}</strong> regarding Incident <strong>${incident.reference_id}</strong>. Your departmental review and feedback have not yet been submitted for this incident.</p>
+      <p style="color:#475569; font-size:14px; line-height:1.7;">This is a reminder from <strong>${remindedBy}</strong> regarding Incident <strong>${incident.reference_id}</strong>. Your assigned category review and feedback have not yet been submitted for this incident.</p>
       ${incidentCard(incident.reference_id, incident.incident_type, incident.severity, incident.status)}
       <div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:14px 18px; margin:20px 0;">
         <p style="margin:0; color:#92400e; font-size:13px; font-weight:600;">Action Required</p>
-        <p style="margin:6px 0 0; color:#b45309; font-size:13px;">Please log in to the IMS portal and submit your review as Head of Department at the earliest to facilitate timely incident resolution.</p>
+        <p style="margin:6px 0 0; color:#b45309; font-size:13px;">Please log in to the IMS portal and submit your feedback at the earliest to facilitate timely incident resolution.</p>
       </div>
+    `)
+  }),
+
+  // ── 14. Generic Automated Alert ──────────────────────────────────────────
+  genericAlert: (subject, message, recipientName = 'Team Member') => ({
+    subject,
+    text: message,
+    html: baseTemplate(`
+      <p style="margin:0 0 6px; color:#64748b; font-size:13px;">Dear ${recipientName},</p>
+      <p style="color:#475569; font-size:14px; line-height:1.7; white-space:pre-line;">${message}</p>
     `)
   }),
 
@@ -322,9 +335,7 @@ const sendEmail = async (to, templateData, options = {}) => {
     templateData.isAuth ||
     templateData.subject?.toLowerCase().includes('welcome') ||
     templateData.subject?.toLowerCase().includes('otp') ||
-    templateData.subject?.toLowerCase().includes('password') ||
-    templateData.subject?.toLowerCase().includes('account') ||
-    templateData.subject?.toLowerCase().includes('verification')
+    templateData.subject?.toLowerCase().includes('password')
   );
 
   // 3. System Configuration Check

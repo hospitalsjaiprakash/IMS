@@ -20,8 +20,8 @@ router.get('/broadcast-attachments/download', authenticate, adminController.down
 router.get('/attachments', authenticate, authorize('system_admin'), adminController.getAllAttachments);
 
 // Analytics & Dashboard
-router.get('/dashboard', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
-router.get('/analytics', authenticate, authorize('system_admin'), adminController.getSystemAnalytics);
+router.get('/dashboard', authenticate, authorize('system_admin', 'head_management'), adminController.getSystemAnalytics);
+router.get('/analytics', authenticate, authorize('system_admin', 'head_management'), adminController.getSystemAnalytics);
 
 // System Config
 router.get('/config', authenticate, authorize('system_admin'), adminController.getSystemConfig);
@@ -39,6 +39,7 @@ router.delete('/imc-members/:id', authenticate, authorize('system_admin'), admin
 router.post('/stop-imc', authenticate, authorize('system_admin'), adminController.stopImcAccess);
 
 // Audit & Analytics
+router.get('/audit-logs/actions', authenticate, authorize('system_admin'), adminController.getAuditActions);
 router.get('/audit-logs/export', authenticate, authorize('system_admin'), adminController.exportAuditLogs);
 router.get('/audit-logs', authenticate, authorize('system_admin'), adminController.getAuditLogs);
 router.get('/role-audit', authenticate, authorize('system_admin'), adminController.getRoleAudit);
@@ -52,7 +53,10 @@ router.post('/users/:id/toggle-status', authenticate, authorize('system_admin'),
 router.get('/management-members', authenticate, authorize('system_admin'), adminController.getManagementMembers);
 router.delete('/management-members/:id', authenticate, authorize('system_admin'), adminController.removeManagementRole);
 
-// Department Mapping & Reviewers
+// Department Mapping, Category Feedback Mapping & Reviewers
+router.get('/category-mappings', authenticate, authorize('system_admin'), adminController.getCategoryMappings);
+router.post('/category-mappings', authenticate, authorize('system_admin'), adminController.mapCategoryFeedbackStaff);
+router.delete('/category-mappings/:id', authenticate, authorize('system_admin'), adminController.removeCategoryFeedbackStaff);
 router.post('/departments', authenticate, authorize('system_admin'), adminController.createDepartment);
 router.delete('/departments/:id', authenticate, authorize('system_admin'), adminController.deleteDepartment);
 router.post('/map-department-leader', authenticate, authorize('system_admin'), adminController.mapDepartmentLeader);

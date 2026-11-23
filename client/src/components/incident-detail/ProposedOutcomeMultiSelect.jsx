@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Check, ChevronDown, X, AlertCircle } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Check, ChevronDown, X } from 'lucide-react';
 import { PROPOSED_OUTCOME_OPTIONS } from '../../utils/helpers';
 
 const getOutcomeBadgeStyle = (outcome) => {

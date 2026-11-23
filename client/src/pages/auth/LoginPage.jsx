@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/authStore';
 import { authApi, pingServer } from '../../api';
 import { AlertCircle, CheckCircle2, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Spinner } from '../../components/ui';
+import { getRoleDashboard, validatePassword, getApiErrorMessage } from '../../utils/helpers';
 
 import jphBuildImg from '../../assets/JPHBUILD.webp';
 import logoImg from '../../assets/logo.webp';
@@ -16,50 +17,43 @@ export default function LoginPage() {
   const handleMouseMove = (e) => {
     if (!bgRef.current) return;
     const { clientX, clientY } = e;
-    // Calculate movement offset based on cursor position relative to screen center
     const moveX = (clientX / window.innerWidth - 0.5) * 60;
     const moveY = (clientY / window.innerHeight - 0.5) * 60;
     bgRef.current.style.transform = `translate(${moveX}px, ${moveY}px)`;
   };
 
-  const [mode, setMode] = useState('login'); // 'login' | 'register' | 'forgot' | 'forgot_otp'
+  const [mode, setMode] = useState('login'); // 'login' | 'register' | 'register_otp' | 'forgot' | 'forgot_otp'
   const [localLoading, setLocalLoading] = useState(false);
-  const [serverWaking, setServerWaking] = useState(false);
+  const [serverSlow, setServerSlow] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
 
-  // Ping the server on mount to wake it up before the user submits the form
   useEffect(() => {
     pingServer();
   }, []);
 
-  // Login state
   const [loginForm, setLoginForm] = useState({ employeeId: '', password: '' });
-
-  // Register state
   const [regForm, setRegForm] = useState({ fullName: '', employeeId: '', email: '', password: '', otp: '' });
-
-  // Forgot password state
   const [forgotForm, setForgotForm] = useState({ employeeId: '', email: '', otp: '', newPassword: '' });
 
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
   const handleLoginChange = (e) => {
-    setLoginForm(f => ({ ...f, [e.target.name]: e.target.value }));
+    setLoginForm((f) => ({ ...f, [e.target.name]: e.target.value }));
     setError('');
     setSuccessMsg('');
   };
 
   const handleRegChange = (e) => {
-    setRegForm(f => ({ ...f, [e.target.name]: e.target.value }));
+    setRegForm((f) => ({ ...f, [e.target.name]: e.target.value }));
     setError('');
     setSuccessMsg('');
   };
 
   const handleForgotChange = (e) => {
-    setForgotForm(f => ({ ...f, [e.target.name]: e.target.value }));
+    setForgotForm((f) => ({ ...f, [e.target.name]: e.target.value }));
     setError('');
     setSuccessMsg('');
   };
@@ -70,31 +64,24 @@ export default function LoginPage() {
       setError('Employee ID and password are required.');
       return;
     }
-    setServerWaking(false);
-    // Show a friendly "waking up" message after 8 seconds if still loading
-    const wakingTimer = setTimeout(() => setServerWaking(true), 8000);
+    setServerSlow(false);
+    const slowTimer = setTimeout(() => setServerSlow(true), 8000);
     const result = await login(loginForm);
-    clearTimeout(wakingTimer);
-    setServerWaking(false);
+    clearTimeout(slowTimer);
+    setServerSlow(false);
+
     if (result.success) {
-      const roleDashboards = {
-        imc: '/imc/dashboard',
-        head_management: '/management/dashboard',
-        system_admin: '/admin/dashboard',
-        asst_coo: '/executive/dashboard',
-        coo: '/executive/dashboard'
-      };
-      navigate(roleDashboards[result.user?.role] || '/dashboard');
+      navigate(getRoleDashboard(result.user));
     } else {
-      // Friendly message for timeout / network errors caused by Render cold start
-      const isTimeout = result.error?.toLowerCase().includes('timeout') ||
-                        result.error?.toLowerCase().includes('network') ||
-                        result.error?.toLowerCase().includes('failed');
-      if (isTimeout) {
-        setError('The server took too long to respond. This can happen after a period of inactivity. Please try again — it should work now.');
-      } else {
-        setError(result.error);
-      }
+      const isTimeout =
+        result.error?.toLowerCase().includes('timeout') ||
+        result.error?.toLowerCase().includes('network') ||
+        result.error?.toLowerCase().includes('failed');
+      setError(
+        isTimeout
+          ? 'Unable to reach the server right now. Please check your connection and try again.'
+          : result.error
+      );
     }
   };
 
@@ -104,24 +91,19 @@ export default function LoginPage() {
       setError('Full Name, Employee ID, Email, and Password are required.');
       return;
     }
-    if (regForm.password.length < 6 || !/[A-Za-z]/.test(regForm.password) || !/([0-9]|[^A-Za-z0-9])/.test(regForm.password)) {
-      setError('Password must be at least 6 characters and include at least one letter and one number or special character.');
-      return;
-    }
-    if (new TextEncoder().encode(regForm.password).length > 72) {
-      setError('Password must not exceed 72 bytes.');
+    const pwCheck = validatePassword(regForm.password);
+    if (!pwCheck.valid) {
+      setError(pwCheck.error);
       return;
     }
     const result = await requestRegistrationOtp(regForm);
     if (result.success) {
       setSuccessMsg(result.message || 'Verification OTP sent to your official HRMS email address.');
       setMode('register_otp');
+    } else if (result.code === 'OTP_COOLDOWN' && result.retryAfterSeconds) {
+      setError(`Please wait ${result.retryAfterSeconds} seconds before requesting another OTP.`);
     } else {
-      if (result.code === 'OTP_COOLDOWN' && result.retryAfterSeconds) {
-        setError(`Please wait ${result.retryAfterSeconds} seconds before requesting another OTP.`);
-      } else {
-        setError(result.error);
-      }
+      setError(result.error);
     }
   };
 
@@ -152,22 +134,21 @@ export default function LoginPage() {
     try {
       const res = await authApi.employeeForgotPassword({
         employeeId: forgotForm.employeeId,
-        email: forgotForm.email
+        email: forgotForm.email,
       });
       setSuccessMsg(
         res.data.message ||
-        'If your details match an active registered account, a verification OTP has been sent to the registered email.'
+          'If your details match an active registered account, a verification OTP has been sent to the registered email.'
       );
       setMode('forgot_otp');
     } catch (err) {
       const status = err.response?.status;
       const code = err.response?.data?.code;
       const retryAfter = err.response?.data?.retryAfterSeconds;
-      const errData = err.response?.data?.error;
       if (status === 429 && code === 'OTP_COOLDOWN' && retryAfter) {
         setError(`Please wait ${retryAfter} seconds before requesting another OTP.`);
       } else {
-        setError(typeof errData === 'string' ? errData : (errData?.message || 'Unable to process password reset request right now. Please try again.'));
+        setError(getApiErrorMessage(err, 'Unable to process password reset request right now. Please try again.'));
       }
     } finally {
       setLocalLoading(false);
@@ -180,12 +161,9 @@ export default function LoginPage() {
       setError('Please enter the OTP and your new password.');
       return;
     }
-    if (forgotForm.newPassword.length < 6 || !/[A-Za-z]/.test(forgotForm.newPassword) || !/([0-9]|[^A-Za-z0-9])/.test(forgotForm.newPassword)) {
-      setError('Password must be at least 6 characters and include at least one letter and one number or special character.');
-      return;
-    }
-    if (new TextEncoder().encode(forgotForm.newPassword).length > 72) {
-      setError('Password must not exceed 72 bytes.');
+    const pwCheck = validatePassword(forgotForm.newPassword);
+    if (!pwCheck.valid) {
+      setError(pwCheck.error);
       return;
     }
     setLocalLoading(true);
@@ -194,14 +172,13 @@ export default function LoginPage() {
       const res = await authApi.employeeResetPassword({
         employeeId: forgotForm.employeeId,
         otp: forgotForm.otp,
-        newPassword: forgotForm.newPassword
+        newPassword: forgotForm.newPassword,
       });
       setSuccessMsg(res.data.message || 'Password reset successfully! Please log in.');
       setMode('login');
       setLoginForm({ employeeId: forgotForm.employeeId, password: '' });
     } catch (err) {
-      const errData = err.response?.data?.error;
-      setError(typeof errData === 'string' ? errData : (errData?.message || 'Failed to reset password. Please check OTP.'));
+      setError(getApiErrorMessage(err, 'Failed to reset password. Please check your OTP.'));
     } finally {
       setLocalLoading(false);
     }
@@ -209,7 +186,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-white flex">
-      {/* Left Split: Hero Image */}
       <div className="hidden lg:flex lg:w-[65%] relative bg-green-900 overflow-hidden">
         <img
           src={jphBuildImg}
@@ -218,66 +194,66 @@ export default function LoginPage() {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-green-900/80 to-transparent" />
         <div className="relative z-10 flex flex-col justify-end p-16 w-full text-white">
-          <h2 className="text-5xl lg:text-7xl font-bold font-display mb-6 tracking-tight text-white drop-shadow-lg">
+          <p className="text-5xl lg:text-7xl font-bold font-display mb-6 tracking-tight text-white drop-shadow-lg">
             WELCOME TO THE IMS
-          </h2>
-          <h2 className="text-3xl font-bold font-display mb-2 text-white/90">
-            Jaiprakash Hospital & Research Centre
-          </h2>
-          <p className="text-green-50 text-lg italic">
-            Quality Healthcare at Affordable Price
           </p>
+          <p className="text-3xl font-bold font-display mb-2 text-white/90">
+            Jaiprakash Hospital &amp; Research Centre
+          </p>
+          <p className="text-green-50 text-lg italic">Quality Healthcare at Affordable Price</p>
         </div>
       </div>
 
-      {/* Right Split: Login Form */}
       <div
         className="w-full lg:w-[35%] flex flex-col relative bg-white overflow-y-auto overflow-x-hidden"
         onMouseMove={handleMouseMove}
       >
-
-        {/* Scattered Particle Pattern Background (Antigravity inspired) */}
         <div
           ref={bgRef}
           className="absolute inset-[-100px] z-0 pointer-events-none transition-transform duration-100 ease-out"
           style={{
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='14' cy='18' r='1' fill='%2386efac'/%3E%3Ccircle cx='54' cy='38' r='1.5' fill='%23bae6fd'/%3E%3Ccircle cx='96' cy='22' r='1' fill='%2322c55e'/%3E%3Ccircle cx='34' cy='78' r='1' fill='%2386efac'/%3E%3Ccircle cx='106' cy='94' r='1.5' fill='%23e0f2fe'/%3E%3Ccircle cx='72' cy='106' r='1' fill='%234ade80'/%3E%3Ccircle cx='110' cy='50' r='1' fill='%2386efac'/%3E%3Ccircle cx='26' cy='106' r='1.5' fill='%23bae6fd'/%3E%3Ccircle cx='66' cy='14' r='1' fill='%2322c55e'/%3E%3Ccircle cx='18' cy='58' r='1' fill='%2386efac'/%3E%3Ccircle cx='85' cy='65' r='1' fill='%234ade80'/%3E%3Ccircle cx='45' cy='95' r='1.2' fill='%23bbf7d0'/%3E%3C/svg%3E")`,
             backgroundSize: '120px 120px',
-            opacity: 0.8
+            opacity: 0.8,
           }}
         />
 
-        {/* Form Area */}
         <div className="flex-1 flex items-center justify-center p-6 lg:p-12 relative z-10">
           <div className="w-full max-w-[400px]">
-            {/* Header */}
             <div className="text-center mb-8">
               <img src={logoImg} alt="JPHRC Logo" className="h-28 w-auto mx-auto mb-6 drop-shadow-sm" />
-              <h1 className="text-2xl font-bold text-slate-900 font-display tracking-tight">
-                IMS PORTAL
-              </h1>
-              <p className="text-sm text-slate-500 mt-1">
-                Incident Management System
-              </p>
+              <h1 className="text-2xl font-bold text-slate-900 font-display tracking-tight">IMS PORTAL</h1>
+              <p className="text-sm text-slate-500 mt-1">Incident Management System</p>
             </div>
 
-            {/* Mode Switcher */}
             {mode === 'login' || mode === 'register' ? (
               <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
                 <button
                   type="button"
-                  onClick={() => { setMode('login'); setError(''); setSuccessMsg(''); }}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-lg transition-all ${mode === 'login' ? 'bg-white text-green-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                  onClick={() => {
+                    setMode('login');
+                    setError('');
+                    setSuccessMsg('');
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+                    mode === 'login' ? 'bg-white text-green-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <LogIn size={16} className={mode === 'login' ? 'text-green-600' : 'text-slate-400'} />
+                  <LogIn size={16} className={mode === 'login' ? 'text-green-700' : 'text-slate-400'} />
                   Sign In
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setMode('register'); setError(''); setSuccessMsg(''); }}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-lg transition-all ${mode === 'register' ? 'bg-white text-green-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                  onClick={() => {
+                    setMode('register');
+                    setError('');
+                    setSuccessMsg('');
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+                    mode === 'register' ? 'bg-white text-green-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <UserPlus size={16} className={mode === 'register' ? 'text-green-600' : 'text-slate-400'} />
+                  <UserPlus size={16} className={mode === 'register' ? 'text-green-700' : 'text-slate-400'} />
                   Create Account
                 </button>
               </div>
@@ -285,7 +261,11 @@ export default function LoginPage() {
               <div className="mb-6 flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => { setMode('register'); setError(''); setSuccessMsg(''); }}
+                  onClick={() => {
+                    setMode('register');
+                    setError('');
+                    setSuccessMsg('');
+                  }}
                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-700 hover:text-green-800"
                 >
                   <ArrowLeft size={16} /> Back to Sign Up
@@ -296,7 +276,11 @@ export default function LoginPage() {
               <div className="mb-6 flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => { setMode('login'); setError(''); setSuccessMsg(''); }}
+                  onClick={() => {
+                    setMode('login');
+                    setError('');
+                    setSuccessMsg('');
+                  }}
                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-700 hover:text-green-800"
                 >
                   <ArrowLeft size={16} /> Back to Sign In
@@ -312,25 +296,23 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Server waking up banner — shown after 8s of loading */}
-            {serverWaking && !error && (
+            {serverSlow && !error && (
               <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-5">
                 <Loader2 size={16} className="text-amber-600 flex-shrink-0 mt-0.5 animate-spin" />
                 <p className="text-sm text-amber-800">
-                  <strong>Server is starting up…</strong> This takes about 30–60 seconds after a period of inactivity. Please hold on!
+                  <strong>Still connecting…</strong> The server is taking longer than usual to respond. Please wait a moment.
                 </p>
               </div>
             )}
 
             {successMsg && (
               <div className="flex items-start gap-2.5 bg-green-50 border border-green-200 rounded-xl p-3.5 mb-5">
-                <CheckCircle2 size={16} className="text-green-600 flex-shrink-0 mt-0.5" />
+                <CheckCircle2 size={16} className="text-green-700 flex-shrink-0 mt-0.5" />
                 <p className="text-sm text-green-800 font-medium">{successMsg}</p>
               </div>
             )}
 
             {mode === 'login' && (
-              /* LOGIN FORM */
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Employee ID</label>
@@ -339,7 +321,7 @@ export default function LoginPage() {
                     value={loginForm.employeeId}
                     onChange={handleLoginChange}
                     placeholder="e.g. 12243"
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-green-500 focus:ring-green-500 rounded-xl text-slate-900 outline-none transition-all focus:ring-2 focus:ring-opacity-20"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-green-600 focus:ring-green-600 rounded-xl text-slate-900 outline-none transition-all focus:ring-2 focus:ring-opacity-20"
                     autoComplete="username"
                   />
                 </div>
@@ -349,8 +331,12 @@ export default function LoginPage() {
                     <label className="block text-sm font-semibold text-slate-700">Password</label>
                     <button
                       type="button"
-                      onClick={() => { setMode('forgot'); setError(''); setSuccessMsg(''); }}
-                      className="text-xs font-semibold text-green-600 hover:text-green-700"
+                      onClick={() => {
+                        setMode('forgot');
+                        setError('');
+                        setSuccessMsg('');
+                      }}
+                      className="text-xs font-semibold text-green-700 hover:text-green-800"
                     >
                       Forgot Password?
                     </button>
@@ -362,14 +348,14 @@ export default function LoginPage() {
                       value={loginForm.password}
                       onChange={handleLoginChange}
                       placeholder="Enter password"
-                      className="w-full px-4 py-3 pr-11 bg-slate-50 border border-slate-200 focus:border-green-500 focus:ring-green-500 rounded-xl text-slate-900 outline-none transition-all focus:ring-2 focus:ring-opacity-20"
+                      className="w-full px-4 py-3 pr-11 bg-slate-50 border border-slate-200 focus:border-green-600 focus:ring-green-600 rounded-xl text-slate-900 outline-none transition-all focus:ring-2 focus:ring-opacity-20"
                       autoComplete="current-password"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      onClick={() => setShowLoginPassword((s) => !s)}
+                      aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
                       className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
-                      title={showLoginPassword ? 'Hide password' : 'Show password'}
                     >
                       {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
@@ -379,10 +365,10 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-3.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-2 disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {loading ? <Spinner size={18} className="text-white" /> : null}
-                  {loading ? (serverWaking ? 'Server Starting Up…' : 'Signing In…') : 'Sign In'}
+                  {loading ? 'Signing In…' : 'Sign In'}
                 </button>
               </form>
             )}
@@ -395,8 +381,8 @@ export default function LoginPage() {
                     name="fullName"
                     value={regForm.fullName}
                     onChange={handleRegChange}
-                    placeholder="As in hospital records (e.g. Sourav Barik)"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                    placeholder="As in hospital records"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
 
@@ -407,10 +393,9 @@ export default function LoginPage() {
                     value={regForm.employeeId}
                     onChange={handleRegChange}
                     placeholder="e.g. 12243"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
-
 
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Official Email Address</label>
@@ -419,12 +404,10 @@ export default function LoginPage() {
                     type="email"
                     value={regForm.email}
                     onChange={handleRegChange}
-                    placeholder="e.g. sourav.barik@jphrc.org"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                    placeholder="name@jphrc.org"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
-                  <p className="text-xs text-slate-500 mt-1">
-                    Must match your official email registered in OfficePortal HRMS.
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1">Must match your official email registered in OfficePortal HRMS.</p>
                 </div>
 
                 <div>
@@ -436,13 +419,13 @@ export default function LoginPage() {
                       value={regForm.password}
                       onChange={handleRegChange}
                       placeholder="Min 6 chars (letter + number/symbol)"
-                      className="w-full px-4 py-2.5 pr-11 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                      className="w-full px-4 py-2.5 pr-11 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowRegPassword(!showRegPassword)}
+                      onClick={() => setShowRegPassword((s) => !s)}
+                      aria-label={showRegPassword ? 'Hide password' : 'Show password'}
                       className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
-                      title={showRegPassword ? 'Hide password' : 'Show password'}
                     >
                       {showRegPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
@@ -452,7 +435,7 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                  className="w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
                 >
                   {loading ? <Spinner size={16} className="text-white" /> : null}
                   {loading ? 'Sending OTP…' : 'Create Account'}
@@ -469,7 +452,7 @@ export default function LoginPage() {
                     value={regForm.otp}
                     onChange={handleRegChange}
                     placeholder="Enter the 6-digit OTP sent to your email"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm tracking-widest text-center font-mono"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm tracking-widest text-center font-mono"
                     maxLength={6}
                   />
                   <p className="text-xs text-slate-500 mt-2 text-center">
@@ -480,8 +463,7 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
-
+                  className="w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
                 >
                   {loading ? <Spinner size={16} className="text-white" /> : null}
                   {loading ? 'Verifying & Creating…' : 'Verify & Create Account'}
@@ -501,7 +483,7 @@ export default function LoginPage() {
                     value={forgotForm.employeeId}
                     onChange={handleForgotChange}
                     placeholder="e.g. 12243"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
 
@@ -512,15 +494,15 @@ export default function LoginPage() {
                     type="email"
                     value={forgotForm.email}
                     onChange={handleForgotChange}
-                    placeholder="e.g. sourav.barik@jphrc.org"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                    placeholder="name@jphrc.org"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={localLoading}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                  className="w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
                 >
                   {localLoading ? <Spinner size={16} className="text-white" /> : null}
                   {localLoading ? 'Sending OTP…' : 'Send Reset OTP'}
@@ -540,7 +522,7 @@ export default function LoginPage() {
                     value={forgotForm.otp}
                     onChange={handleForgotChange}
                     placeholder="6-digit OTP"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm font-mono tracking-widest text-center"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm font-mono tracking-widest text-center"
                   />
                 </div>
 
@@ -552,14 +534,14 @@ export default function LoginPage() {
                       type={showForgotPassword ? 'text' : 'password'}
                       value={forgotForm.newPassword}
                       onChange={handleForgotChange}
-                      placeholder="Create new secure password"
-                      className="w-full px-4 py-2.5 pr-11 bg-slate-50 border border-slate-200 focus:border-green-500 rounded-xl text-slate-900 outline-none transition-all text-sm"
+                      placeholder="Min 6 chars (letter + number/symbol)"
+                      className="w-full px-4 py-2.5 pr-11 bg-slate-50 border border-slate-200 focus:border-green-600 rounded-xl text-slate-900 outline-none transition-all text-sm"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowForgotPassword(!showForgotPassword)}
+                      onClick={() => setShowForgotPassword((s) => !s)}
+                      aria-label={showForgotPassword ? 'Hide password' : 'Show password'}
                       className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
-                      title={showForgotPassword ? 'Hide password' : 'Show password'}
                     >
                       {showForgotPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
@@ -569,7 +551,7 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={localLoading}
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                  className="w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
                 >
                   {localLoading ? <Spinner size={16} className="text-white" /> : null}
                   {localLoading ? 'Resetting…' : 'Set New Password & Sign In'}

@@ -1,39 +1,31 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import EventCard from './EventCard';
-import {
-  ListFilter,
-  Search,
-  SlidersHorizontal,
-  ChevronDown,
-  ChevronUp,
-  History,
-  CheckCircle2,
-  Bell,
-  Sparkles,
-  ShieldAlert
-} from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, History, Bell } from 'lucide-react';
 
 export default function CaseStoryFeed({
   events = [],
   incident,
-  onViewAttachment
+  onViewAttachment,
 }) {
-  const [filterMode, setFilterMode] = useState('all'); // 'all' | 'decisions' | 'investigation' | 'corrective'
+  const [filterMode, setFilterMode] = useState('all');
   const [showSystemActivity, setShowSystemActivity] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [allExpanded, setAllExpanded] = useState(false);
   const [expandedMap, setExpandedMap] = useState({});
 
-  // Filter events based on active tab, system toggle, and search query
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.toLowerCase().trim()), 200);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
   const filteredEvents = useMemo(() => {
     let list = Array.isArray(events) ? [...events] : [];
 
-    // Filter by System Activity toggle
     if (!showSystemActivity) {
       list = list.filter(e => !e.is_system_event);
     }
 
-    // Filter by workflow tab
     if (filterMode === 'decisions') {
       list = list.filter(e => [
         'IMC_ASSESSMENT_SUBMITTED',
@@ -44,7 +36,7 @@ export default function CaseStoryFeed({
         'INCIDENT_CLOSED',
         'MGMT_TRAINING_CLOSED',
         'REDIRECT_APPROVED',
-        'REDIRECT_REJECTED'
+        'REDIRECT_REJECTED',
       ].includes(e.event_type));
     } else if (filterMode === 'investigation') {
       list = list.filter(e => [
@@ -52,7 +44,7 @@ export default function CaseStoryFeed({
         'INVESTIGATION_REPORT_SUBMITTED',
         'INVESTIGATION_RETURNED',
         'HOD_FEEDBACK_SUBMITTED',
-        'DEPARTMENTS_INVOLVED'
+        'DEPARTMENTS_INVOLVED',
       ].includes(e.event_type));
     } else if (filterMode === 'corrective') {
       list = list.filter(e => [
@@ -65,24 +57,22 @@ export default function CaseStoryFeed({
         'LETTER_REVISED',
         'LETTERS_SUBMITTED_TO_MGMT',
         'LETTERS_RETURNED_FOR_REVISION',
-        'LETTERS_APPROVED_DISPATCHED'
+        'LETTERS_APPROVED_DISPATCHED',
       ].includes(e.event_type));
     }
 
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
+    if (debouncedSearch) {
       list = list.filter(e => {
-        const titleMatch = (e.title || '').toLowerCase().includes(q);
-        const actorMatch = (e.actor_name || '').toLowerCase().includes(q);
-        const summaryMatch = (e.summary || '').toLowerCase().includes(q);
+        const titleMatch = (e.title || '').toLowerCase().includes(debouncedSearch);
+        const actorMatch = (e.actor_name || '').toLowerCase().includes(debouncedSearch);
+        const summaryMatch = (e.summary || '').toLowerCase().includes(debouncedSearch);
         const payloadStr = JSON.stringify(e.payload || {}).toLowerCase();
-        return titleMatch || actorMatch || summaryMatch || payloadStr.includes(q);
+        return titleMatch || actorMatch || summaryMatch || payloadStr.includes(debouncedSearch);
       });
     }
 
     return list;
-  }, [events, filterMode, showSystemActivity, searchQuery]);
+  }, [events, filterMode, showSystemActivity, debouncedSearch]);
 
   const toggleExpand = (eventId) => {
     setExpandedMap(prev => {
@@ -118,7 +108,7 @@ export default function CaseStoryFeed({
               <h2 className="text-sm font-bold text-slate-900 tracking-tight">
                 Case Chronological Story
               </h2>
-              <span className="px-2 py-0.2 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                 {events.length} {events.length === 1 ? 'Event' : 'Events'}
               </span>
             </div>
@@ -128,7 +118,6 @@ export default function CaseStoryFeed({
           </div>
 
           <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
-            {/* System activity toggle */}
             <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 cursor-pointer select-none bg-slate-50 hover:bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 transition-colors">
               <input
                 type="checkbox"
@@ -139,13 +128,12 @@ export default function CaseStoryFeed({
               <Bell size={12} className={showSystemActivity ? 'text-indigo-600' : 'text-slate-400'} />
               <span>System Activity</span>
               {systemEventsCount > 0 && (
-                <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-1 py-0.2 rounded-full">
+                <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-1 rounded-full">
                   {systemEventsCount}
                 </span>
               )}
             </label>
 
-            {/* Expand / Collapse all */}
             <button
               type="button"
               onClick={handleToggleAll}
@@ -157,7 +145,7 @@ export default function CaseStoryFeed({
           </div>
         </div>
 
-        {/* CONTROLS: FILTER TABS & SEARCH */}
+        {/* CONTROLS */}
         <div className="pt-2.5 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto pb-0.5 sm:pb-0">
             {[
@@ -187,8 +175,8 @@ export default function CaseStoryFeed({
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search story & findings..."
-              className="w-full text-[11px] pl-7 pr-3 py-1 rounded-md border border-slate-200 bg-slate-50 focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+              placeholder="Search story & findings…"
+              className="w-full text-[11px] pl-7 pr-7 py-1 rounded-md border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
             />
             {searchQuery && (
               <button
@@ -209,7 +197,7 @@ export default function CaseStoryFeed({
           <History size={26} className="text-slate-300 mx-auto" />
           <h3 className="text-xs font-bold text-slate-800">No events matched the selected filter</h3>
           <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
-            Try switching to "All Story" tab or toggling "System Activity".
+            Try switching to &ldquo;All Story&rdquo; tab or toggling &ldquo;System Activity&rdquo;.
           </p>
           <button
             type="button"

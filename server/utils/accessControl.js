@@ -74,6 +74,11 @@ async function canUserAccessIncident(user, incidentId) {
      SELECT 1 FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2
      UNION ALL
      SELECT 1
+     FROM incident_category_links icl
+     JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id
+     WHERE icl.incident_id = $1 AND cfa.user_id = $2 AND cfa.is_active = TRUE
+     UNION ALL
+     SELECT 1
      FROM incident_departments idp
      JOIN departments d ON idp.department_id = d.id
      WHERE idp.incident_id = $1
@@ -102,6 +107,28 @@ async function canUserAccessIncident(user, incidentId) {
   );
 
   return participantRes.rows.length > 0;
+}
+
+/**
+ * Returns the incident categories linked to an incident for which the given user
+ * is an active assigned reviewer in category_feedback_assignees.
+ */
+async function getUserAssignedCategoriesForIncident(user, incidentId) {
+  if (!user || !incidentId) return [];
+
+  const res = await query(
+    `SELECT DISTINCT ic.id, ic.name
+     FROM incident_category_links icl
+     JOIN incident_categories ic ON ic.id = icl.category_id
+     JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id
+     WHERE icl.incident_id::text = $1
+       AND cfa.user_id = $2
+       AND cfa.is_active = TRUE
+     ORDER BY ic.name ASC`,
+    [String(incidentId), user.id]
+  );
+
+  return res.rows;
 }
 
 /**
@@ -194,6 +221,7 @@ function filterIncidentEventsForUser(user, events = []) {
 module.exports = {
   isPrivilegedRole,
   canUserAccessIncident,
+  getUserAssignedCategoriesForIncident,
   getUserManagedDepartmentsForIncident,
   canNonPrivilegedUserViewLetter,
   filterIncidentEventsForUser

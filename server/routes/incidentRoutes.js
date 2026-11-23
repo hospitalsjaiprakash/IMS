@@ -43,7 +43,7 @@ router.post('/:id/investigator-report', authenticate, authorize('imc', 'system_a
 router.post('/:id/reject-investigator-report', authenticate, authorize('imc', 'system_admin'), incidentWorkflowController.rejectInvestigatorReport);
 
 // Escalation, reminders & reopen
-router.post('/:id/escalate-priority', authenticate, authorize('imc', 'head_management'), incidentActionsController.escalatePriority);
+router.post('/:id/escalate-priority', authenticate, authorize('imc'), incidentActionsController.escalatePriority);
 router.post('/:id/remind-hod', authenticate, authorize('imc', 'head_management'), incidentActionsController.remindHod);
 router.post('/:id/reopen', authenticate, authorize('head_management', 'imc', 'system_admin'), incidentWorkflowController.reopenIncident);
 

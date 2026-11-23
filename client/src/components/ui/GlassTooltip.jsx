@@ -1,5 +1,3 @@
-import React from 'react';
-
 export const GlassTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     return (

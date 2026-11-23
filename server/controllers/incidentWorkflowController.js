@@ -3,7 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail, templates } = require('../utils/emailService');
 const { recordEvent, getNextRoundNo } = require('../utils/incidentEvents');
-const { isPrivilegedRole } = require('../utils/accessControl');
+const { isPrivilegedRole, getUserAssignedCategoriesForIncident } = require('../utils/accessControl');
 const bcrypt = require('bcryptjs');
 
 function formatProposedOutcome(outcome) {
@@ -78,7 +78,7 @@ async function resolveEmployeeUserId(emp, client) {
 }
 
 // =============================================
-// SUBMIT HOD FEEDBACK
+// SUBMIT DEPARTMENT / CATEGORY FEEDBACK
 // =============================================
 exports.submitHodFeedback = async (req, res) => {
   const client = await getClient();
@@ -86,7 +86,7 @@ exports.submitHodFeedback = async (req, res) => {
     await client.query('BEGIN');
 
     const { id } = req.params;
-    let { feedbackText, redirectToImc, redirectReason } = req.body;
+    let { feedbackText, redirectToImc } = req.body;
 
     const incidentResult = await client.query(
       'SELECT * FROM incidents WHERE id = $1',
@@ -100,17 +100,28 @@ exports.submitHodFeedback = async (req, res) => {
 
     const incident = incidentResult.rows[0];
 
-    // Rule: Cannot submit HOD feedback after IMC has already given feedback
+    // Rule: Cannot submit department/category feedback after IMC has already given feedback
     const imcCheck = await client.query(
       "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role = 'imc'",
       [id]
     );
     if (imcCheck.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Cannot submit HOD feedback because IMC has already submitted quality review feedback.' });
+      return res.status(400).json({ error: 'Cannot submit initial review feedback because IMC has already submitted quality review feedback.' });
     }
 
-    // Get department(s) where current user is the assigned feedback staff
+    // 1. Check incident category assignment for current user
+    const assignedCats = await getUserAssignedCategoriesForIncident(req.user, id);
+    let categoryId = assignedCats.length > 0 ? assignedCats[0].id : null;
+    let categoryName = assignedCats.length > 0 ? assignedCats[0].name : null;
+
+    if (req.body.category_id && assignedCats.some(c => c.id === parseInt(req.body.category_id, 10))) {
+      const matched = assignedCats.find(c => c.id === parseInt(req.body.category_id, 10));
+      categoryId = matched.id;
+      categoryName = matched.name;
+    }
+
+    // 2. Check legacy department assignment for current user
     const deptResult = await client.query(
       `SELECT DISTINCT d.id, d.name FROM departments d
        LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
@@ -126,7 +137,6 @@ exports.submitHodFeedback = async (req, res) => {
     let deptId = null;
 
     if (req.body.department_id && userDeptIds.includes(parseInt(req.body.department_id, 10))) {
-      // Ensure the requested department is actually targeted by this incident
       const explicitTarget = await client.query(
         'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = $2',
         [id, parseInt(req.body.department_id, 10)]
@@ -135,7 +145,6 @@ exports.submitHodFeedback = async (req, res) => {
         deptId = explicitTarget.rows[0].department_id;
       }
     } else if (userDeptIds.length > 0) {
-      // Check if any of HOD's departments is targeted by this incident
       const targetCheck = await client.query(
         'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = ANY($2)',
         [id, userDeptIds]
@@ -145,42 +154,53 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    // Only allow fallback for privileged admins or the verified redirect requester (never arbitrary HODs of unrelated departments)
-    if (!deptId && (incident.redirect_requested_by_user_id === req.user.id || isPrivilegedRole(req.user))) {
-      const incDepts = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1 LIMIT 1', [id]);
-      if (incDepts.rows.length) {
-        deptId = incDepts.rows[0].department_id;
-      } else if (userDeptIds.length > 0) {
-        deptId = userDeptIds[0];
+    // Privileged / redirect-requester fallback
+    if (!categoryId && !deptId && (incident.redirect_requested_by_user_id === req.user.id || isPrivilegedRole(req.user))) {
+      const incCats = await client.query(
+        `SELECT ic.id, ic.name FROM incident_category_links icl JOIN incident_categories ic ON ic.id = icl.category_id WHERE icl.incident_id = $1 LIMIT 1`,
+        [id]
+      );
+      if (incCats.rows.length) {
+        categoryId = incCats.rows[0].id;
+        categoryName = incCats.rows[0].name;
+      } else {
+        const incDepts = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1 LIMIT 1', [id]);
+        if (incDepts.rows.length) {
+          deptId = incDepts.rows[0].department_id;
+        } else if (userDeptIds.length > 0) {
+          deptId = userDeptIds[0];
+        }
       }
     }
 
-    if (!deptId) {
+    if (!categoryId && !deptId) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'This incident is not targeted at your department.' });
+      return res.status(403).json({ error: 'This incident is not assigned to you for review.' });
     }
 
-    // Check if this HOD or department has already submitted feedback
+    // Prevent duplicate feedback by the same reviewer/scope
     const existingFb = await client.query(
-      `SELECT id FROM feedbacks 
-       WHERE incident_id = $1 AND role = 'hod' 
-         AND (author_id = $2 OR department_id = $3)`,
-      [id, req.user.id, deptId]
+      `SELECT id FROM feedbacks
+       WHERE incident_id = $1 AND role = 'hod'
+         AND (
+           author_id = $2
+           OR ($3::int IS NOT NULL AND category_id = $3)
+           OR ($4::int IS NOT NULL AND department_id = $4)
+         )`,
+      [id, req.user.id, categoryId, deptId]
     );
 
     if (existingFb.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Feedback has already been submitted for your department. You can edit your existing feedback.' });
+      return res.status(400).json({ error: 'Feedback has already been submitted for your assigned category/department. You can edit your existing feedback.' });
     }
 
-    // Insert feedback
     await client.query(
-      `INSERT INTO feedbacks (incident_id, author_id, role, department_id, feedback_text, acknowledged_at)
-       VALUES ($1, $2, 'hod', $3, $4, NOW())`,
-      [id, req.user.id, deptId, feedbackText]
+      `INSERT INTO feedbacks (incident_id, author_id, role, department_id, category_id, feedback_text, acknowledged_at)
+       VALUES ($1, $2, 'hod', $3, $4, $5, NOW())`,
+      [id, req.user.id, deptId, categoryId, feedbackText]
     );
 
-    // Insert attachments if any
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         await client.query(
@@ -191,7 +211,22 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    // Check if ALL concerned departments have responded
+    // Check if ALL assigned categories (with active assignees) and legacy departments have responded
+    const pendingCats = await client.query(`
+      SELECT DISTINCT ic.id, ic.name
+      FROM incident_category_links icl
+      JOIN incident_categories ic ON ic.id = icl.category_id
+      JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
+      JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
+      WHERE icl.incident_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          WHERE f.incident_id = $1
+            AND f.role = 'hod'
+            AND (f.category_id = ic.id OR f.author_id = cfa.user_id)
+        )
+    `, [id]);
+
     const pendingDepts = await client.query(`
       SELECT d.id, d.name
       FROM incident_departments id_dept
@@ -199,20 +234,18 @@ exports.submitHodFeedback = async (req, res) => {
       WHERE id_dept.incident_id = $1
         AND NOT EXISTS (
           SELECT 1 FROM feedbacks f
-          LEFT JOIN users u ON u.id = f.author_id
-          WHERE f.incident_id = $1 
+          WHERE f.incident_id = $1
             AND f.role = 'hod'
             AND (
-              f.department_id = d.id 
+              f.department_id = d.id
               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
             )
         )
     `, [id]);
 
-    const allResponded = pendingDepts.rows.length === 0;
+    const allResponded = pendingCats.rows.length === 0 && pendingDepts.rows.length === 0;
 
-    // Update status
     if (redirectToImc) {
       await client.query(
         `UPDATE incidents SET status = 'redirect_requested', updated_at = NOW() WHERE id = $1`,
@@ -231,18 +264,22 @@ exports.submitHodFeedback = async (req, res) => {
       );
     }
 
-    // Record immutable HOD_FEEDBACK_SUBMITTED event
-    const dNameRes = await client.query('SELECT name FROM departments WHERE id = $1', [deptId]);
-    const deptName = dNameRes.rows[0]?.name || req.user.department || 'Department';
+    let scopeName = categoryName;
+    if (!scopeName && deptId) {
+      const dNameRes = await client.query('SELECT name FROM departments WHERE id = $1', [deptId]);
+      scopeName = dNameRes.rows[0]?.name;
+    }
+    scopeName = scopeName || req.user.department || 'Assigned Category';
 
     const hodEvt = await recordEvent(client, {
       incidentId: id,
       eventType: 'HOD_FEEDBACK_SUBMITTED',
       actor: req.user,
-      title: `Department Feedback: ${deptName}`,
-      summary: `Submitted by ${req.user.full_name} (${req.user.designation || 'HOD'})`,
+      title: `Department Feedback: ${scopeName}`,
+      summary: `Submitted by ${req.user.full_name} (${req.user.designation || 'Assigned Reviewer'})`,
       payload: {
-        department_name: deptName,
+        category_name: categoryName || scopeName,
+        department_name: scopeName,
         feedback_text: feedbackText,
         all_responded: allResponded
       }
@@ -257,13 +294,14 @@ exports.submitHodFeedback = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Notify IMC (in-app + email) only if ready
     if (redirectToImc || allResponded) {
-      const imcMembers = await query('SELECT id, email, full_name FROM users WHERE role = $1', ['imc']);
+      const imcMembers = await query(
+        "SELECT id, email, full_name FROM users WHERE (role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE) AND is_active = TRUE"
+      );
       for (const member of imcMembers.rows) {
         await createNotification(member.id, id,
           'Incident Ready for IMC Review',
-          `Incident ${incident.reference_id} is now in the IMC queue (all concerned HOD reviews complete).`,
+          `Incident ${incident.reference_id} is now in the IMC queue (all assigned category/department reviews complete).`,
           'incident_to_imc'
         );
         if (member.email) {
@@ -272,10 +310,9 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc, deptId, allResponded }, req.ip);
+    await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc, deptId, categoryId, allResponded }, req.ip);
 
     if (req.io) {
-      const currentStatus = redirectToImc ? 'redirect_requested' : (allResponded ? (incident.status === 'with_hod_and_imc' ? 'with_hod_and_imc' : 'with_imc') : incident.status);
       req.io.emit('incident_updated', { id });
     }
 
@@ -308,6 +345,7 @@ exports.claimIncident = async (req, res) => {
     if (existingClaim.rows.length > 0) {
       const claim = existingClaim.rows[0];
       if (new Date(claim.expires_at) > new Date()) {
+        await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Incident is already claimed by another IMC member.' });
       }
       // Release expired claim
@@ -330,8 +368,6 @@ exports.claimIncident = async (req, res) => {
       [id, req.user.id, expiresAt]
     );
 
-    await client.query('COMMIT');
-
     await recordEvent(client, {
       incidentId: id,
       eventType: 'IMC_CLAIMED',
@@ -341,6 +377,8 @@ exports.claimIncident = async (req, res) => {
       payload: { lock_minutes: lockMinutes, expires_at: expiresAt },
       isSystemEvent: true
     });
+
+    await client.query('COMMIT');
 
     await auditLog(req.user.id, 'IMC_CLAIM', id, { lockMinutes }, req.ip);
 
@@ -366,6 +404,7 @@ exports.submitImcFeedback = async (req, res) => {
     let { feedbackText, forwardToMd, severity, proposedOutcome } = req.body;
     
     if (!req.user.is_imc_lead) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Only the IMC Convenor can submit feedback.' });
     }
 
@@ -373,33 +412,46 @@ exports.submitImcFeedback = async (req, res) => {
     let cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
 
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
-    if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!incidentResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Not found' });
+    }
     const incident = incidentResult.rows[0];
 
-    // Rule: Only after HOD of all concerned department have given feedback, then only IMC can give feedback.
-    const pendingDepts = await client.query(`
-      SELECT d.name
+    // Rule: Only after all assigned category/department reviewers have given feedback can IMC proceed
+    const pendingScopes = await client.query(`
+      SELECT DISTINCT ic.name
+      FROM incident_category_links icl
+      JOIN incident_categories ic ON ic.id = icl.category_id
+      JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
+      JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
+      WHERE icl.incident_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.category_id = ic.id OR f.author_id = cfa.user_id)
+        )
+      UNION
+      SELECT DISTINCT d.name
       FROM incident_departments id_dept
       JOIN departments d ON d.id = id_dept.department_id
       WHERE id_dept.incident_id = $1
         AND NOT EXISTS (
           SELECT 1 FROM feedbacks f
-          LEFT JOIN users u ON u.id = f.author_id
-          WHERE f.incident_id = $1 
+          WHERE f.incident_id = $1
             AND f.role = 'hod'
             AND (
-              f.department_id = d.id 
+              f.department_id = d.id
               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
             )
         )
     `, [id]);
 
-    if (pendingDepts.rows.length > 0) {
-      const names = pendingDepts.rows.map(d => d.name).join(', ');
+    if (pendingScopes.rows.length > 0) {
+      const names = pendingScopes.rows.map(d => d.name).join(', ');
       await client.query('ROLLBACK');
       return res.status(400).json({
-        error: `Cannot submit IMC feedback yet. Awaiting HOD feedback from concerned department(s): ${names}.`
+        error: `Cannot submit IMC feedback yet. Awaiting department feedback for: ${names}.`
       });
     }
 
@@ -618,6 +670,7 @@ exports.submitManagementAction = async (req, res) => {
     } = req.body;
     
     if (!['AGREE', 'DISAGREE_MODIFY', 'DISAGREE_REINVESTIGATE', 'DISAGREE_REVISE_FEEDBACK'].includes(decision)) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Invalid decision type' });
     }
 
@@ -1067,7 +1120,10 @@ exports.generateImcReport = async (req, res) => {
     }
     
     const incidentResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
-    if (!incidentResult.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!incidentResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Not found' });
+    }
     const incident = incidentResult.rows[0];
 
     // Mark the final report as latest
@@ -1597,7 +1653,7 @@ exports.reopenIncident = async (req, res) => {
     }
 
     const isMgmt = req.user.role === 'head_management' || req.user.is_management_member;
-    const isImcLead = req.user.is_imc_lead || req.user.role === 'imc';
+    const isImcLead = Boolean(req.user.is_imc_lead);
     const isAdmin = req.user.role === 'system_admin' || req.user.is_system_admin;
     if (!isMgmt && !isImcLead && !isAdmin) {
       await client.query('ROLLBACK');
@@ -1640,7 +1696,7 @@ exports.reopenIncident = async (req, res) => {
 };
 
 // =============================================
-// ASSIGN INVESTIGATOR (Convenor Only - After HOD Feedbacks)
+// ASSIGN INVESTIGATOR (Convenor Only - After Initial Feedbacks)
 // =============================================
 exports.assignInvestigator = async (req, res) => {
   try {
@@ -1655,29 +1711,39 @@ exports.assignInvestigator = async (req, res) => {
       return res.status(400).json({ error: 'Please select at least one investigator.' });
     }
 
-    // Rule: Investigation can only be initiated after feedback from ALL concerned HODs!
-    const pendingDepts = await query(`
-      SELECT d.name
+    // Rule: Investigation can only be initiated after feedback from ALL assigned categories/departments
+    const pendingScopes = await query(`
+      SELECT DISTINCT ic.name
+      FROM incident_category_links icl
+      JOIN incident_categories ic ON ic.id = icl.category_id
+      JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
+      JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
+      WHERE icl.incident_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM feedbacks f
+          WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.category_id = ic.id OR f.author_id = cfa.user_id)
+        )
+      UNION
+      SELECT DISTINCT d.name
       FROM incident_departments id_dept
       JOIN departments d ON d.id = id_dept.department_id
       WHERE id_dept.incident_id = $1
         AND NOT EXISTS (
           SELECT 1 FROM feedbacks f
-          LEFT JOIN users u ON u.id = f.author_id
-          WHERE f.incident_id = $1 
+          WHERE f.incident_id = $1
             AND f.role = 'hod'
             AND (
-              f.department_id = d.id 
+              f.department_id = d.id
               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
             )
         )
     `, [id]);
 
-    if (pendingDepts.rows.length > 0) {
-      const names = pendingDepts.rows.map(d => d.name).join(', ');
+    if (pendingScopes.rows.length > 0) {
+      const names = pendingScopes.rows.map(d => d.name).join(', ');
       return res.status(400).json({
-        error: `Investigation can only be decided after receiving feedback from all concerned HODs: ${names}.`
+        error: `Investigation can only be decided after receiving department feedback for: ${names}.`
       });
     }
 
@@ -1752,18 +1818,18 @@ exports.assignInvestigator = async (req, res) => {
 };
 
 // =============================================
-// INVOLVE MORE DEPARTMENTS (Convenor Only)
+// INVOLVE MORE CATEGORIES / DEPARTMENTS (Convenor Only)
 // =============================================
 exports.involveDepartments = async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
     const { id } = req.params;
-    const { departmentIds, departmentNames } = req.body;
+    const { categories, categoryIds, departmentIds, departmentNames } = req.body;
 
     if (!req.user.is_imc_lead && !req.user.is_system_admin) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Only the IMC Convenor can involve additional departments.' });
+      return res.status(403).json({ error: 'Only the IMC Convenor can involve additional categories or reviewers.' });
     }
 
     const incResult = await client.query('SELECT * FROM incidents WHERE id = $1', [id]);
@@ -1772,8 +1838,108 @@ exports.involveDepartments = async (req, res) => {
       return res.status(404).json({ error: 'Incident not found' });
     }
     const incident = incResult.rows[0];
+    const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
 
-    // Find departments by IDs or Names
+    const catInputs = [
+      ...(Array.isArray(categories) ? categories : []),
+      ...(Array.isArray(categoryIds) ? categoryIds : [])
+    ].map(c => String(c || '').trim()).filter(Boolean);
+
+    if (catInputs.length > 0) {
+      const catRes = await client.query(
+        `SELECT id, name FROM incident_categories
+         WHERE is_active = TRUE AND (LOWER(TRIM(name)) = ANY($1::text[]) OR id::text = ANY($2::text[]))`,
+        [catInputs.map(c => c.toLowerCase()), catInputs]
+      );
+      if (!catRes.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Please select at least one valid incident category to involve.' });
+      }
+
+      const addedCats = [];
+      for (const c of catRes.rows) {
+        const ins = await client.query(
+          `INSERT INTO incident_category_links (incident_id, category_id)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING category_id`,
+          [id, c.id]
+        );
+        if (ins.rows.length > 0) {
+          addedCats.push(c);
+        }
+      }
+
+      if (!addedCats.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'All selected incident categories are already linked to this incident.' });
+      }
+
+      const allCatsRes = await client.query(
+        `SELECT ic.name FROM incident_category_links icl JOIN incident_categories ic ON ic.id = icl.category_id WHERE icl.incident_id = $1 ORDER BY ic.name ASC`,
+        [id]
+      );
+      const updatedCategoryStr = allCatsRes.rows.map(r => r.name).join(', ') || incident.incident_category;
+
+      await client.query(
+        `UPDATE incidents SET status = $1, incident_category = $2, updated_at = NOW() WHERE id = $3`,
+        [newStatus, updatedCategoryStr, id]
+      );
+
+      await recordEvent(client, {
+        incidentId: id,
+        eventType: 'DEPARTMENTS_INVOLVED',
+        actor: req.user,
+        statusBefore: incident.status,
+        statusAfter: newStatus,
+        title: 'Additional Category Involvement',
+        summary: `Linked categories: ${addedCats.map(c => c.name).join(', ')}`,
+        payload: {
+          added_categories: addedCats.map(c => c.name),
+          added_departments: addedCats.map(c => c.name),
+          new_status: newStatus
+        }
+      });
+
+      await client.query('COMMIT');
+
+      const newlyAddedCatIds = addedCats.map(c => c.id);
+      const assigneesRes = await query(
+        `SELECT DISTINCT u.id, u.email, u.full_name
+         FROM category_feedback_assignees cfa
+         JOIN users u ON u.id = cfa.user_id
+         WHERE cfa.category_id = ANY($1::int[]) AND cfa.is_active = TRUE AND u.is_active = TRUE`,
+        [newlyAddedCatIds]
+      );
+
+      for (const reviewer of assigneesRes.rows) {
+        await createNotification(
+          reviewer.id,
+          id,
+          'Additional Category Review Required',
+          `Incident ${incident.reference_id} has been linked to your assigned category by IMC. Your review and feedback are required.`,
+          'incident_to_hod'
+        );
+        if (reviewer?.email) {
+          sendEmail(reviewer.email, templates.newIncidentHod(incident, reviewer)).catch(() => {});
+        }
+      }
+
+      await auditLog(req.user.id, 'CATEGORIES_INVOLVED', id, {
+        addedCategories: addedCats.map(c => c.name),
+        newStatus
+      }, req.ip);
+
+      if (req.io) {
+        req.io.emit('incident_updated', { id });
+      }
+
+      return res.json({
+        success: true,
+        message: `Successfully linked ${addedCats.map(c => c.name).join(', ')}. Assigned reviewer(s) have been notified.`,
+        addedCategories: addedCats
+      });
+    }
+
+    // Legacy department fallback
     let targetDeptRows = [];
     if (Array.isArray(departmentIds) && departmentIds.length > 0) {
       const dRes = await client.query('SELECT id, name FROM departments WHERE id = ANY($1)', [departmentIds]);
@@ -1785,7 +1951,7 @@ exports.involveDepartments = async (req, res) => {
 
     if (!targetDeptRows.length) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Please provide at least one valid department to involve.' });
+      return res.status(400).json({ error: 'Please provide at least one valid incident category or department to involve.' });
     }
 
     const addedDepts = [];
@@ -1807,42 +1973,18 @@ exports.involveDepartments = async (req, res) => {
       return res.status(400).json({ error: 'All selected department(s) are already linked to this incident.' });
     }
 
-    // Transition status to with_hod (or with_hod_and_imc) so the new HOD feedback is submitted
-    const newStatus = incident.severity === 'Grave' ? 'with_hod_and_imc' : 'with_hod';
     await client.query(
       `UPDATE incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
       [newStatus, id]
     );
 
-    await client.query('COMMIT');
-
-    // Notify new HODs
-    const newlyAddedIds = addedDepts.map(d => d.id);
-    const newLeadersRes = await query(
-      `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-       JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
-       WHERE d.id = ANY($1)`,
-      [newlyAddedIds]
-    );
-
-    for (const leader of newLeadersRes.rows) {
-      await createNotification(
-        leader.id,
-        id,
-        'Department Invalidation / Review Required',
-        `Incident ${incident.reference_id} has been linked to your department by IMC. Your HOD review and feedback are required.`,
-        'incident_to_hod'
-      );
-      if (leader?.email) {
-        sendEmail(leader.email, templates.newIncidentHod(incident, leader)).catch(() => {});
-      }
-    }
-
     await recordEvent(client, {
       incidentId: id,
       eventType: 'DEPARTMENTS_INVOLVED',
       actor: req.user,
-      title: 'Additional Department(s) Involment',
+      statusBefore: incident.status,
+      statusAfter: newStatus,
+      title: 'Additional Department Involvement',
       summary: `Linked: ${addedDepts.map(d => d.name).join(', ')}`,
       payload: {
         added_departments: addedDepts.map(d => d.name),
@@ -1850,20 +1992,51 @@ exports.involveDepartments = async (req, res) => {
       }
     });
 
+    await client.query('COMMIT');
+
+    const newlyAddedIds = addedDepts.map(d => d.id);
+    const newLeadersRes = await query(
+      `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
+       JOIN departments d ON (COALESCE(d.assigned_user_id, d.hod_user_id) = u.id)
+       WHERE d.id = ANY($1) AND u.is_active = TRUE
+       UNION
+       SELECT DISTINCT u.id, u.email, u.full_name FROM users u
+       JOIN department_reviewers dr ON dr.user_id = u.id AND dr.is_active = TRUE
+       WHERE dr.department_id = ANY($1) AND u.is_active = TRUE`,
+      [newlyAddedIds]
+    );
+
+    for (const leader of newLeadersRes.rows) {
+      await createNotification(
+        leader.id,
+        id,
+        'Additional Review Required',
+        `Incident ${incident.reference_id} has been linked to your department by IMC. Your review and feedback are required.`,
+        'incident_to_hod'
+      );
+      if (leader?.email) {
+        sendEmail(leader.email, templates.newIncidentHod(incident, leader)).catch(() => {});
+      }
+    }
+
     await auditLog(req.user.id, 'DEPARTMENTS_INVOLVED', id, {
       addedDepartments: addedDepts.map(d => d.name),
       newStatus
     }, req.ip);
 
+    if (req.io) {
+      req.io.emit('incident_updated', { id });
+    }
+
     res.json({
       success: true,
-      message: `Successfully linked ${addedDepts.map(d => d.name).join(', ')}. Incident returned to HOD review for their feedback.`,
+      message: `Successfully linked ${addedDepts.map(d => d.name).join(', ')}. Assigned reviewer(s) have been notified.`,
       addedDepartments: addedDepts
     });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('[POST /incidents/:id/involve-departments] error:', error);
-    res.status(500).json({ error: error.message || 'Failed to involve departments.' });
+    res.status(500).json({ error: error.message || 'Failed to involve categories.' });
   } finally {
     client.release();
   }
