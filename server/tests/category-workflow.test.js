@@ -41,6 +41,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
   let imcMemberUser;
   let mgmtUser;
   let reviewerEmp;
+  let reviewerEmpC;
   let reporterEmp;
 
   let adminToken;
@@ -48,6 +49,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
   let imcMemberToken;
   let mgmtToken;
   let reviewerToken;
+  let reviewerCToken;
   let reporterToken;
 
   let catA;
@@ -95,6 +97,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     imcMemberUser = await createUser({ suffix: 'IMCM', role: 'imc', isImc: true, isImcLead: false });
     mgmtUser = await createUser({ suffix: 'MGT', role: 'head_management', isMgmt: true });
     reviewerEmp = await createUser({ suffix: 'REV', role: 'employee' });
+    reviewerEmpC = await createUser({ suffix: 'REVC', role: 'employee' });
     reporterEmp = await createUser({ suffix: 'REP', role: 'employee' });
 
     adminToken = signTestJwt(adminUser);
@@ -102,6 +105,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     imcMemberToken = signTestJwt(imcMemberUser);
     mgmtToken = signTestJwt(mgmtUser);
     reviewerToken = signTestJwt(reviewerEmp);
+    reviewerCToken = signTestJwt(reviewerEmpC);
     reporterToken = signTestJwt(reporterEmp);
   });
 
@@ -120,6 +124,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
       await query('DELETE FROM audit_logs WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM notifications WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM incident_events WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
+      await query('DELETE FROM incident_responsible_employees WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM feedbacks WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM incident_category_links WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
       await query('DELETE FROM incident_departments WHERE incident_id = ANY($1::uuid[])', [createdIncidentIds]).catch(() => {});
@@ -338,5 +343,235 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
     assert.ok(Array.isArray(statsAfter.body.monthly));
     assert.ok(Array.isArray(statsAfter.body.categoryAnalytics));
     assert.ok(statsAfter.body.durationMetrics && typeof statsAfter.body.durationMetrics === 'object');
+  });
+
+  test('8. Redirection unlocks target category staff (any role) and keeps other categories unblocked during redirect_requested', async () => {
+    // Map imcMemberUser (role: imc) to catB and reviewerEmpC (role: employee) to catC
+    await request(app)
+      .post('/api/admin/category-mappings')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ categoryId: catB.id, employeeId: imcMemberUser.employee_id, replaceExisting: true })
+      .expect(200);
+
+    await request(app)
+      .post('/api/admin/category-mappings')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ categoryId: catC.id, employeeId: reviewerEmpC.employee_id, replaceExisting: true })
+      .expect(200);
+
+    // Create a multi-category incident across catA and catB
+    const createRes = await request(app)
+      .post('/api/incidents')
+      .set('Authorization', `Bearer ${reporterToken}`)
+      .send({
+        incidentCategories: [catA.name, catB.name],
+        incidentCategory: catA.name,
+        incidentType: 'Multi-Category Redirection Case',
+        incidentDate: getLocalTodayIso(),
+        incidentTime: '12:00',
+        occurredTo: 'Patient',
+        description: `Multi-category redirect verification ${tag}`,
+        hasResponsiblePerson: false
+      })
+      .expect(201);
+
+    const multiIncId = createRes.body.incident.id;
+    createdIncidentIds.push(multiIncId);
+
+    // catA reviewer requests redirection -> status becomes redirect_requested
+    await request(app)
+      .post(`/api/incidents/${multiIncId}/request-redirect`)
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .send({ reason: `Please route catA portion to ${catC.name}` })
+      .expect(200);
+
+    // Requesting reviewer (catA) cannot submit feedback while their redirect is pending
+    await request(app)
+      .post(`/api/incidents/${multiIncId}/hod-feedback`)
+      .set('Authorization', `Bearer ${reviewerToken}`)
+      .send({ feedbackText: 'Should be blocked while my redirect is pending' })
+      .expect(400);
+
+    // Unmapped management user cannot submit feedback (403)
+    await request(app)
+      .post(`/api/incidents/${multiIncId}/hod-feedback`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({ feedbackText: 'Unmapped user should be rejected' })
+      .expect(403);
+
+    // catB mapped staff (role: imc) CAN submit feedback during redirect_requested without overwriting status
+    await request(app)
+      .post(`/api/incidents/${multiIncId}/hod-feedback`)
+      .set('Authorization', `Bearer ${imcMemberToken}`)
+      .send({ feedbackText: `Category B feedback by non-HOD/IMC mapped reviewer ${tag}` })
+      .expect(200);
+
+    const midState = await query('SELECT status FROM incidents WHERE id = $1', [multiIncId]);
+    assert.equal(midState.rows[0].status, 'redirect_requested', 'Status must stay redirect_requested while IMC has not yet resolved the redirect');
+
+    // IMC Lead approves redirect of catA -> catC
+    await request(app)
+      .post(`/api/incidents/${multiIncId}/approve-redirect`)
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .send({ targetCategories: [catC.name] })
+      .expect(200);
+
+    // Stale redirect_requested_by_user_id must be cleared and old requester is no longer target reviewer
+    const afterApproveRow = await query(
+      'SELECT status, redirect_requested_by_user_id, redirect_requested_by_category FROM incidents WHERE id = $1',
+      [multiIncId]
+    );
+    assert.equal(afterApproveRow.rows[0].status, 'with_hod');
+    assert.equal(afterApproveRow.rows[0].redirect_requested_by_user_id, null);
+    assert.equal(afterApproveRow.rows[0].redirect_requested_by_category, null);
+
+    // Newly redirected category C staff sees is_target_reviewer = true and submits feedback -> advances to with_imc
+    const getAsC = await request(app)
+      .get(`/api/incidents/${multiIncId}`)
+      .set('Authorization', `Bearer ${reviewerCToken}`)
+      .expect(200);
+    assert.equal(getAsC.body.incident.is_target_reviewer, true);
+    assert.equal(getAsC.body.incident.user_hod_dept_submitted, false);
+
+    const fbCRes = await request(app)
+      .post(`/api/incidents/${multiIncId}/hod-feedback`)
+      .set('Authorization', `Bearer ${reviewerCToken}`)
+      .send({ feedbackText: `Redirected Category C feedback ${tag}` })
+      .expect(200);
+    assert.equal(fbCRes.body.allResponded, true);
+
+    const finalState = await query('SELECT status FROM incidents WHERE id = $1', [multiIncId]);
+    assert.equal(finalState.rows[0].status, 'with_imc');
+  });
+
+  test('9. Management Financial Penalty decision requires positive penalty amount (> 0) on both AGREE and DISAGREE_MODIFY', async () => {
+    // Create incident and push straight to with_head_management via IMC assessment with Financial Penalty on reviewerEmp
+    const createRes = await request(app)
+      .post('/api/incidents')
+      .set('Authorization', `Bearer ${reporterToken}`)
+      .send({
+        incidentCategories: [catC.name],
+        incidentCategory: catC.name,
+        incidentType: 'Financial Penalty Verification Case',
+        incidentDate: getLocalTodayIso(),
+        incidentTime: '13:30',
+        occurredTo: 'Patient',
+        description: `Financial penalty enforcement test ${tag}`,
+        hasResponsiblePerson: true,
+        responsiblePersonName: reviewerEmp.full_name
+      })
+      .expect(201);
+
+    const penIncId = createRes.body.incident.id;
+    createdIncidentIds.push(penIncId);
+
+    // Category C reviewer submits feedback -> moves to with_imc
+    await request(app)
+      .post(`/api/incidents/${penIncId}/hod-feedback`)
+      .set('Authorization', `Bearer ${reviewerCToken}`)
+      .send({ feedbackText: `Category C initial review ${tag}` })
+      .expect(200);
+
+    // IMC submits assessment recommending Financial Penalty (without penalty_amount, as decided solely by Management)
+    await request(app)
+      .post(`/api/incidents/${penIncId}/imc-feedback`)
+      .set('Authorization', `Bearer ${imcLeadToken}`)
+      .send({
+        feedbackText: `IMC recommends financial penalty ${tag}`,
+        forwardToMd: true,
+        severity: 'Major',
+        proposedOutcome: 'Financial Penalty',
+        responsibleEmployees: JSON.stringify([
+          {
+            id: reviewerEmp.id,
+            employee_id: reviewerEmp.employee_id,
+            full_name: reviewerEmp.full_name,
+            outcomes: ['Financial Penalty'],
+            penalty_amount: null
+          }
+        ])
+      })
+      .expect(200);
+
+    // Management AGREE without penalty amount -> 400
+    await request(app)
+      .post(`/api/incidents/${penIncId}/management-action`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({
+        decision: 'AGREE',
+        notes: 'Approving without amount should fail',
+        responsibleEmployees: JSON.stringify([
+          {
+            id: reviewerEmp.id,
+            employee_id: reviewerEmp.employee_id,
+            full_name: reviewerEmp.full_name,
+            outcomes: ['Financial Penalty'],
+            penalty_amount: null
+          }
+        ])
+      })
+      .expect(400);
+
+    // Management AGREE with 0 penalty amount -> 400
+    await request(app)
+      .post(`/api/incidents/${penIncId}/management-action`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({
+        decision: 'AGREE',
+        responsibleEmployees: JSON.stringify([
+          {
+            id: reviewerEmp.id,
+            employee_id: reviewerEmp.employee_id,
+            full_name: reviewerEmp.full_name,
+            outcomes: ['Financial Penalty'],
+            penalty_amount: 0
+          }
+        ])
+      })
+      .expect(400);
+
+    // Management DISAGREE_MODIFY with Financial Penalty and no amount -> 400
+    await request(app)
+      .post(`/api/incidents/${penIncId}/management-action`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({
+        decision: 'DISAGREE_MODIFY',
+        proposedOutcome: 'Financial Penalty',
+        responsibleEmployees: JSON.stringify([])
+      })
+      .expect(400);
+
+    // Management AGREE with positive penalty amount (1500) -> 200
+    const okRes = await request(app)
+      .post(`/api/incidents/${penIncId}/management-action`)
+      .set('Authorization', `Bearer ${mgmtToken}`)
+      .send({
+        decision: 'AGREE',
+        notes: 'Approved with ₹1500 deduction',
+        responsibleEmployees: JSON.stringify([
+          {
+            id: reviewerEmp.id,
+            employee_id: reviewerEmp.employee_id,
+            full_name: reviewerEmp.full_name,
+            outcomes: ['Financial Penalty'],
+            penalty_amount: 1500
+          }
+        ])
+      })
+      .expect(200);
+
+    assert.equal(okRes.body.success, true);
+
+    const incRow = await query('SELECT penalty_amount, penalty_amount_words, status FROM incidents WHERE id = $1', [penIncId]);
+    assert.equal(Number(incRow.rows[0].penalty_amount), 1500);
+    assert.ok(incRow.rows[0].penalty_amount_words && incRow.rows[0].penalty_amount_words.length > 0);
+    assert.equal(incRow.rows[0].status, 'pending_letter_generation');
+
+    const empRow = await query('SELECT penalty_amount, penalty_amount_words FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2', [penIncId, reviewerEmp.id]);
+    assert.equal(Number(empRow.rows[0].penalty_amount), 1500);
+    assert.ok(empRow.rows[0].penalty_amount_words && empRow.rows[0].penalty_amount_words.length > 0);
+
+    const evtRow = await query(`SELECT payload FROM incident_events WHERE incident_id = $1 AND event_type = 'MGMT_DECISION_AGREED' ORDER BY seq DESC LIMIT 1`, [penIncId]);
+    assert.equal(Number(evtRow.rows[0]?.payload?.penalty_amount), 1500);
   });
 });

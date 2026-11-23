@@ -766,20 +766,9 @@ export default function NewIncidentPage() {
                     )}
                   </div>
 
-                  <div>
-                    <label className="field-label text-xs text-slate-500">
-                      Summary Text (sent with report):
-                    </label>
-                    <input
-                      value={form.responsiblePersonName}
-                      onChange={e => set('responsiblePersonName', e.target.value)}
-                      placeholder="Selected responsible personnel summary…"
-                      className={`input bg-slate-50 text-xs ${errors.responsiblePersonName ? 'input-error' : ''}`}
-                    />
-                    {errors.responsiblePersonName && (
-                      <p className="field-error">{errors.responsiblePersonName}</p>
-                    )}
-                  </div>
+                  {errors.responsiblePersonName && (
+                    <p className="field-error">{errors.responsiblePersonName}</p>
+                  )}
                 </div>
               )}
             </div>

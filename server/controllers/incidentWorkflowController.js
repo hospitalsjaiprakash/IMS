@@ -110,10 +110,23 @@ exports.submitHodFeedback = async (req, res) => {
       return res.status(400).json({ error: 'Cannot submit initial review feedback because IMC has already submitted quality review feedback.' });
     }
 
-    // 1. Check incident category assignment for current user
+    if (incident.status === 'redirect_requested' && incident.redirect_requested_by_user_id === req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Your redirection request is currently pending IMC review.' });
+    }
+
+    // 1. Check incident category assignment for current user (pick first pending category)
     const assignedCats = await getUserAssignedCategoriesForIncident(req.user, id);
-    let categoryId = assignedCats.length > 0 ? assignedCats[0].id : null;
-    let categoryName = assignedCats.length > 0 ? assignedCats[0].name : null;
+    const submittedCatsRes = await client.query(
+      `SELECT category_id FROM feedbacks WHERE incident_id = $1 AND role = 'hod' AND category_id IS NOT NULL`,
+      [id]
+    );
+    const submittedCatIds = new Set(submittedCatsRes.rows.map(r => r.category_id));
+    const pendingAssignedCats = assignedCats.filter(c => !submittedCatIds.has(c.id));
+    const defaultCat = pendingAssignedCats[0] || assignedCats[0] || null;
+
+    let categoryId = defaultCat ? defaultCat.id : null;
+    let categoryName = defaultCat ? defaultCat.name : null;
 
     if (req.body.category_id && assignedCats.some(c => c.id === parseInt(req.body.category_id, 10))) {
       const matched = assignedCats.find(c => c.id === parseInt(req.body.category_id, 10));
@@ -154,8 +167,14 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    // Privileged / redirect-requester fallback
-    if (!categoryId && !deptId && (incident.redirect_requested_by_user_id === req.user.id || isPrivilegedRole(req.user))) {
+    // System Admin / rejected redirect-requester fallback only (unmapped IMC/Management must remain blocked unless assigned)
+    const isSystemAdmin = Boolean(req.user.role === 'system_admin' || req.user.is_system_admin);
+    const isRejectedRedirectRequester = Boolean(
+      incident.redirect_rejected_at &&
+      incident.status !== 'redirect_requested' &&
+      incident.redirect_requested_by_user_id === req.user.id
+    );
+    if (!categoryId && !deptId && (isRejectedRedirectRequester || isSystemAdmin)) {
       const incCats = await client.query(
         `SELECT ic.id, ic.name FROM incident_category_links icl JOIN incident_categories ic ON ic.id = icl.category_id WHERE icl.incident_id = $1 LIMIT 1`,
         [id]
@@ -178,17 +197,22 @@ exports.submitHodFeedback = async (req, res) => {
       return res.status(403).json({ error: 'This incident is not assigned to you for review.' });
     }
 
-    // Prevent duplicate feedback by the same reviewer/scope
-    const existingFb = await client.query(
-      `SELECT id FROM feedbacks
-       WHERE incident_id = $1 AND role = 'hod'
-         AND (
-           author_id = $2
-           OR ($3::int IS NOT NULL AND category_id = $3)
-           OR ($4::int IS NOT NULL AND department_id = $4)
-         )`,
-      [id, req.user.id, categoryId, deptId]
-    );
+    // Prevent duplicate feedback for the same category or legacy department scope
+    const existingFb = categoryId
+      ? await client.query(
+          `SELECT id FROM feedbacks
+           WHERE incident_id = $1 AND role = 'hod' AND category_id = $2`,
+          [id, categoryId]
+        )
+      : await client.query(
+          `SELECT id FROM feedbacks
+           WHERE incident_id = $1 AND role = 'hod'
+             AND (
+               author_id = $2
+               OR ($3::int IS NOT NULL AND department_id = $3)
+             )`,
+          [id, req.user.id, deptId]
+        );
 
     if (existingFb.rows.length > 0) {
       await client.query('ROLLBACK');
@@ -223,7 +247,7 @@ exports.submitHodFeedback = async (req, res) => {
           SELECT 1 FROM feedbacks f
           WHERE f.incident_id = $1
             AND f.role = 'hod'
-            AND (f.category_id = ic.id OR f.author_id = cfa.user_id)
+            AND (f.category_id = ic.id OR (f.category_id IS NULL AND f.author_id = cfa.user_id))
         )
     `, [id]);
 
@@ -245,13 +269,14 @@ exports.submitHodFeedback = async (req, res) => {
     `, [id]);
 
     const allResponded = pendingCats.rows.length === 0 && pendingDepts.rows.length === 0;
+    const isRedirectPending = incident.status === 'redirect_requested';
 
     if (redirectToImc) {
       await client.query(
         `UPDATE incidents SET status = 'redirect_requested', updated_at = NOW() WHERE id = $1`,
         [id]
       );
-    } else if (allResponded) {
+    } else if (allResponded && !isRedirectPending) {
       const newStatus = incident.status === 'with_hod_and_imc' ? 'with_hod_and_imc' : 'with_imc';
       await client.query(
         `UPDATE incidents SET status = $1, updated_at = NOW() WHERE id = $2`,
@@ -294,7 +319,7 @@ exports.submitHodFeedback = async (req, res) => {
 
     await client.query('COMMIT');
 
-    if (redirectToImc || allResponded) {
+    if (redirectToImc || (allResponded && !isRedirectPending)) {
       const imcMembers = await query(
         "SELECT id, email, full_name FROM users WHERE (role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE) AND is_active = TRUE"
       );
@@ -683,6 +708,92 @@ exports.submitManagementAction = async (req, res) => {
 
     const cleanProposedOutcome = formatProposedOutcome(proposedOutcome);
 
+    // Parse submitted responsibleEmployees early so penalty validation runs before any DB writes
+    let parsedResponsibleEmployees = null;
+    if (responsibleEmployees !== undefined && responsibleEmployees !== null) {
+      if (typeof responsibleEmployees === 'string') {
+        try {
+          parsedResponsibleEmployees = JSON.parse(responsibleEmployees);
+        } catch (e) {
+          parsedResponsibleEmployees = [];
+        }
+      } else {
+        parsedResponsibleEmployees = responsibleEmployees;
+      }
+      if (!Array.isArray(parsedResponsibleEmployees)) {
+        parsedResponsibleEmployees = [];
+      }
+      responsibleEmployees = parsedResponsibleEmployees;
+    }
+
+    const isPenaltyText = (txt) => {
+      const lower = String(txt || '').toLowerCase();
+      return lower.includes('penalty') || lower.includes('deduction');
+    };
+    const normalizeOutcomes = (raw) => {
+      if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
+      if (typeof raw === 'string' && raw.trim()) {
+        return raw.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      return [];
+    };
+
+    let resolvedPenaltyAmount = null;
+    let resolvedPenaltyWords = null;
+
+    if (['AGREE', 'DISAGREE_MODIFY'].includes(decision)) {
+      const effectiveOutcomePreview = (decision === 'DISAGREE_MODIFY' && cleanProposedOutcome)
+        ? cleanProposedOutcome
+        : (incident.proposed_outcome || '');
+
+      let employeesToValidate = parsedResponsibleEmployees;
+      if (employeesToValidate === null) {
+        const existingEmpsRes = await client.query(
+          `SELECT id, employee_id, outcomes, penalty_amount FROM incident_responsible_employees WHERE incident_id = $1`,
+          [id]
+        );
+        employeesToValidate = existingEmpsRes.rows;
+      }
+
+      const penalizedEmps = (employeesToValidate || []).filter(emp => {
+        const empOutcomes = normalizeOutcomes(emp.outcomes);
+        const effectiveEmpOutcomes = empOutcomes.length > 0 ? empOutcomes : normalizeOutcomes(effectiveOutcomePreview);
+        return effectiveEmpOutcomes.some(isPenaltyText);
+      });
+
+      const requiresFinancialPenalty = penalizedEmps.length > 0 || isPenaltyText(effectiveOutcomePreview);
+
+      if (requiresFinancialPenalty) {
+        if (penalizedEmps.length > 0) {
+          const invalidEmp = penalizedEmps.find(emp => {
+            const amt = Number(emp.penalty_amount);
+            return !Number.isFinite(amt) || amt <= 0;
+          });
+          if (invalidEmp) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: 'A financial penalty amount greater than ₹0 is required for each employee assigned a Financial Penalty.'
+            });
+          }
+          resolvedPenaltyAmount = penalizedEmps.reduce((sum, emp) => sum + Number(emp.penalty_amount), 0);
+        } else {
+          const parsedAmt = Number(penaltyAmount);
+          if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: 'A financial penalty amount greater than ₹0 is required before submitting this decision.'
+            });
+          }
+          resolvedPenaltyAmount = parsedAmt;
+        }
+      } else if (penaltyAmount !== undefined && penaltyAmount !== null && penaltyAmount !== '') {
+        const parsedAmt = Number(penaltyAmount);
+        if (Number.isFinite(parsedAmt) && parsedAmt > 0) {
+          resolvedPenaltyAmount = parsedAmt;
+        }
+      }
+    }
+
     const decisionLabels = {
       'AGREE': 'Approved / Agreed with IMC',
       'DISAGREE_MODIFY': `Modified Proposed Outcome${cleanProposedOutcome ? `: ${cleanProposedOutcome}` : ''}`,
@@ -716,13 +827,12 @@ exports.submitManagementAction = async (req, res) => {
     }
 
     // Save Management-specified penalty deduction amount if applicable
-    if (penaltyAmount !== undefined && penaltyAmount !== null && penaltyAmount !== '') {
-      const pAmt = Number(penaltyAmount) || null;
+    if (resolvedPenaltyAmount !== null && resolvedPenaltyAmount > 0) {
       const { numberToWords } = require('../utils/numberToWords');
-      const pWords = pAmt ? numberToWords(pAmt) : null;
+      resolvedPenaltyWords = numberToWords(resolvedPenaltyAmount);
       await client.query(
         `UPDATE incidents SET penalty_amount = $1, penalty_amount_words = $2 WHERE id = $3`,
-        [pAmt, pWords, id]
+        [resolvedPenaltyAmount, resolvedPenaltyWords, id]
       );
     }
 
@@ -1050,6 +1160,8 @@ exports.submitManagementAction = async (req, res) => {
     }
 
     // Record Management decision event (agreed or modified)
+    const eventPenaltyAmount = resolvedPenaltyAmount || incident.penalty_amount || null;
+    const eventPenaltyWords = resolvedPenaltyWords || incident.penalty_amount_words || null;
     if (decision === 'DISAGREE_MODIFY') {
       await recordEvent(client, {
         incidentId: id,
@@ -1063,7 +1175,8 @@ exports.submitManagementAction = async (req, res) => {
           decision: 'DISAGREE_MODIFY',
           imc_proposed_outcome: incident.imc_proposed_outcome || 'No Action',
           final_mandated_outcome: cleanProposedOutcome || incident.proposed_outcome,
-          penalty_amount: penaltyAmount || incident.penalty_amount,
+          penalty_amount: eventPenaltyAmount,
+          penalty_amount_words: eventPenaltyWords,
           responsible_employees: responsibleEmployees,
           notes,
           next_status: nextStatus
@@ -1081,6 +1194,8 @@ exports.submitManagementAction = async (req, res) => {
         payload: {
           decision: 'AGREE',
           endorsed_outcome: cleanProposedOutcome || incident.proposed_outcome,
+          penalty_amount: eventPenaltyAmount,
+          penalty_amount_words: eventPenaltyWords,
           responsible_employees: responsibleEmployees,
           notes,
           next_status: nextStatus

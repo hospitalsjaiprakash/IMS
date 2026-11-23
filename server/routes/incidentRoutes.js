@@ -19,9 +19,9 @@ router.get('/:id', authenticate, incidentsController.getIncident);
 router.put('/:id', authenticate, incidentActionsController.updateIncident);
 router.post('/:id/withdraw', authenticate, incidentsController.withdrawIncident);
 
-// HOD actions (authorized for HODs and assigned department reviewers)
-router.post('/:id/hod-feedback', authenticate, authorize('hod', 'employee', 'system_admin'), setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
-router.post('/:id/request-redirect', authenticate, authorize('hod', 'employee', 'system_admin'), incidentActionsController.requestRedirect);
+// Category / Department reviewer actions (object-level assignment enforced in controllers for any active mapped role)
+router.post('/:id/hod-feedback', authenticate, setUploadStage('hod_feedback'), uploadIncidentAttachments, incidentWorkflowController.submitHodFeedback);
+router.post('/:id/request-redirect', authenticate, incidentActionsController.requestRedirect);
 
 // Feedback edit
 router.put('/:id/feedback', authenticate, authorize('hod', 'employee', 'imc', 'head_management', 'system_admin'), incidentActionsController.editFeedback);

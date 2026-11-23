@@ -4,9 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { incidentsApi, metaApi, authApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
-import { Clock, AlertTriangle, Bell, Pencil, CheckCircle2, Send } from 'lucide-react';
-import { Alert, Spinner, Breadcrumbs, SkeletonDetail } from '../../components/ui';
-import { formatDateTime, parseProposedOutcomes, INCIDENT_CATEGORIES, getApiErrorMessage } from '../../utils/helpers';
+import { Pencil, CheckCircle2 } from 'lucide-react';
+import { Alert, Breadcrumbs, SkeletonDetail } from '../../components/ui';
+import { parseProposedOutcomes, INCIDENT_CATEGORIES, getApiErrorMessage } from '../../utils/helpers';
 
 import IncidentHeader from '../../components/incident-detail/IncidentHeader';
 import IncidentDetailsCard from '../../components/incident-detail/IncidentDetailsCard';
@@ -35,31 +35,6 @@ import {
   ImcReportModal,
   InvolveDepartmentModal,
 } from '../../components/incident-detail/modals';
-
-function StatusMessage({ status }) {
-  const msgs = {
-    submitted: { type: 'info', msg: 'Your incident has been submitted successfully and is awaiting department review.' },
-    with_hod: { type: 'info', msg: 'Your incident has been routed for concerned category feedback and review.' },
-    with_hod_and_imc: { type: 'info', msg: 'Due to grave severity, your incident is currently awaiting simultaneous review from department reviewers and IMC.' },
-    with_imc: { type: 'info', msg: 'Your incident is currently awaiting review and feedback from the Incident Management Committee.' },
-    with_investigator: { type: 'info', msg: 'An investigation team has been assigned and is conducting a root-cause investigation.' },
-    with_imc_review: { type: 'info', msg: 'The joint investigation report has been submitted and is being evaluated by the IMC Convenor.' },
-    with_head_management: { type: 'info', msg: 'Your incident is currently awaiting review and decision from Hospital Management.' },
-    pending_letter_generation: { type: 'info', msg: 'Management has approved the outcome. IMC is currently drafting formal communication letter(s).' },
-    pending_management_letter_approval: { type: 'info', msg: 'Formal letters have been drafted by IMC and are awaiting Management approval & dispatch.' },
-    pending_trainer_assignment: { type: 'info', msg: 'Management has mandated training. IMC is currently assigning a qualified trainer.' },
-    training_in_progress: { type: 'info', msg: 'Mandatory training session is currently in progress.' },
-    pending_imc_training_review: { type: 'info', msg: 'Training report and attendance sheet submitted. Awaiting IMC verification.' },
-    pending_imc_report: { type: 'info', msg: 'Management has submitted their decision. Awaiting IMC Convenor to generate the official report.' },
-    pending_training: { type: 'warning', msg: 'Mandatory CAPA / Training is required before this incident can be fully closed.' },
-    resolved: { type: 'success', msg: 'Your incident has been resolved. View the final report below.' },
-    closed: { type: 'success', msg: 'Your incident has been officially closed.' },
-    withdrawn: { type: 'warning', msg: 'This incident has been withdrawn.' },
-    redirect_requested: { type: 'warning', msg: 'A redirection request has been submitted to IMC for routing to the appropriate incident category.' },
-  };
-  const { type, msg } = msgs[status] || { type: 'info', msg: 'Status updated.' };
-  return <Alert type={type} message={msg} />;
-}
 
 export default function IncidentDetailPage() {
   const { id } = useParams();
@@ -317,15 +292,6 @@ export default function IncidentDetailPage() {
     onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to escalate priority.')),
   });
 
-  const remindHodMutation = useMutation({
-    mutationFn: () => incidentsApi.remindHod(id),
-    onSuccess: (res) => {
-      toast.success(res.data?.message || 'Reminder sent!');
-      refetch();
-    },
-    onError: (e) => toast.error(getApiErrorMessage(e, 'Failed to send reminder.')),
-  });
-
   const assignInvestigatorMutation = useMutation({
     mutationFn: (investigatorIds) => incidentsApi.assignInvestigator(id, { investigatorIds }),
     onSuccess: () => {
@@ -490,28 +456,25 @@ export default function IncidentDetailPage() {
   const hasImcFeedback = feedbacks.some(f => f.role === 'imc');
   const canWithdraw = user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status);
 
-  // Reviewers can be ANY active employee mapped to an incident category (TC-02)
-  const isTargetOrRequestedUser = Boolean(
-    incident.is_target_reviewer ||
-    incident.is_target_hod ||
-    (incident.redirect_requested_by_user_id && incident.redirect_requested_by_user_id === user?.id)
+  // Reviewers can be ANY active staff mapped to an incident category (TC-02), regardless of primary role
+  const isTargetReviewer = Boolean(incident.is_target_reviewer || incident.is_target_hod);
+  const isPendingRedirectRequester = Boolean(
+    incident.status === 'redirect_requested' &&
+    incident.redirect_requested_by_user_id &&
+    incident.redirect_requested_by_user_id === user?.id
   );
-  const isFeedbackReviewerRole =
-    ['hod', 'asst_coo', 'coo'].includes(user?.role) ||
-    (user?.role === 'employee' && (isTargetOrRequestedUser || user?.isFeedbackReviewer));
   const isReporterAllowed = !incident.redirect_rejected_at ? user?.id !== incident.reporter_id : true;
 
   const canHodFeedback =
-    isFeedbackReviewerRole &&
-    isTargetOrRequestedUser &&
+    isTargetReviewer &&
+    !isPendingRedirectRequester &&
     isReporterAllowed &&
-    ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status) &&
+    ['submitted', 'with_hod', 'with_hod_and_imc', 'redirect_requested'].includes(incident.status) &&
     !incident.user_hod_dept_submitted &&
     !hasImcFeedback;
 
   const canRequestRedirect =
-    isFeedbackReviewerRole &&
-    isTargetOrRequestedUser &&
+    isTargetReviewer &&
     user?.id !== incident.reporter_id &&
     !incident.redirect_rejected_at &&
     ['submitted', 'with_hod', 'with_hod_and_imc'].includes(incident.status) &&
@@ -559,12 +522,6 @@ export default function IncidentDetailPage() {
     !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
     !incident.priority_escalated_by;
 
-  const canRemindHod =
-    (isManagement || isImcMember) &&
-    user?.id !== incident.reporter_id &&
-    !['resolved', 'closed', 'withdrawn'].includes(incident.status) &&
-    !incident.all_hod_feedback_submitted;
-
   const myInvestigationAssignment = incident.investigators?.find(i => i.investigator_id === user?.id);
   const isAssignedInvestigator = Boolean(myInvestigationAssignment);
   const isAssignedPrimary = Boolean(
@@ -604,8 +561,6 @@ export default function IncidentDetailPage() {
   };
 
   const myEditableFeedbacks = feedbacks.filter(fb => fb.author_id === user?.id && !isFeedbackLocked(fb));
-  const pendingReviewScopes =
-    (incident.pending_review_categories?.length ? incident.pending_review_categories : incident.pending_hod_departments) || [];
 
   const currentIncidentCategories =
     Array.isArray(incident.categories) && incident.categories.length > 0
@@ -653,33 +608,6 @@ export default function IncidentDetailPage() {
         }
       />
 
-      {incident.redirect_rejected_at && (
-        <div className="mb-4 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm animate-fade-in print:hidden">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
-            <div className="flex-1">
-              <h4 className="text-sm font-bold text-amber-900">Redirection Request Rejected</h4>
-              <p className="text-xs text-amber-800 mt-1">
-                <strong>Reason:</strong> {incident.redirect_rejected_reason || 'The redirection request was rejected by IMC. Please provide your department feedback.'}
-              </p>
-              <div className="flex items-center justify-between gap-2 mt-2">
-                <span className="text-[11px] text-amber-700">
-                  Rejected on {formatDateTime(incident.redirect_rejected_at)}
-                </span>
-                {canHodFeedback && (
-                  <button
-                    onClick={() => setShowFeedbackModal(true)}
-                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-                  >
-                    Provide Department Feedback Now
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Layout */}
       <div className="w-full space-y-5 print:hidden">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 print:block print:space-y-5">
@@ -722,51 +650,6 @@ export default function IncidentDetailPage() {
 
             {/* Active Workflow / Next Action Area */}
             <div id="next-action-area" className="space-y-5 pt-2">
-              {!incident.all_hod_feedback_submitted && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-                  <div className="flex items-start gap-2.5">
-                    <Bell className="text-amber-600 flex-shrink-0 mt-0.5" size={18} />
-                    <div>
-                      <p className="text-xs font-bold text-amber-900 uppercase tracking-wider">
-                        Department Feedback Pending
-                      </p>
-                      <p className="text-xs text-amber-800 mt-0.5">
-                        {pendingReviewScopes.length > 0 ? (
-                          <>Awaiting feedback for: <strong>{pendingReviewScopes.join(', ')}</strong>. </>
-                        ) : (
-                          <>Assigned category reviewer has not yet submitted feedback. </>
-                        )}
-                        {canHodFeedback
-                          ? 'Please submit your department feedback now.'
-                          : 'IMC Quality Review unlocks once assigned category reviewers respond.'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                    {canRemindHod && (
-                      <button
-                        type="button"
-                        onClick={() => remindHodMutation.mutate()}
-                        disabled={remindHodMutation.isPending}
-                        className="btn-secondary btn-sm text-xs border-amber-300 text-amber-900 bg-white hover:bg-amber-100 flex items-center gap-1.5 font-semibold"
-                      >
-                        {remindHodMutation.isPending ? <Spinner size={12} /> : <Send size={12} />}
-                        Send Reminder
-                      </button>
-                    )}
-                    {canHodFeedback && (
-                      <button
-                        type="button"
-                        onClick={() => setShowFeedbackModal(true)}
-                        className="btn-primary btn-sm text-xs bg-amber-600 hover:bg-amber-700 border-amber-600 shadow-sm font-semibold"
-                      >
-                        Provide Feedback Now
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
               {incident.status === 'redirect_requested' && canImcAct && (
                 <RedirectionReviewCard
                   incident={incident}
@@ -832,29 +715,6 @@ export default function IncidentDetailPage() {
                 imcFeedbackMutation={imcFeedbackMutation}
               />
 
-              {/* Executive Management Phase 1 Action */}
-              {incident.status === 'with_head_management' && !hasVerifiedTraining && !incident.management_decision && (
-                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
-                  <div className="space-y-1">
-                    <p className="font-bold text-amber-900 text-sm flex items-center gap-2">
-                      <Clock size={16} className="text-amber-600 animate-pulse" /> Awaiting Executive Management Decision
-                    </p>
-                    <p className="text-xs text-amber-800">
-                      The IMC Convenor has finalized quality findings and proposed outcomes. Executive Management review and final directive is required.
-                    </p>
-                  </div>
-                  {canMdAct && (
-                    <button
-                      type="button"
-                      onClick={() => setShowMdModal(true)}
-                      className="btn-primary btn-sm text-xs bg-amber-600 hover:bg-amber-700 border-amber-600 shadow-sm flex items-center gap-1.5 font-semibold"
-                    >
-                      Provide Management Decision Now →
-                    </button>
-                  )}
-                </div>
-              )}
-
               {/* Post-Training Closure Review */}
               {incident.status === 'with_head_management' && hasVerifiedTraining && (
                 <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 rounded-xl p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap">
@@ -911,13 +771,6 @@ export default function IncidentDetailPage() {
                 onOpenReportModal={() => setShowTrainerReportModal(true)}
                 onRefetch={refetch}
               />
-
-              {user?.role === 'employee' && (
-                <div className="card p-5">
-                  <h2 className="text-sm font-semibold text-slate-800 mb-3">Current Status</h2>
-                  <StatusMessage status={incident.status} />
-                </div>
-              )}
 
               <ClosureSummaryCard
                 incident={incident}
