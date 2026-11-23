@@ -3,7 +3,7 @@ const { auditLog } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { sendEmail } = require('../utils/emailService');
 const { generateIncidentQrCode, getIncidentUrl } = require('../utils/qrCodeService');
-const { buildTrainerAppointmentLetterData, formatDate } = require('../utils/letterTemplates');
+const { buildTrainerAppointmentLetterData, formatDate, resolveCcRecipients } = require('../utils/letterTemplates');
 const { recordEvent, linkAttachmentsToEvent, getNextRoundNo } = require('../utils/incidentEvents');
 const { generateLetterPdf } = require('../services/pdfService');
 const { buildEmailDispatchNoticeHtml } = require('../templates/letterHtmlTemplate');
@@ -189,6 +189,12 @@ exports.assignTrainer = async (req, res) => {
     );
     const seq = String(parseInt(countRes.rows[0]?.count || '0', 10) + 1).padStart(3, '0');
 
+    // Resolve optional CC recipients strictly from active employee directory
+    const resolvedCcRecipients = await resolveCcRecipients(
+      req.body.ccRecipients || req.body.ccList || [],
+      client.query.bind(client)
+    );
+
     // Generate letter data & verified QR code
     const letterData = buildTrainerAppointmentLetterData({
       trainer: trainerUser,
@@ -197,7 +203,8 @@ exports.assignTrainer = async (req, res) => {
       trainingInstructions,
       targetDate,
       trainees: traineesRoster,
-      yearSeq: seq
+      yearSeq: seq,
+      ccRecipients: resolvedCcRecipients
     });
 
     const qrCodeUrl = await generateIncidentQrCode(id);
@@ -384,15 +391,36 @@ exports.assignTrainer = async (req, res) => {
       }).catch(err => console.error('[Trainer Email] failed:', err));
     }
 
-    // CC recipients
+    // CC recipients (email + in-app notification)
     for (const cc of letterData.ccRecipients) {
+      if (!cc || typeof cc !== 'object') continue;
       if (cc.email) {
+        const ccTrainerEmailHtml = buildEmailDispatchNoticeHtml({
+          letter: appointmentLetter,
+          incident,
+          portalUrl: incidentUrl,
+          ccRecipient: cc
+        });
         sendEmail(cc.email, {
           subject: `[CC] ${letterData.subject} - Ref: ${letterData.referenceNumber}`,
-          text: `[CARBON COPY]\n\n${letterData.subject}\n\nRef: ${letterData.referenceNumber}\n\n${letterData.bodyText}\n\nOfficial signed letter is attached.\nIncident URL: ${incidentUrl}`,
-          html: trainerEmailHtml,
+          text: `[CARBON COPY]\n\nDear ${cc.name || cc.full_name || 'Colleague'},\n\nYou have been copied (CC) on the Trainer Appointment Letter issued to ${trainerUser.full_name} for incident ${incident.reference_id}.\n\nRef: ${letterData.referenceNumber}\n\nOfficial signed letter is attached.\nIncident URL: ${incidentUrl}`,
+          html: ccTrainerEmailHtml,
           attachments: emailAttachments
         }).catch(err => console.error('[Trainer CC Email] failed:', err));
+      }
+      let ccUserId = cc.user_id || null;
+      if (!ccUserId && cc.employee_id) {
+        const uLookup = await query('SELECT id FROM users WHERE LOWER(employee_id) = LOWER($1) AND is_active = TRUE LIMIT 1', [cc.employee_id]);
+        ccUserId = uLookup.rows[0]?.id || null;
+      }
+      if (ccUserId) {
+        await createNotification(
+          ccUserId,
+          id,
+          `Trainer Appointment Letter (CC) — ${letterData.referenceNumber}`,
+          `You have been copied (CC) on Trainer Appointment Letter ${letterData.referenceNumber} issued to ${trainerUser.full_name} for incident ${incident.reference_id}.`,
+          'letter_cc'
+        ).catch(() => {});
       }
     }
 

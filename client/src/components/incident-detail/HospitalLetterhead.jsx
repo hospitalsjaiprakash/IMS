@@ -1,4 +1,5 @@
 import { formatDate } from '../../utils/helpers';
+import { formatCcDisplay } from './CcEmployeePicker';
 
 /**
  * Authentic JPHRC Official A4 Hospital Letterhead canvas shared by
@@ -29,6 +30,9 @@ export default function HospitalLetterhead({
   const isApproved = ['approved', 'dispatched'].includes(status);
   const formattedSalutation = salutation ? `${salutation.replace(/,+$/, '')},` : 'Dear Staff,';
   const paragraphs = (bodyContent || 'No letter content written yet.').split(/\n\s*\n/);
+  const normalizedCcList = (Array.isArray(ccList) ? ccList : [])
+    .map(formatCcDisplay)
+    .filter(Boolean);
 
   return (
     <div className={`bg-slate-300/80 -m-5 p-4 sm:p-8 flex justify-center overflow-y-auto ${maxDeskHeightClass}`}>
@@ -186,39 +190,45 @@ export default function HospitalLetterhead({
               )}
             </div>
 
-            <div className="pt-2.5 border-t border-dashed border-slate-200 flex items-end justify-between gap-4 text-[8.5pt]">
-              <div className="flex-1 space-y-1 text-slate-600">
-                <div className="font-bold text-slate-700 uppercase tracking-wider text-[8pt]">
-                  Copy Communicated for Information &amp; Record To:
+            {(normalizedCcList.length > 0 || qrCodeUrl) && (
+              <div className="pt-2.5 border-t border-dashed border-slate-200 flex items-end justify-between gap-4 text-[8.5pt]">
+                <div className="flex-1 space-y-1 text-slate-600">
+                  {normalizedCcList.length > 0 && (
+                    <>
+                      <div className="font-bold text-slate-700 uppercase tracking-wider text-[8pt]">
+                        Copy Communicated for Information &amp; Record To:
+                      </div>
+                      <ol className="list-decimal list-inside space-y-0.5 text-slate-600 text-[8pt]">
+                        {normalizedCcList.map((entry, i) => (
+                          <li key={i}>{entry}</li>
+                        ))}
+                      </ol>
+                    </>
+                  )}
                 </div>
-                <ol className="list-decimal list-inside space-y-0.5 text-slate-600 text-[8pt]">
-                  {ccList.map((cc, i) => (
-                    <li key={i}>{typeof cc === 'object' ? (cc.label || cc.name) : cc}</li>
-                  ))}
-                </ol>
-              </div>
 
-              {qrCodeUrl && (
-                <div className="shrink-0 text-center w-28">
-                  <a
-                    href={verifyUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-block group transition-transform hover:scale-105"
-                    title="Click to open Incident Dossier in IMS"
-                  >
-                    <img
-                      src={qrCodeUrl}
-                      alt="IMS QR Verification"
-                      className="w-[96px] h-[96px] mx-auto border border-slate-300 rounded-md p-1 bg-white shadow-xs group-hover:border-[#146537] group-hover:shadow-md transition-all cursor-pointer"
-                    />
-                  </a>
-                  <div className="text-[7pt] text-slate-500 mt-1 leading-tight">
-                    Scan or click to verify authentic incident dossier
+                {qrCodeUrl && (
+                  <div className="shrink-0 text-center w-28">
+                    <a
+                      href={verifyUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block group transition-transform hover:scale-105"
+                      title="Click to open Incident Dossier in IMS"
+                    >
+                      <img
+                        src={qrCodeUrl}
+                        alt="IMS QR Verification"
+                        className="w-[96px] h-[96px] mx-auto border border-slate-300 rounded-md p-1 bg-white shadow-xs group-hover:border-[#146537] group-hover:shadow-md transition-all cursor-pointer"
+                      />
+                    </a>
+                    <div className="text-[7pt] text-slate-500 mt-1 leading-tight">
+                      Scan or click to verify authentic incident dossier
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
