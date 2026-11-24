@@ -484,7 +484,7 @@ exports.submitImcFeedback = async (req, res) => {
     const invPending = await client.query(
       `SELECT COUNT(*) as total, 
               COUNT(CASE WHEN status != 'completed' THEN 1 END) as pending
-       FROM investigators WHERE incident_id = $1`,
+       FROM investigators WHERE incident_id = $1 AND COALESCE(is_active, TRUE) = TRUE`,
       [id]
     );
     const totalInvs = parseInt(invPending.rows[0]?.total || '0', 10);
@@ -497,11 +497,13 @@ exports.submitImcFeedback = async (req, res) => {
     }
 
     const imcFeedbackStage = incident.management_decision === 'DISAGREE_REVISE_FEEDBACK' ? 'revised_imc' : 'initial_imc';
-    await client.query(
+    const fbInsertRes = await client.query(
       `INSERT INTO feedbacks (incident_id, author_id, role, feedback_text, stage, proposed_outcome)
-       VALUES ($1, $2, 'imc', $3, $4, $5)`,
+       VALUES ($1, $2, 'imc', $3, $4, $5)
+       RETURNING id`,
       [id, req.user.id, feedbackText, imcFeedbackStage, cleanProposedOutcome || null]
     );
+    const insertedFeedbackId = fbInsertRes.rows[0]?.id;
     
     // Insert attachments if any
     if (req.files && req.files.length > 0) {
@@ -579,10 +581,12 @@ exports.submitImcFeedback = async (req, res) => {
 
     if (!cleanProposedOutcome && collectedEmployeeOutcomes.size > 0) {
       cleanProposedOutcome = Array.from(collectedEmployeeOutcomes).join(', ');
-      await client.query(
-        `UPDATE feedbacks SET proposed_outcome = $1 WHERE incident_id = $2 AND role = 'imc' AND stage = $3`,
-        [cleanProposedOutcome, id, imcFeedbackStage]
-      );
+      if (insertedFeedbackId) {
+        await client.query(
+          `UPDATE feedbacks SET proposed_outcome = $1 WHERE id = $2`,
+          [cleanProposedOutcome, insertedFeedbackId]
+        );
+      }
     }
 
     if (severity || cleanProposedOutcome || anyEmployeeNeedsTraining) {
@@ -1777,7 +1781,13 @@ exports.reopenIncident = async (req, res) => {
 
     const prevStatus = incident.status;
     await client.query(
-      `UPDATE incidents SET status = 'with_imc', updated_at = NOW() WHERE id = $1`,
+      `UPDATE incidents
+       SET status = 'with_imc',
+           management_decision = NULL,
+           management_notes = NULL,
+           resolved_at = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
       [id]
     );
 
@@ -1870,18 +1880,20 @@ exports.assignInvestigator = async (req, res) => {
       return res.status(400).json({ error: err.message });
     }
 
+    // Deactivate previous investigator panel (non-destructive) so reopened/new rounds track independently
+    await query('UPDATE investigators SET is_active = FALSE WHERE incident_id = $1', [id]);
+    const nextRoundRes = await query(
+      'SELECT COALESCE(MAX(round_no), 0) + 1 as nr FROM investigators WHERE incident_id = $1',
+      [id]
+    );
+    const nextRoundNo = parseInt(nextRoundRes.rows[0]?.nr || '1', 10) || 1;
+
     for (const inv of uniqueInvUsers) {
-      const existing = await query(
-        'SELECT id FROM investigators WHERE incident_id = $1 AND investigator_id = $2',
-        [id, inv.id]
+      await query(
+        `INSERT INTO investigators (incident_id, investigator_id, assigned_by, status, round_no, is_active)
+         VALUES ($1, $2, $3, 'assigned', $4, TRUE)`,
+        [id, inv.id, req.user.id, nextRoundNo]
       );
-      if (existing.rows.length === 0) {
-        await query(
-          `INSERT INTO investigators (incident_id, investigator_id, assigned_by) 
-           VALUES ($1, $2, $3)`,
-          [id, inv.id, req.user.id]
-        );
-      }
     }
 
     await query(`UPDATE incidents SET status = 'with_investigator', updated_at = NOW() WHERE id = $1`, [id]);

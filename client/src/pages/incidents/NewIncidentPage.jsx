@@ -250,6 +250,7 @@ export default function NewIncidentPage() {
 
     formData.append('incidentCategories', JSON.stringify(categories));
     formData.append('incidentTypes', JSON.stringify(types));
+    formData.append('categoryTypeMap', JSON.stringify(form.selectedTypes));
 
     if (form.attachments && form.attachments.length > 0) {
       form.attachments.forEach(file => {

@@ -1,35 +1,29 @@
-import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
-import { StatCard, Spinner, Alert, Tabs, Modal, SeverityBadge, StatusBadge } from '../../components/ui';
+import { StatCard, Spinner, Alert, Tabs, SeverityBadge, StatusBadge } from '../../components/ui';
 import { IncidentOverviewCards } from '../../components/dashboard/IncidentOverviewCards';
 import { AccountabilityPipelineStepper } from '../../components/dashboard/AccountabilityPipelineStepper';
 import { MonthlySeverityCharts } from '../../components/dashboard/MonthlySeverityCharts';
 import { CategoryAnalyticsTable } from '../../components/dashboard/CategoryAnalyticsTable';
 import {
   FileText, Clock, MessageSquare, ShieldAlert, Paperclip,
-  BarChart3, Timer, CheckCircle, CheckSquare, XCircle, Pencil, Eye,
-  AlertCircle, LayoutDashboard, ShieldCheck, Mail, RefreshCw
+  BarChart3, Timer, CheckCircle, CheckSquare, XCircle, Eye,
+  LayoutDashboard, ShieldCheck, Mail, RefreshCw
 } from 'lucide-react';
 import { Search } from 'lucide-react';
-import { formatDate, formatDuration, timeAgo, getApiErrorMessage } from '../../utils/helpers';
-import toast from 'react-hot-toast';
+import { formatDate, formatDuration, timeAgo } from '../../utils/helpers';
 
 export default function ManagementDashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') === 'analytics' ? 'analytics' : 'overview';
 
   const handleTabChange = (tab) => {
     setSearchParams({ tab });
   };
-
-  const [editModal, setEditModal] = useState(null);
-  const [editText, setEditText] = useState('');
 
   // 1. Authoritative SQL dashboard stats
   const {
@@ -85,30 +79,6 @@ export default function ManagementDashboard() {
     enabled: activeTab === 'analytics',
     staleTime: 10000,
   });
-
-  const { mutate: doEditFeedback, isPending: isSaving } = useMutation({
-    mutationFn: ({ id, feedbackType, feedbackText }) =>
-      incidentsApi.editFeedback(id, { feedbackType, feedbackText }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['incidents'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-      toast.success('Feedback updated successfully.');
-      setEditModal(null);
-      setEditText('');
-    },
-    onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to update feedback.')),
-  });
-
-  const openEditModal = (incident, feedbackType) => {
-    const currentText =
-      feedbackType === 'hod'
-        ? incident.hod_feedback
-        : feedbackType === 'imc'
-          ? incident.imc_feedback
-          : incident.management_feedback;
-    setEditModal({ incident, feedbackType });
-    setEditText(currentText || '');
-  };
 
   if (isStatsLoading) {
     return (
@@ -516,11 +486,15 @@ export default function ManagementDashboard() {
               <div className="border border-slate-200 rounded-xl overflow-hidden mt-3 bg-white">
                 <div className="px-4 py-2.5 bg-indigo-50/40 border-b border-indigo-100/60 flex items-center gap-2">
                   <CheckSquare size={13} className="text-indigo-600" />
-                  <span className="text-xs font-semibold text-slate-700">IMC Feedback Given — Click Edit to correct entries</span>
+                  <span className="text-xs font-semibold text-slate-700">Recent IMC Feedback Given</span>
                 </div>
                 <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
                   {imcGivenList.map(inc => (
-                    <div key={inc.id} className="flex items-start justify-between gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors">
+                    <div
+                      key={inc.id}
+                      onClick={() => navigate(`/incidents/${encodeURIComponent(inc.id)}`)}
+                      className="flex items-start justify-between gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap mb-0.5">
                           <span className="font-mono text-xs font-bold text-green-700">{inc.reference_id}</span>
@@ -529,10 +503,14 @@ export default function ManagementDashboard() {
                         <p className="text-xs text-slate-500 italic line-clamp-1">&ldquo;{inc.imc_feedback}&rdquo;</p>
                       </div>
                       <button
-                        onClick={() => openEditModal(inc, 'imc')}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/incidents/${encodeURIComponent(inc.id)}`);
+                        }}
                         className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors flex-shrink-0"
                       >
-                        <Pencil size={11} /> Edit
+                        <Eye size={11} /> View
                       </button>
                     </div>
                   ))}
@@ -548,49 +526,6 @@ export default function ManagementDashboard() {
           />
         </div>
       )}
-
-      {/* EDIT FEEDBACK MODAL */}
-      <Modal
-        open={!!editModal}
-        onClose={() => { setEditModal(null); setEditText(''); }}
-        title={editModal ? `Edit ${editModal.feedbackType === 'hod' ? 'Department' : editModal.feedbackType.toUpperCase()} Feedback` : ''}
-        size="md"
-        footer={
-          <>
-            <button onClick={() => { setEditModal(null); setEditText(''); }} className="btn-secondary">Cancel</button>
-            <button
-              disabled={isSaving || !editText.trim()}
-              onClick={() => doEditFeedback({ id: editModal.incident.id, feedbackType: editModal.feedbackType, feedbackText: editText })}
-              className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {isSaving ? 'Saving…' : 'Save Changes'}
-            </button>
-          </>
-        }
-      >
-        {editModal && (
-          <div className="space-y-4 pt-1">
-            <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <AlertCircle size={14} className="text-amber-500 flex-shrink-0" />
-              <p className="text-xs text-slate-600">
-                Editing <span className="font-bold text-slate-800">{editModal.feedbackType === 'hod' ? 'Department' : editModal.feedbackType.toUpperCase()}</span> feedback for incident{' '}
-                <span className="font-mono font-bold text-green-700">{editModal.incident.reference_id}</span>.
-                This action will be logged in the audit trail.
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Corrected Feedback</label>
-              <textarea
-                rows={5}
-                value={editText}
-                onChange={e => setEditText(e.target.value)}
-                placeholder="Enter the correct feedback…"
-                className="w-full px-3 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none transition-all"
-              />
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

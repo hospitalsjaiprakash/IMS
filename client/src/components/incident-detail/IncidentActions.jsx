@@ -5,6 +5,7 @@ import { Spinner, ConfirmDialog } from '../../components/ui';
 export default function IncidentActions({
   incident,
   user,
+  canEditIncident,
   canWithdraw,
   canHodFeedback,
   canRequestRedirect,
@@ -28,7 +29,10 @@ export default function IncidentActions({
   const [confirmEscalateOpen, setConfirmEscalateOpen] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
-  const isEmployeeReporter = user?.id === incident.reporter_id && incident.status === 'submitted';
+  const isEmployeeReporter =
+    canEditIncident !== undefined
+      ? Boolean(canEditIncident)
+      : Boolean(user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status));
   const showEscalateButton = Boolean(canEscalate && user?.role === 'imc' && (user?.is_imc_lead || user?.isImcLead));
 
   if (

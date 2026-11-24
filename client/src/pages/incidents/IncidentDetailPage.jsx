@@ -454,6 +454,11 @@ export default function IncidentDetailPage() {
       : attachments.filter(a => a.stage === 'investigator_report');
 
   const hasImcFeedback = feedbacks.some(f => f.role === 'imc');
+  const canEditIncident = Boolean(
+    user?.id === incident.reporter_id &&
+    ['submitted', 'with_hod'].includes(incident.status) &&
+    feedbacks.length === 0
+  );
   const canWithdraw = user?.id === incident.reporter_id && ['submitted', 'with_hod'].includes(incident.status);
 
   // Reviewers can be ANY active staff mapped to an incident category (TC-02), regardless of primary role
@@ -585,6 +590,7 @@ export default function IncidentDetailPage() {
           <IncidentActions
             incident={incident}
             user={user}
+            canEditIncident={canEditIncident}
             canWithdraw={canWithdraw}
             canHodFeedback={canHodFeedback}
             canRequestRedirect={canRequestRedirect}
@@ -609,7 +615,7 @@ export default function IncidentDetailPage() {
       />
 
       {/* Main Layout */}
-      <div className="w-full space-y-5 print:hidden">
+      <div className="w-full space-y-5">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 print:block print:space-y-5">
           <div className="lg:col-span-2 space-y-5 print:block">
             <IncidentDetailsCard
@@ -622,7 +628,7 @@ export default function IncidentDetailPage() {
 
             {/* Editable Author Feedback Bar */}
             {myEditableFeedbacks.length > 0 && (
-              <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 print:hidden">
                 <div className="text-xs text-indigo-950">
                   <strong className="font-bold">Your Submitted Feedback:</strong> You can update your feedback until the next review stage begins.
                 </div>
@@ -642,14 +648,16 @@ export default function IncidentDetailPage() {
               </div>
             )}
 
-            <CaseStoryFeed
-              events={data?.events || []}
-              incident={incident}
-              onViewAttachment={(att) => setPreviewFile(att)}
-            />
+            <div className="print:hidden">
+              <CaseStoryFeed
+                events={data?.events || []}
+                incident={incident}
+                onViewAttachment={(att) => setPreviewFile(att)}
+              />
+            </div>
 
             {/* Active Workflow / Next Action Area */}
-            <div id="next-action-area" className="space-y-5 pt-2">
+            <div id="next-action-area" className="space-y-5 pt-2 print:hidden">
               {incident.status === 'redirect_requested' && canImcAct && (
                 <RedirectionReviewCard
                   incident={incident}
@@ -782,7 +790,7 @@ export default function IncidentDetailPage() {
             </div>
           </div>
 
-          <div className="space-y-5">
+          <div className="space-y-5 print:hidden">
             <CaseStoryMiniMap incident={incident} events={data?.events || []} />
           </div>
         </div>

@@ -10,6 +10,9 @@ export default function IncidentHeader({ incident, actions, user }) {
     user?.isImcMember ||
     user?.is_imc_lead ||
     user?.isImcLead ||
+    user?.role === 'head_management' ||
+    user?.is_management_member ||
+    user?.isManagementMember ||
     user?.role === 'system_admin' ||
     user?.is_system_admin
   );

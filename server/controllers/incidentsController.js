@@ -24,7 +24,7 @@ exports.createIncident = async (req, res) => {
     let {
       departmentIds, derivedDepartments, incidentDate, incidentTime,
       mainLocationId, subLocationText,
-      occurredTo, incidentCategory, incidentType, description,
+      occurredTo, incidentCategory, incidentType, incidentTypes, categoryTypeMap, description,
       hasResponsiblePerson, responsiblePersonName, incidentCategories
     } = req.body;
 
@@ -84,10 +84,18 @@ exports.createIncident = async (req, res) => {
       return [];
     };
 
+    let parsedTypeMap = {};
     try {
       departmentIds = parseJsonArray(departmentIds, 'departmentIds');
       derivedDepartments = parseJsonArray(derivedDepartments, 'derivedDepartments');
       incidentCategories = parseJsonArray(incidentCategories, 'incidentCategories');
+      incidentTypes = parseJsonArray(incidentTypes, 'incidentTypes');
+      if (categoryTypeMap && typeof categoryTypeMap === 'string') {
+        const parsed = JSON.parse(categoryTypeMap);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) parsedTypeMap = parsed;
+      } else if (categoryTypeMap && typeof categoryTypeMap === 'object' && !Array.isArray(categoryTypeMap)) {
+        parsedTypeMap = categoryTypeMap;
+      }
     } catch (parseErr) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: parseErr.message });
@@ -106,6 +114,23 @@ exports.createIncident = async (req, res) => {
       rawCatNames = String(incidentCategory).split(',').map(s => s.trim()).filter(Boolean);
     }
     rawCatNames = [...new Set(rawCatNames)];
+
+    // Build order-independent category -> type map (falling back to positional incidentTypes / single incidentType)
+    const normalizedTypeMap = new Map();
+    for (const [k, v] of Object.entries(parsedTypeMap)) {
+      const cleanKey = String(k || '').trim().toLowerCase();
+      const cleanVal = String(v || '').trim();
+      if (cleanKey && cleanVal) normalizedTypeMap.set(cleanKey, cleanVal);
+    }
+    const rawCatIndexMap = new Map();
+    rawCatNames.forEach((cName, idx) => rawCatIndexMap.set(cName.toLowerCase(), idx));
+    const resolveTypeForCategory = (catName) => {
+      const key = String(catName || '').trim().toLowerCase();
+      if (normalizedTypeMap.has(key)) return normalizedTypeMap.get(key);
+      const pos = rawCatIndexMap.get(key);
+      if (pos !== undefined && incidentTypes[pos]) return String(incidentTypes[pos]).trim();
+      return String(incidentType || '').trim() || 'Others';
+    };
 
     // Legacy optional department resolution (if explicitly passed by legacy API callers)
     let resolvedDeptIds = [];
@@ -153,6 +178,15 @@ exports.createIncident = async (req, res) => {
     const canonicalCategoryStr = resolvedCategories.length > 0
       ? resolvedCategories.map(c => c.name).join(', ')
       : (rawCatNames.join(', ') || incidentCategory || 'Others');
+
+    const orderedCatNames = resolvedCategories.length > 0
+      ? rawCatNames.filter(rn => resolvedCategories.some(rc => rc.name.toLowerCase() === rn.toLowerCase()))
+      : rawCatNames;
+    const resolvedTypesList = [
+      ...orderedCatNames.map(resolveTypeForCategory),
+      ...incidentTypes.map(t => String(t || '').trim()),
+    ].filter(Boolean);
+    const canonicalTypeStr = [...new Set(resolvedTypesList)].join(', ') || String(incidentType || '').trim() || 'Others';
 
     // Determine whether active feedback assignees exist for the selected categories (or legacy departments)
     let mappedAssignees = [];
@@ -204,18 +238,21 @@ exports.createIncident = async (req, res) => {
       [
         refId.referenceId, refId.year, refId.seqNumber, req.user.id,
         incidentDate, incidentTime, mLoc, sLoc,
-        occurredTo, severity, canonicalCategoryStr, incidentType || 'Others', description,
+        occurredTo, severity, canonicalCategoryStr, canonicalTypeStr, description,
         hasResponsiblePerson, responsiblePersonName || null, status
       ]
     );
 
     const incident = incidentResult.rows[0];
 
-    // Link incident categories
+    // Link incident categories with their per-category incident type
     for (const cat of resolvedCategories) {
+      const catType = resolveTypeForCategory(cat.name);
       await client.query(
-        'INSERT INTO incident_category_links (incident_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [incident.id, cat.id]
+        `INSERT INTO incident_category_links (incident_id, category_id, incident_type)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (incident_id, category_id) DO UPDATE SET incident_type = EXCLUDED.incident_type`,
+        [incident.id, cat.id, catType]
       );
     }
 
@@ -285,6 +322,10 @@ exports.createIncident = async (req, res) => {
         reported_severity: incident.severity,
         incident_category: incident.incident_category,
         incident_type: incident.incident_type,
+        category_types: resolvedCategories.map(c => ({
+          category: c.name,
+          type: resolveTypeForCategory(c.name)
+        })),
         department_ids: departmentIds,
         description: incident.description,
         has_responsible_person: incident.has_responsible_person,
@@ -869,9 +910,9 @@ exports.getIncident = async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get assigned incident categories with per-category feedback status
+    // Get assigned incident categories with per-category type and feedback status
     const cats = await query(
-      `SELECT ic.id, ic.name,
+      `SELECT ic.id, ic.name, icl.incident_type,
          EXISTS (
            SELECT 1 FROM category_feedback_assignees cfa
            JOIN users u ON u.id = cfa.user_id
@@ -982,7 +1023,7 @@ exports.getIncident = async (req, res) => {
               u.is_imc_member, u.is_imc_lead
        FROM investigators i 
        JOIN users u ON u.id = i.investigator_id 
-       WHERE i.incident_id = $1 
+       WHERE i.incident_id = $1 AND COALESCE(i.is_active, TRUE) = TRUE
        ORDER BY i.assigned_at ASC`,
       [incident.id]
     );
@@ -1062,12 +1103,39 @@ exports.getIncident = async (req, res) => {
               t.imc_review_notes as verification_notes,
               att.stored_filename as report_file_name,
               att.original_filename as report_original_filename,
-              att.file_size as report_file_size
+              att.file_size as report_file_size,
+              COALESCE(
+                (
+                  SELECT json_agg(
+                    json_build_object(
+                      'id', a_tr.id,
+                      'original_filename', a_tr.original_filename,
+                      'stored_filename', a_tr.stored_filename,
+                      'file_size', a_tr.file_size,
+                      'mime_type', a_tr.mime_type,
+                      'created_at', a_tr.created_at
+                    ) ORDER BY a_tr.created_at ASC
+                  )
+                  FROM attachments a_tr
+                  WHERE a_tr.trainer_assignment_id = t.id
+                     OR (t.trainer_attachment_id IS NOT NULL AND a_tr.id = t.trainer_attachment_id)
+                ),
+                '[]'::json
+              ) as report_attachments,
+              l.reference_number as letter_reference_number,
+              l.letter_date as letter_date,
+              l.subject as letter_subject,
+              l.salutation as letter_salutation,
+              l.body_text as letter_body_text,
+              l.qr_code_url as letter_qr_code_url,
+              l.cc_recipients as letter_cc_recipients,
+              l.status as letter_status
        FROM incident_trainers t
        LEFT JOIN users u_trainer ON u_trainer.id = t.trainer_id
        LEFT JOIN users u_assign ON u_assign.id = t.assigned_by
        LEFT JOIN users u_verify ON u_verify.id = t.imc_verified_by
        LEFT JOIN attachments att ON att.id = t.trainer_attachment_id
+       LEFT JOIN incident_letters l ON l.id = t.appointment_letter_id
        WHERE t.incident_id = $1
        ORDER BY t.created_at ASC`,
       [incident.id]
