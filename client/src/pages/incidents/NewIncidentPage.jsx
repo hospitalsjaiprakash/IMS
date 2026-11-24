@@ -12,6 +12,7 @@ import {
   Search, UserPlus
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useAuthStore } from '../../store/authStore';
 
 const STEPS = [
   { id: 1, label: 'Category & Type',        icon: Layers },
@@ -24,6 +25,11 @@ const STEPS = [
 export default function NewIncidentPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const isMaintenanceBlocked = Boolean(
+    user?.maintenanceMode &&
+    !(user?.role === 'system_admin' || user?.isSystemAdmin || user?.is_system_admin)
+  );
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState({});
 
@@ -273,6 +279,16 @@ export default function NewIncidentPage() {
           <p className="page-subtitle">Step {step} of {STEPS.length}</p>
         </div>
       </div>
+
+      {isMaintenanceBlocked && (
+        <div className="mb-5">
+          <Alert
+            type="warning"
+            title="System Maintenance Active"
+            message="Reporting of new incidents is temporarily paused while system maintenance is in progress. Please try again once maintenance mode is disabled."
+          />
+        </div>
+      )}
 
       {/* Step indicator */}
       <div className="card p-4 mb-5">
@@ -854,7 +870,7 @@ export default function NewIncidentPage() {
           ) : (
             <button
               onClick={handleSubmit}
-              disabled={submitMutation.isPending}
+              disabled={submitMutation.isPending || isMaintenanceBlocked}
               className="btn-primary"
             >
               {submitMutation.isPending ? <Spinner size={16} className="text-white" /> : <Check size={16} />}

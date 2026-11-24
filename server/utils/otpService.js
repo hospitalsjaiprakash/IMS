@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const transporter = require('../config/mail');
 const { query, getClient } = require('../config/database');
+const { getRuntimeSystemConfig } = require('./systemConfigCache');
 
 const OTP_COOLDOWN_MS = 60 * 1000; // 60 seconds per (employeeId, action)
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
@@ -51,6 +52,9 @@ exports.sendOtp = async (employeeId, email, action, options = {}) => {
     // 1. Serialize per (employee_id, action) with pg_advisory_xact_lock so concurrent
     //    sendOtp calls cannot bypass the 60-second resend cooldown or send duplicate emails.
     const bypassCooldown = process.env.NODE_ENV === 'test' && options?.bypassCooldown === true;
+    const runtimeConfig = await getRuntimeSystemConfig();
+    const otpValidityMinutes = Number(runtimeConfig?.otp_validity_minutes) || 10;
+    const otpExpiryMs = otpValidityMinutes * 60 * 1000;
     const otp = crypto.randomInt(100000, 1000000).toString();
     const otpHash = computeOtpMac(cleanEmpId, cleanAction, normalizedEmail, otp);
 
@@ -91,7 +95,7 @@ exports.sendOtp = async (employeeId, email, action, options = {}) => {
         `INSERT INTO security_otps (employee_id, action, otp_hash, target_email, attempts, max_attempts, expires_at)
          VALUES ($1, $2, $3, $4, 0, $5, NOW() + ($6 * INTERVAL '1 millisecond'))
          RETURNING id`,
-        [cleanEmpId, cleanAction, otpHash, normalizedEmail, OTP_MAX_ATTEMPTS, OTP_EXPIRY_MS]
+        [cleanEmpId, cleanAction, otpHash, normalizedEmail, OTP_MAX_ATTEMPTS, otpExpiryMs]
       );
       insertedOtpId = insertRes.rows[0]?.id ?? null;
       await dbClient.query('COMMIT');
@@ -118,7 +122,7 @@ exports.sendOtp = async (employeeId, email, action, options = {}) => {
           <div style="background-color: #f1f5f9; padding: 15px; border-radius: 6px; text-align: center; margin: 25px 0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #0f172a;">${otp}</span>
           </div>
-          <p style="color: #64748b; font-size: 14px;">This OTP is valid for <strong>10 minutes</strong>. Do not share this code with anyone.</p>
+          <p style="color: #64748b; font-size: 14px;">This OTP is valid for <strong>${otpValidityMinutes} minute${otpValidityMinutes === 1 ? '' : 's'}</strong>. Do not share this code with anyone.</p>
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
           <p style="color: #94a3b8; font-size: 12px;">If you did not request this, please ignore this email or contact the system administrator immediately.</p>
         </div>

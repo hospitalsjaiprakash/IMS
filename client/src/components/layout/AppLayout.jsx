@@ -403,6 +403,12 @@ export default function AppLayout() {
           </div>
         </header>
 
+        {user?.maintenanceMode && (
+          <div className="bg-amber-100 border-b border-amber-300 px-4 py-2 text-xs font-semibold text-amber-900 flex items-center justify-center gap-2 flex-shrink-0 print:hidden">
+            <span>⚠️ SYSTEM MAINTENANCE MODE ACTIVE — Reporting of new incidents is temporarily paused for staff.</span>
+          </div>
+        )}
+
         <main className="flex-1 overflow-auto bg-slate-50/50 p-4 md:p-6 lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div

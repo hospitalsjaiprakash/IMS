@@ -5,6 +5,7 @@ const { isEmployeeLockedOut, extractCalendarDate, getTodayDateString } = require
 const { SECRET_CONFIG_KEYS, encryptSecret, assertAllowedOfficePortalUrl } = require('../utils/secretCrypto');
 const { isPrivilegedRole } = require('../utils/accessControl');
 const { escapeCsvField } = require('../utils/csvSanitizer');
+const { invalidateSystemConfigCache } = require('../utils/systemConfigCache');
 
 exports.getSystemConfig = async (req, res) => {
   try {
@@ -75,6 +76,8 @@ exports.updateSystemConfig = async (req, res) => {
         [key, storedValue, req.user.id]
       );
     }
+
+    invalidateSystemConfigCache();
 
     if (touchedOfficePortal) {
       const officePortalService = require('../services/officePortalService');

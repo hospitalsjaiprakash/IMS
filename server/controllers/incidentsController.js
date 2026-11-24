@@ -12,11 +12,21 @@ const {
   canNonPrivilegedUserViewLetter,
   filterIncidentEventsForUser
 } = require('../utils/accessControl');
+const { getRuntimeSystemConfig } = require('../utils/systemConfigCache');
 
 // =============================================
 // CREATE INCIDENT
 // =============================================
 exports.createIncident = async (req, res) => {
+  const runtimeConfig = await getRuntimeSystemConfig();
+  const isSystemAdmin = req.user?.role === 'system_admin' || req.user?.is_system_admin === true;
+  if (runtimeConfig.maintenance_mode && !isSystemAdmin) {
+    return res.status(503).json({
+      error: 'System maintenance is currently active. Reporting new incidents is temporarily paused.',
+      code: 'MAINTENANCE_MODE'
+    });
+  }
+
   const client = await getClient();
   try {
     await client.query('BEGIN');
@@ -428,29 +438,33 @@ exports.getIncidents = async (req, res) => {
       WHERE icl2.incident_id = i.id AND cfa2.user_id = $${idx} AND cfa2.is_active = TRUE
     )`;
 
-    // Role-based filtering
-    if (role === 'employee' && viewMode !== 'dept_reviews') {
-      whereClause += ` AND (
-        i.reporter_id = $${paramIdx} 
-        OR i.redirect_requested_by_user_id = $${paramIdx}
-        OR EXISTS (
-          SELECT 1 FROM investigators inv
-          WHERE inv.incident_id = i.id AND inv.investigator_id = $${paramIdx}
-        )
-        OR EXISTS (
-          SELECT 1 FROM incident_trainers tr
-          WHERE tr.incident_id = i.id AND tr.trainer_id = $${paramIdx}
-        )
-        OR EXISTS (
-          SELECT 1 FROM incident_responsible_employees ire
-          WHERE ire.incident_id = i.id AND ire.employee_id = $${paramIdx}
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM incident_letters l_cc
-          WHERE l_cc.incident_id = i.id
-            AND l_cc.status IN ('approved', 'dispatched')
-            AND EXISTS (
+    const personalParticipationPredicate = (userIdx, empCodeIdx) => `(
+      i.reporter_id = $${userIdx}
+      OR i.redirect_requested_by_user_id = $${userIdx}
+      OR EXISTS (
+        SELECT 1 FROM investigators inv
+        WHERE inv.incident_id = i.id AND inv.investigator_id = $${userIdx}
+      )
+      OR EXISTS (
+        SELECT 1 FROM incident_trainers tr
+        WHERE tr.incident_id = i.id AND tr.trainer_id = $${userIdx}
+      )
+      OR EXISTS (
+        SELECT 1 FROM incident_responsible_employees ire
+        WHERE ire.incident_id = i.id AND ire.employee_id = $${userIdx}
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM incident_letters l_cc
+        WHERE l_cc.incident_id = i.id
+          AND l_cc.status IN ('approved', 'dispatched')
+          AND (
+            l_cc.employee_id = $${userIdx}::text
+            OR ($${empCodeIdx} <> '' AND (
+              LOWER(COALESCE(l_cc.employee_id, '')) = LOWER($${empCodeIdx})
+              OR LOWER(COALESCE(l_cc.recipient_emp_no, '')) = LOWER($${empCodeIdx})
+            ))
+            OR EXISTS (
               SELECT 1
               FROM jsonb_array_elements(
                 CASE WHEN jsonb_typeof(COALESCE(l_cc.cc_recipients, '[]'::jsonb)) = 'array'
@@ -459,12 +473,38 @@ exports.getIncidents = async (req, res) => {
               ) AS cc_item
               WHERE jsonb_typeof(cc_item) = 'object'
                 AND (
-                  cc_item->>'user_id' = $${paramIdx}::text
-                  OR cc_item->>'id' = $${paramIdx}::text
-                  OR ($${paramIdx + 1} <> '' AND LOWER(COALESCE(cc_item->>'employee_id', '')) = LOWER($${paramIdx + 1}))
+                  cc_item->>'user_id' = $${userIdx}::text
+                  OR cc_item->>'id' = $${userIdx}::text
+                  OR ($${empCodeIdx} <> '' AND LOWER(COALESCE(cc_item->>'employee_id', '')) = LOWER($${empCodeIdx}))
                 )
             )
+          )
+      )
+    )`;
+
+    // Role-based filtering
+    if (role === 'employee' && ['dept_reviews', 'department'].includes(viewMode)) {
+      whereClause += ` AND (
+        ${categoryReviewerPredicate(paramIdx)}
+        OR EXISTS (
+          SELECT 1 FROM incident_departments id2
+          JOIN departments d ON d.id = id2.department_id
+          WHERE id2.incident_id = i.id AND (
+            d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
+            OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true)
+          )
         )
+        OR i.redirect_requested_by_user_id = $${paramIdx}
+      )`;
+      params.push(userId);
+      paramIdx++;
+    } else if (role === 'employee' && viewMode === 'my_incidents') {
+      whereClause += ` AND ${personalParticipationPredicate(paramIdx, paramIdx + 1)}`;
+      params.push(userId, String(req.user.employee_id || '').trim());
+      paramIdx += 2;
+    } else if (role === 'employee') {
+      whereClause += ` AND (
+        ${personalParticipationPredicate(paramIdx, paramIdx + 1)}
         OR ${categoryReviewerPredicate(paramIdx)}
         OR EXISTS (
           SELECT 1 FROM incident_departments id2
@@ -477,24 +517,10 @@ exports.getIncidents = async (req, res) => {
       )`;
       params.push(userId, String(req.user.employee_id || '').trim());
       paramIdx += 2;
-    } else if (role === 'employee' && viewMode === 'dept_reviews') {
-      whereClause += ` AND (
-        ${categoryReviewerPredicate(paramIdx)}
-        OR EXISTS (
-          SELECT 1 FROM incident_departments id2
-          JOIN departments d ON d.id = id2.department_id
-          WHERE id2.incident_id = i.id AND (
-            d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
-            OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true)
-          )
-        )
-      )`;
-      params.push(userId);
-      paramIdx++;
     } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_incidents') {
-      whereClause += ` AND (i.reporter_id = $${paramIdx} OR i.redirect_requested_by_user_id = $${paramIdx})`;
-      params.push(userId);
-      paramIdx++;
+      whereClause += ` AND ${personalParticipationPredicate(paramIdx, paramIdx + 1)}`;
+      params.push(userId, String(req.user.employee_id || '').trim());
+      paramIdx += 2;
     } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_team') {
       const userDept = department || '';
       whereClause += ` AND EXISTS (
@@ -1315,11 +1341,58 @@ exports.getDashboardStats = async (req, res) => {
       WHERE icl2.incident_id = i.id AND cfa2.user_id = $${idx} AND cfa2.is_active = TRUE
     )`;
 
-    if (viewMode === 'my_incidents' || (role === 'employee' && viewMode !== 'dept_reviews')) {
-      scopeFilter = `AND i.reporter_id = $${paramIdx}`;
-      params.push(userId);
-      paramIdx++;
-    } else if (role === 'hod' || (role === 'employee' && viewMode === 'dept_reviews')) {
+    const personalParticipationSql = (userIdx, empCodeIdx) => `(
+      i.reporter_id = $${userIdx}
+      OR i.redirect_requested_by_user_id = $${userIdx}
+      OR EXISTS (
+        SELECT 1 FROM investigators inv
+        WHERE inv.incident_id = i.id AND inv.investigator_id = $${userIdx}
+      )
+      OR EXISTS (
+        SELECT 1 FROM incident_trainers tr
+        WHERE tr.incident_id = i.id AND tr.trainer_id = $${userIdx}
+      )
+      OR EXISTS (
+        SELECT 1 FROM incident_responsible_employees ire
+        WHERE ire.incident_id = i.id AND ire.employee_id = $${userIdx}
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM incident_letters l_cc
+        WHERE l_cc.incident_id = i.id
+          AND l_cc.status IN ('approved', 'dispatched')
+          AND (
+            l_cc.employee_id = $${userIdx}::text
+            OR ($${empCodeIdx} <> '' AND (
+              LOWER(COALESCE(l_cc.employee_id, '')) = LOWER($${empCodeIdx})
+              OR LOWER(COALESCE(l_cc.recipient_emp_no, '')) = LOWER($${empCodeIdx})
+            ))
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(COALESCE(l_cc.cc_recipients, '[]'::jsonb)) = 'array'
+                     THEN COALESCE(l_cc.cc_recipients, '[]'::jsonb)
+                     ELSE '[]'::jsonb END
+              ) AS cc_item
+              WHERE jsonb_typeof(cc_item) = 'object'
+                AND (
+                  cc_item->>'user_id' = $${userIdx}::text
+                  OR cc_item->>'id' = $${userIdx}::text
+                  OR ($${empCodeIdx} <> '' AND LOWER(COALESCE(cc_item->>'employee_id', '')) = LOWER($${empCodeIdx}))
+                )
+            )
+          )
+      )
+    )`;
+
+    const userEmpCode = String(req.user.employee_id || '').trim();
+    const legacyDeptNameForScope = role === 'hod' ? (department || '').trim() : '';
+
+    if (viewMode === 'my_incidents' || (role === 'employee' && !['dept_reviews', 'department'].includes(viewMode))) {
+      scopeFilter = `AND ${personalParticipationSql(paramIdx, paramIdx + 1)}`;
+      params.push(userId, userEmpCode);
+      paramIdx += 2;
+    } else if (role === 'hod' || (role === 'employee' && ['dept_reviews', 'department'].includes(viewMode))) {
       scopeFilter = `AND (
         ${categoryReviewerSql(paramIdx)}
         OR EXISTS (
@@ -1336,7 +1409,7 @@ exports.getDashboardStats = async (req, res) => {
         )
         OR i.redirect_requested_by_user_id = $${paramIdx}
       )`;
-      params.push(userId, (department || '').trim());
+      params.push(userId, legacyDeptNameForScope);
       paramIdx += 2;
     }
 
@@ -1442,7 +1515,7 @@ exports.getDashboardStats = async (req, res) => {
       )`;
 
       const extraRevFilters = [];
-      const revParams = [userId, (department || '').trim()];
+      const revParams = [userId, legacyDeptNameForScope];
       let revIdx = 3;
       const givenFilters = [];
       const givenParams = [userId];
@@ -1474,13 +1547,13 @@ exports.getDashboardStats = async (req, res) => {
       const [myIncidentsRes, assignedScopeRes, feedbackGivenRes, feedbackPendingRes, redirectRejectedRes] = await Promise.all([
         query(`
           SELECT
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed','withdrawn')) as active,
-            COUNT(*) FILTER (WHERE status IN ('resolved','closed')) as resolved,
-            COUNT(*) FILTER (WHERE status = 'withdrawn') as withdrawn,
-            COUNT(*) FILTER (WHERE status != 'withdrawn' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())) as this_month
-          FROM incidents WHERE reporter_id = $1
-        `, [userId]),
+            COUNT(*) FILTER (WHERE i.status != 'withdrawn') as total,
+            COUNT(*) FILTER (WHERE i.status NOT IN ('resolved','closed','withdrawn')) as active,
+            COUNT(*) FILTER (WHERE i.status IN ('resolved','closed')) as resolved,
+            COUNT(*) FILTER (WHERE i.status = 'withdrawn') as withdrawn,
+            COUNT(*) FILTER (WHERE i.status != 'withdrawn' AND DATE_TRUNC('month', i.created_at) = DATE_TRUNC('month', NOW())) as this_month
+          FROM incidents i WHERE ${personalParticipationSql(1, 2)}
+        `, [userId, userEmpCode]),
         query(`
           SELECT
             COUNT(*) FILTER (WHERE i.status != 'withdrawn') as received,
@@ -1512,7 +1585,7 @@ exports.getDashboardStats = async (req, res) => {
             AND i.status NOT IN ('resolved', 'closed', 'withdrawn')
             AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.author_id = $1)
             AND (i.redirect_requested_by_user_id = $1 OR ${reviewerScopeSql})
-        `, [userId, (department || '').trim()])
+        `, [userId, legacyDeptNameForScope])
       ]);
 
       hodReport = {

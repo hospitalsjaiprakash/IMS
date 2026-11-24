@@ -19,7 +19,8 @@ export default function ResponsibleEmployeePicker({
   disabled = false,
   allowPerEmployeeOutcomes = false,
   defaultOutcomes = [],
-  canSpecifyPenalty = false
+  canSpecifyPenalty = false,
+  requireRegistered = false
 }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState([]);
@@ -381,15 +382,20 @@ export default function ResponsibleEmployeePicker({
                   const empId = emp.id || emp.employee_id;
                   const isSelected = selectedIds.has(String(empId).toLowerCase()) ||
                     (emp.employee_id && selectedIds.has(String(emp.employee_id).toLowerCase()));
+                  const isUnregistered = Boolean(requireRegistered && emp.is_registered === false);
+                  const isDisabledOption = isSelected || isUnregistered;
 
                   return (
                     <button
                       type="button"
                       key={empId}
-                      disabled={isSelected}
-                      onClick={() => handleSelect(emp)}
+                      disabled={isDisabledOption}
+                      onClick={() => {
+                        if (isDisabledOption) return;
+                        handleSelect(emp);
+                      }}
                       className={`w-full px-3 py-2.5 text-left flex items-center justify-between transition-colors ${
-                        isSelected
+                        isDisabledOption
                           ? 'bg-slate-50 text-slate-400 cursor-not-allowed'
                           : 'hover:bg-indigo-50/70 text-slate-700 cursor-pointer'
                       }`}
@@ -426,6 +432,10 @@ export default function ResponsibleEmployeePicker({
                       <div className="shrink-0 ml-2">
                         {isSelected ? (
                           <span className="text-[11px] text-slate-400 font-medium">Selected</span>
+                        ) : isUnregistered ? (
+                          <span className="text-[10px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded font-semibold">
+                            Not Registered in IMS
+                          </span>
                         ) : (
                           <span className="text-xs text-indigo-600 font-semibold flex items-center gap-1">
                             <UserPlus size={13} /> Add

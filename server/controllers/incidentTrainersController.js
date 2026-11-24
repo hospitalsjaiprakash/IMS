@@ -167,11 +167,21 @@ exports.assignTrainer = async (req, res) => {
 
     // Find trainer user (by UUID or employee_id)
     const trainerUserRes = await client.query(
-      'SELECT id, employee_id, full_name, email, department, designation FROM users WHERE id::text = $1 OR employee_id = $1',
-      [trainerIdInput]
+      'SELECT id, employee_id, full_name, email, department, designation FROM users WHERE id::text = $1 OR UPPER(TRIM(employee_id)) = UPPER(TRIM($1))',
+      [String(trainerIdInput).trim()]
     );
     if (!trainerUserRes.rows.length) {
+      const masterTrainerRes = await client.query(
+        'SELECT employee_id, name FROM master_employees WHERE id::text = $1 OR UPPER(TRIM(employee_id)) = UPPER(TRIM($1)) LIMIT 1',
+        [String(trainerIdInput).trim()]
+      );
       await client.query('ROLLBACK');
+      if (masterTrainerRes.rows.length > 0) {
+        return res.status(400).json({
+          error: 'Selected trainer has not registered an IMS account yet. Please select a registered staff member.',
+          code: 'TRAINER_NOT_REGISTERED'
+        });
+      }
       return res.status(404).json({ error: 'Selected trainer not found in staff directory.' });
     }
     const trainerUser = trainerUserRes.rows[0];

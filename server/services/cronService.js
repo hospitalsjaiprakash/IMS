@@ -1,20 +1,22 @@
 const cron = require('node-cron');
 const { query } = require('../config/database');
 const { sendEmail, templates } = require('../utils/emailService');
+const { getRuntimeSystemConfig } = require('../utils/systemConfigCache');
 
 async function processHodEscalations() {
   console.log('[CRON] Starting Category/Department Escalation check...');
   try {
-    // 1. Fetch thresholds from system config
-    const configRes = await query('SELECT key, value FROM system_config');
-    const config = {};
-    configRes.rows.forEach(r => { config[r.key] = parseInt(r.value, 10) || 0; });
+    // 1. Fetch thresholds from runtime system config
+    const cfg = await getRuntimeSystemConfig(true);
 
-    const reminder1 = config['hod_reminder_1_days'] || 5;
-    const reminder2 = config['hod_reminder_2_days'] || 7;
-    const escalation1 = config['hod_escalation_1_days'] || 14;
-    const escalation2 = config['hod_escalation_2_days'] || 21;
-    const escalation3 = config['hod_escalation_3_days'] || 28;
+    const reminder1 = cfg.hod_reminder_1_days || 5;
+    const reminder2 = cfg.hod_reminder_2_days || 7;
+    const escalation1 = cfg.hod_escalation_1_days || 14;
+    const escalation2 = cfg.hod_escalation_2_days || 21;
+    const escalation3 = cfg.hod_escalation_3_days || 28;
+    const imcFeedbackDays = cfg.imc_feedback_days || 7;
+    const mgmtFeedbackDays = cfg.mgmt_feedback_days || 7;
+    const autoReminderDays = cfg.auto_reminder_days || 2;
 
     const thresholds = [
       { day: escalation3, level: 'esc3' },
@@ -32,7 +34,11 @@ async function processHodEscalations() {
         i.incident_type,
         i.severity,
         i.last_reminder_day,
+        i.reminder_last_sent,
         FLOOR(EXTRACT(EPOCH FROM (NOW() - i.created_at)) / 86400)::int as days_elapsed,
+        CASE WHEN i.reminder_last_sent IS NULL THEN NULL
+             ELSE FLOOR(EXTRACT(EPOCH FROM (NOW() - i.reminder_last_sent)) / 86400)::int
+        END as days_since_last_reminder,
         ic.name as scope_name,
         u.id as reviewer_id,
         u.email as reviewer_email,
@@ -56,7 +62,11 @@ async function processHodEscalations() {
         i.incident_type,
         i.severity,
         i.last_reminder_day,
+        i.reminder_last_sent,
         FLOOR(EXTRACT(EPOCH FROM (NOW() - i.created_at)) / 86400)::int as days_elapsed,
+        CASE WHEN i.reminder_last_sent IS NULL THEN NULL
+             ELSE FLOOR(EXTRACT(EPOCH FROM (NOW() - i.reminder_last_sent)) / 86400)::int
+        END as days_since_last_reminder,
         d.name as scope_name,
         u.id as reviewer_id,
         u.email as reviewer_email,
@@ -82,10 +92,16 @@ async function processHodEscalations() {
     `);
 
     const updatedIncidents = new Map();
+    const recurringReminderIncidentIds = new Set();
 
     // 3. Process each pending reviewer assignment
     for (const row of incidentsRes.rows) {
-      const { incident_id, reference_id, incident_type, severity, last_reminder_day, days_elapsed, reviewer_id, reviewer_email, reviewer_name, scope_name } = row;
+      const {
+        incident_id, reference_id, incident_type, severity,
+        last_reminder_day, reminder_last_sent, days_elapsed,
+        days_since_last_reminder, reviewer_id, reviewer_email,
+        reviewer_name, scope_name
+      } = row;
 
       let matchedThreshold = null;
       for (const t of thresholds) {
@@ -148,6 +164,20 @@ async function processHodEscalations() {
             notifyMgmt
           });
         }
+      } else if (
+        days_elapsed >= reminder1 &&
+        (reminder_last_sent === null || days_since_last_reminder >= autoReminderDays)
+      ) {
+        const subject = `Automated Reminder: Pending Feedback for Incident ${reference_id}`;
+        const message = `Dear ${reviewer_name},\n\nIncident ${reference_id} (${scope_name}) is still awaiting your feedback (${days_elapsed} days elapsed). Please review and submit your feedback.`;
+        await query(
+          `INSERT INTO notifications (user_id, incident_id, title, message, type) VALUES ($1, $2, $3, $4, 'reminder')`,
+          [reviewer_id, incident_id, subject, message]
+        );
+        if (reviewer_email) {
+          sendEmail(reviewer_email, templates.genericAlert(subject, message, reviewer_name)).catch(err => console.error('Email failed:', err));
+        }
+        recurringReminderIncidentIds.add(incident_id);
       }
     }
 
@@ -176,6 +206,98 @@ async function processHodEscalations() {
       }
 
       await query(`UPDATE incidents SET last_reminder_day = $1, reminder_last_sent = NOW() WHERE id = $2`, [meta.day, incident_id]);
+      recurringReminderIncidentIds.delete(incident_id);
+    }
+
+    for (const incident_id of recurringReminderIncidentIds) {
+      await query(`UPDATE incidents SET reminder_last_sent = NOW() WHERE id = $1`, [incident_id]);
+    }
+
+    // 4. Enforce IMC Feedback Time Limit (imc_feedback_days) with auto_reminder_days frequency
+    const overdueImcRes = await query(`
+      SELECT
+        i.id as incident_id,
+        i.reference_id,
+        i.incident_type,
+        i.severity,
+        FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(
+          (SELECT MAX(f.created_at) FROM feedbacks f WHERE f.incident_id = i.id AND f.role IN ('hod', 'investigator')),
+          i.created_at
+        ))) / 86400)::int as stage_days_elapsed,
+        CASE WHEN i.reminder_last_sent IS NULL THEN NULL
+             ELSE FLOOR(EXTRACT(EPOCH FROM (NOW() - i.reminder_last_sent)) / 86400)::int
+        END as days_since_last_reminder
+      FROM incidents i
+      WHERE i.status IN ('with_imc', 'with_imc_review')
+    `);
+
+    const overdueImcIncidents = overdueImcRes.rows.filter(
+      (r) => r.stage_days_elapsed >= imcFeedbackDays &&
+        (r.days_since_last_reminder === null || r.days_since_last_reminder >= autoReminderDays)
+    );
+
+    if (overdueImcIncidents.length > 0) {
+      const imcUsersRes = await query(
+        `SELECT id, email, full_name FROM users WHERE (role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE) AND is_active = TRUE`
+      );
+      for (const inc of overdueImcIncidents) {
+        const subject = `Overdue IMC Review: Incident ${inc.reference_id}`;
+        const msg = `Incident ${inc.reference_id} has been awaiting IMC assessment for ${inc.stage_days_elapsed} days (limit: ${imcFeedbackDays} days). Please complete the IMC review.`;
+        for (const u of imcUsersRes.rows) {
+          await query(
+            `INSERT INTO notifications (user_id, incident_id, title, message, type) VALUES ($1, $2, $3, $4, 'reminder')`,
+            [u.id, inc.incident_id, subject, msg]
+          );
+          if (u.email) {
+            sendEmail(u.email, templates.genericAlert(subject, msg, u.full_name)).catch(() => {});
+          }
+        }
+        await query(`UPDATE incidents SET reminder_last_sent = NOW() WHERE id = $1`, [inc.incident_id]);
+      }
+    }
+
+    // 5. Enforce Management Feedback Time Limit (mgmt_feedback_days) with auto_reminder_days frequency
+    const overdueMgmtRes = await query(`
+      SELECT
+        i.id as incident_id,
+        i.reference_id,
+        i.incident_type,
+        i.severity,
+        FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(
+          (SELECT MAX(f.created_at) FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc'),
+          i.updated_at,
+          i.created_at
+        ))) / 86400)::int as stage_days_elapsed,
+        CASE WHEN i.reminder_last_sent IS NULL THEN NULL
+             ELSE FLOOR(EXTRACT(EPOCH FROM (NOW() - i.reminder_last_sent)) / 86400)::int
+        END as days_since_last_reminder
+      FROM incidents i
+      WHERE i.status IN ('with_head_management', 'pending_management_letter_approval')
+    `);
+
+    const overdueMgmtIncidents = overdueMgmtRes.rows.filter(
+      (r) => r.stage_days_elapsed >= mgmtFeedbackDays &&
+        (r.days_since_last_reminder === null || r.days_since_last_reminder >= autoReminderDays)
+    );
+
+    if (overdueMgmtIncidents.length > 0) {
+      const mgmtUsersRes = await query(
+        `SELECT id, email, full_name FROM users WHERE (role = 'head_management' OR is_management_member = TRUE) AND is_active = TRUE`
+      );
+      for (const inc of overdueMgmtIncidents) {
+        const subject = `Overdue Management Action: Incident ${inc.reference_id}`;
+        const msg = `Incident ${inc.reference_id} has been awaiting Executive Management action for ${inc.stage_days_elapsed} days (limit: ${mgmtFeedbackDays} days). Please review and record a decision.`;
+        for (const u of mgmtUsersRes.rows) {
+          await query(
+            `INSERT INTO notifications (user_id, incident_id, title, message, type) VALUES ($1, $2, $3, $4, 'reminder')`,
+            [u.id, inc.incident_id, subject, msg]
+          );
+          if (u.email) {
+            sendEmail(u.email, templates.genericAlert(subject, msg, u.full_name)).catch(() => {});
+          }
+        }
+        await query(`UPDATE incidents SET reminder_last_sent = NOW() WHERE id = $1`, [inc.incident_id]);
+      }
     }
   } catch (error) {
     console.error('[CRON] Error processing escalations:', error);
