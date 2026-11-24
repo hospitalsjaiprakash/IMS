@@ -216,6 +216,7 @@ export default function TrainerAssignmentModal({
           <ResponsibleEmployeePicker
             label="Search & Select Dedicated Trainer"
             required
+            requireRegistered
             selected={selectedTrainer}
             onChange={(list) => setSelectedTrainer(list.slice(-1))} // Single trainer
             placeholder="Search educator, senior consultant, coordinator, or trainer name..."

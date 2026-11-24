@@ -34,12 +34,14 @@ const getNavItems = (user) => {
   if (role === 'head_management') {
     base.push(
       { to: '/management/dashboard?tab=analytics', icon: BarChart3, label: 'Category Analytics', matchSearch: '?tab=analytics' },
+      { to: '/admin/analytics', icon: BarChart3, label: 'System Analytics' },
       { to: '/employees', icon: Users, label: 'Employee Directory' }
     );
   }
   if (role === 'system_admin') {
     base.push(
       { to: '/admin/users', icon: Users, label: 'Users & Mappings' },
+      { to: '/employees', icon: Users, label: 'Employee Directory' },
       { to: '/admin/communications', icon: Megaphone, label: 'Communications' },
       { to: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
       { to: '/admin/audit', icon: Shield, label: 'Audit Logs' },
@@ -402,6 +404,12 @@ export default function AppLayout() {
             )}
           </div>
         </header>
+
+        {user?.maintenanceMode && (
+          <div className="bg-amber-100 border-b border-amber-300 px-4 py-2 text-xs font-semibold text-amber-900 flex items-center justify-center gap-2 flex-shrink-0 print:hidden">
+            <span>⚠️ SYSTEM MAINTENANCE MODE ACTIVE — Reporting of new incidents is temporarily paused for staff.</span>
+          </div>
+        )}
 
         <main className="flex-1 overflow-auto bg-slate-50/50 p-4 md:p-6 lg:p-8">
           <AnimatePresence mode="wait">

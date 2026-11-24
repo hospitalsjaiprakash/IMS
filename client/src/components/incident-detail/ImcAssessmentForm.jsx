@@ -564,18 +564,23 @@ export default function ImcAssessmentForm({
         </div>
       )}
 
-      {/* 4. Standard Quality Review (IMC) Form */}
+      {/* 4. Standard / Revised Quality Review (IMC) Form */}
       {canImcAct &&
-        incident.status !== 'pending_training' &&
-        incident.status !== 'redirect_requested' &&
-        incident.status !== 'with_investigator' &&
-        incident.status !== 'with_imc_review' &&
-        !incident.has_imc_feedback && (
+        (incident.status === 'with_imc' ||
+          (incident.status === 'with_hod_and_imc' && !incident.has_imc_feedback)) && (
           <div className="card p-5 border-indigo-200 bg-indigo-50/10 print:hidden space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <MessageSquare className="text-indigo-600" size={18} />
-              <h2 className="text-sm font-semibold text-slate-800">Quality Review (IMC)</h2>
+              <h2 className="text-sm font-semibold text-slate-800">
+                {incident.has_imc_feedback ? 'Revised Quality Review (IMC)' : 'Quality Review (IMC)'}
+              </h2>
             </div>
+            {incident.has_imc_feedback && incident.management_notes && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 space-y-1">
+                <p className="font-bold text-amber-900">Executive Management Directive / Return Notes:</p>
+                <p className="whitespace-pre-wrap leading-relaxed">{incident.management_notes}</p>
+              </div>
+            )}
             {isLead ? (
               <div className="space-y-4">
                 <div className="flex items-center gap-4 mb-4">

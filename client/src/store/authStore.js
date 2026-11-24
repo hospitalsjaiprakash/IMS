@@ -50,10 +50,11 @@ export const useAuthStore = create((set) => ({
       set({ user: data.user, token: data.token, isAuthenticated: true, loading: false });
       return { success: true, user: data.user };
     } catch (err) {
+      const isNetworkError = !err.response || err.code === 'ECONNABORTED';
       const errData = err.response?.data?.error;
       const error = typeof errData === 'string' ? errData : errData?.message || 'Login failed. Please try again.';
       set({ error, loading: false });
-      return { success: false, error };
+      return { success: false, error, isNetworkError };
     }
   },
 

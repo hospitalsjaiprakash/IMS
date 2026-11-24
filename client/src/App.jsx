@@ -87,7 +87,7 @@ export default function App() {
             }}
           />
           {import.meta.env.VITE_APP_ENV === 'staging' && (
-            <div className="bg-amber-500 text-slate-900 text-xs font-bold py-1.5 px-4 text-center tracking-wide flex items-center justify-center gap-2 shadow-sm flex-shrink-0 z-50">
+            <div className="bg-amber-500 text-slate-900 text-xs font-bold py-1.5 px-4 text-center tracking-wide flex items-center justify-center gap-2 shadow-sm flex-shrink-0 z-50 print:hidden">
               <span>STAGING / TEST ENVIRONMENT</span>
               <span className="text-amber-950 font-normal">
                 | Data entered here is isolated and will NOT affect Production

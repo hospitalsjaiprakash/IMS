@@ -59,13 +59,32 @@ exports.getIncidentTrainers = async (req, res) => {
               att.stored_filename as report_stored_filename,
               att.original_filename as report_original_filename,
               att.file_size as report_file_size,
+              COALESCE(
+                (
+                  SELECT json_agg(
+                    json_build_object(
+                      'id', a_tr.id,
+                      'original_filename', a_tr.original_filename,
+                      'stored_filename', a_tr.stored_filename,
+                      'file_size', a_tr.file_size,
+                      'mime_type', a_tr.mime_type,
+                      'created_at', a_tr.created_at
+                    ) ORDER BY a_tr.created_at ASC
+                  )
+                  FROM attachments a_tr
+                  WHERE a_tr.trainer_assignment_id = t.id
+                     OR (t.trainer_attachment_id IS NOT NULL AND a_tr.id = t.trainer_attachment_id)
+                ),
+                '[]'::json
+              ) as report_attachments,
               l.reference_number as letter_reference_number,
               l.letter_date as letter_date,
               l.subject as letter_subject,
               l.salutation as letter_salutation,
               l.body_text as letter_body_text,
               l.qr_code_url as letter_qr_code_url,
-              l.cc_recipients as letter_cc_recipients
+              l.cc_recipients as letter_cc_recipients,
+              l.status as letter_status
        FROM incident_trainers t
        LEFT JOIN users u_trainer ON u_trainer.id = t.trainer_id
        LEFT JOIN users u_assign ON u_assign.id = t.assigned_by
@@ -148,11 +167,21 @@ exports.assignTrainer = async (req, res) => {
 
     // Find trainer user (by UUID or employee_id)
     const trainerUserRes = await client.query(
-      'SELECT id, employee_id, full_name, email, department, designation FROM users WHERE id::text = $1 OR employee_id = $1',
-      [trainerIdInput]
+      'SELECT id, employee_id, full_name, email, department, designation FROM users WHERE id::text = $1 OR UPPER(TRIM(employee_id)) = UPPER(TRIM($1))',
+      [String(trainerIdInput).trim()]
     );
     if (!trainerUserRes.rows.length) {
+      const masterTrainerRes = await client.query(
+        'SELECT employee_id, name FROM master_employees WHERE id::text = $1 OR UPPER(TRIM(employee_id)) = UPPER(TRIM($1)) LIMIT 1',
+        [String(trainerIdInput).trim()]
+      );
       await client.query('ROLLBACK');
+      if (masterTrainerRes.rows.length > 0) {
+        return res.status(400).json({
+          error: 'Selected trainer has not registered an IMS account yet. Please select a registered staff member.',
+          code: 'TRAINER_NOT_REGISTERED'
+        });
+      }
       return res.status(404).json({ error: 'Selected trainer not found in staff directory.' });
     }
     const trainerUser = trainerUserRes.rows[0];
@@ -522,17 +551,22 @@ exports.submitTrainerReport = async (req, res) => {
       return res.status(403).json({ error: 'Only the assigned trainer can submit this completion report.' });
     }
 
-    const file = req.file || (req.files && req.files[0]);
-    let attachmentId = null;
-    if (file) {
+    const uploadedFiles = Array.isArray(req.files) && req.files.length > 0
+      ? req.files
+      : (req.file ? [req.file] : []);
+    const insertedAttachmentIds = [];
+    for (const file of uploadedFiles) {
       const attRes = await client.query(
-        `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type)
-         VALUES ($1, $2, 'trainer_report', $3, $4, $5, $6)
+        `INSERT INTO attachments (incident_id, uploader_id, stage, original_filename, stored_filename, file_size, mime_type, trainer_assignment_id)
+         VALUES ($1, $2, 'trainer_report', $3, $4, $5, $6, $7)
          RETURNING id`,
-        [id, req.user.id, file.originalname, file.filename || file.key, file.size, file.mimetype]
+        [id, req.user.id, file.originalname, file.filename || file.key, file.size, file.mimetype, assignmentId]
       );
-      attachmentId = attRes.rows[0]?.id;
+      if (attRes.rows[0]?.id) {
+        insertedAttachmentIds.push(attRes.rows[0].id);
+      }
     }
+    const attachmentId = insertedAttachmentIds[0] || null;
 
     let calculatedMinutes = durationMinutes ? parseInt(durationMinutes, 10) : null;
     if (!calculatedMinutes && durationHours) {
@@ -602,8 +636,8 @@ exports.submitTrainerReport = async (req, res) => {
       }
     });
 
-    if (attachmentId) {
-      await linkAttachmentsToEvent(client, reportEvent.id, [attachmentId]);
+    if (insertedAttachmentIds.length > 0) {
+      await linkAttachmentsToEvent(client, reportEvent.id, insertedAttachmentIds);
     }
 
     await client.query('COMMIT');

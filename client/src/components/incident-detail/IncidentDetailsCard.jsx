@@ -60,7 +60,13 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
           <p><strong>Occurred To:</strong> {incident.occurred_to}</p>
           <p className="col-span-2">
             <strong>Incident Categor(ies):</strong>{' '}
-            {categoriesList.map(c => (typeof c === 'string' ? c : c.name)).join(', ') || 'N/A'}
+            {categoriesList
+              .map((c) => {
+                const name = typeof c === 'string' ? c : c.name;
+                const type = typeof c === 'object' ? c.incident_type : null;
+                return type ? `${name} (${type})` : name;
+              })
+              .join(', ') || 'N/A'}
           </p>
           <p className="col-span-2"><strong>Incident Type:</strong> {incident.incident_type}</p>
         </div>
@@ -146,16 +152,22 @@ export default function IncidentDetailsCard({ incident, finalReport, feedbacks, 
               <div className="space-y-1.5">
                 {categoriesList.map(c => {
                   const cName = typeof c === 'string' ? c : c.name;
+                  const cType = typeof c === 'object' ? c.incident_type : null;
                   const hasFb = typeof c === 'object' ? c.has_feedback : false;
                   return (
-                    <div key={cName} className="flex items-center justify-between py-1 px-2.5 rounded-lg bg-white border border-slate-200/80 text-xs">
-                      <span className="font-medium text-slate-800">{cName}</span>
+                    <div key={cName} className="flex items-center justify-between gap-2 py-1 px-2.5 rounded-lg bg-white border border-slate-200/80 text-xs">
+                      <div className="min-w-0">
+                        <span className="font-medium text-slate-800">{cName}</span>
+                        {cType && (
+                          <span className="text-[11px] text-slate-500 ml-1.5">· {cType}</span>
+                        )}
+                      </div>
                       {hasFb ? (
-                        <span className="text-emerald-700 font-semibold flex items-center gap-1 text-[11px]">
+                        <span className="text-emerald-700 font-semibold flex items-center gap-1 text-[11px] shrink-0">
                           <CheckCircle size={12} className="text-emerald-600" /> Feedback Given
                         </span>
                       ) : (
-                        <span className="text-amber-700 font-semibold flex items-center gap-1 text-[11px]">
+                        <span className="text-amber-700 font-semibold flex items-center gap-1 text-[11px] shrink-0">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" /> Pending Review
                         </span>
                       )}

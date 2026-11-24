@@ -5,6 +5,7 @@ const { isEmployeeLockedOut, extractCalendarDate, getTodayDateString } = require
 const { SECRET_CONFIG_KEYS, encryptSecret, assertAllowedOfficePortalUrl } = require('../utils/secretCrypto');
 const { isPrivilegedRole } = require('../utils/accessControl');
 const { escapeCsvField } = require('../utils/csvSanitizer');
+const { invalidateSystemConfigCache } = require('../utils/systemConfigCache');
 
 exports.getSystemConfig = async (req, res) => {
   try {
@@ -75,6 +76,8 @@ exports.updateSystemConfig = async (req, res) => {
         [key, storedValue, req.user.id]
       );
     }
+
+    invalidateSystemConfigCache();
 
     if (touchedOfficePortal) {
       const officePortalService = require('../services/officePortalService');
@@ -501,6 +504,27 @@ exports.exportAuditLogs = async (req, res) => {
 
 exports.getSystemAnalytics = async (req, res) => {
   try {
+    const { dateFrom, dateTo } = req.query;
+    const dateParams = [];
+    const iDateClauses = [];
+    const plainDateClauses = [];
+
+    if (dateFrom) {
+      dateParams.push(dateFrom);
+      iDateClauses.push(`i.incident_date >= $${dateParams.length}::date`);
+      plainDateClauses.push(`incident_date >= $${dateParams.length}::date`);
+    }
+    if (dateTo) {
+      dateParams.push(dateTo);
+      iDateClauses.push(`i.incident_date <= $${dateParams.length}::date`);
+      plainDateClauses.push(`incident_date <= $${dateParams.length}::date`);
+    }
+
+    const iDateFilter = iDateClauses.length ? `AND ${iDateClauses.join(' AND ')}` : '';
+    const plainDateFilter = plainDateClauses.length ? `AND ${plainDateClauses.join(' AND ')}` : '';
+    const i2DateFilter = iDateFilter.replace(/\bi\.incident_date\b/g, 'i2.incident_date');
+    const defaultTrendWindow = plainDateClauses.length ? plainDateFilter : `AND created_at >= NOW() - INTERVAL '12 months'`;
+
     const [
       incidentsByMonth, avgResolutionTime, byDepartment, byCategory,
       slaBreach, stalledIncidents, claimStats, kbCount,
@@ -508,35 +532,35 @@ exports.getSystemAnalytics = async (req, res) => {
     ] = await Promise.all([
       query(`SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month,
         DATE_TRUNC('month', created_at) as month_date, COUNT(*) as count
-        FROM incidents WHERE status != 'withdrawn' AND created_at >= NOW() - INTERVAL '12 months'
-        GROUP BY DATE_TRUNC('month', created_at) ORDER BY month_date`),
+        FROM incidents WHERE status != 'withdrawn' ${defaultTrendWindow}
+        GROUP BY DATE_TRUNC('month', created_at) ORDER BY month_date`, dateParams),
 
       query(`SELECT AVG(GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(resolved_at, updated_at) - created_at)) / 3600.0)) as avg_hours,
         COUNT(*) as completed_count
-        FROM incidents WHERE status IN ('resolved', 'closed')`),
+        FROM incidents WHERE status IN ('resolved', 'closed') ${plainDateFilter}`, dateParams),
 
       query(`SELECT d.name, COUNT(DISTINCT i.id) as count
         FROM departments d
         JOIN incident_departments id ON id.department_id = d.id
         JOIN incidents i ON i.id = id.incident_id
-        WHERE i.status != 'withdrawn'
-        GROUP BY d.name ORDER BY count DESC LIMIT 15`),
+        WHERE i.status != 'withdrawn' ${iDateFilter}
+        GROUP BY d.name ORDER BY count DESC LIMIT 15`, dateParams),
 
       query(`SELECT COALESCE(ic.name, NULLIF(TRIM(i.incident_category), ''), 'Others') as name, COUNT(DISTINCT i.id) as count
         FROM incidents i
         LEFT JOIN incident_category_links icl ON icl.incident_id = i.id
         LEFT JOIN incident_categories ic ON ic.id = icl.category_id
-        WHERE i.status != 'withdrawn'
-        GROUP BY 1 ORDER BY count DESC LIMIT 15`),
+        WHERE i.status != 'withdrawn' ${iDateFilter}
+        GROUP BY 1 ORDER BY count DESC LIMIT 15`, dateParams),
 
       query(`SELECT COUNT(*) as sla_breach_count FROM incidents
         WHERE status NOT IN ('resolved', 'closed', 'withdrawn')
-        AND created_at < NOW() - INTERVAL '7 days'`),
+        AND created_at < NOW() - INTERVAL '7 days' ${plainDateFilter}`, dateParams),
 
       query(`SELECT status, COUNT(*) as count FROM incidents
         WHERE status NOT IN ('resolved', 'closed', 'withdrawn')
-        AND updated_at < NOW() - INTERVAL '7 days'
-        GROUP BY status`),
+        AND updated_at < NOW() - INTERVAL '7 days' ${plainDateFilter}
+        GROUP BY status`, dateParams),
 
       query(`SELECT COUNT(*) FILTER (WHERE is_active=TRUE) as active_claims,
         MAX(EXTRACT(EPOCH FROM (NOW()-claimed_at))/3600) FILTER (WHERE is_active=TRUE) as oldest_claim_hours
@@ -548,13 +572,13 @@ exports.getSystemAnalytics = async (req, res) => {
         SELECT
           COUNT(DISTINCT f.incident_id) FILTER (WHERE i.status != 'withdrawn') as given,
           (SELECT COUNT(*) FROM incidents i2
-           WHERE i2.status NOT IN ('resolved', 'closed', 'withdrawn')
+           WHERE i2.status NOT IN ('resolved', 'closed', 'withdrawn') ${i2DateFilter}
            AND NOT EXISTS (SELECT 1 FROM feedbacks f2 WHERE f2.incident_id = i2.id AND f2.role = 'hod')
           ) as pending
         FROM feedbacks f
         JOIN incidents i ON i.id = f.incident_id
-        WHERE f.role = 'hod'
-      `)
+        WHERE f.role = 'hod' ${iDateFilter}
+      `, dateParams)
     ]);
 
     const completedCount = parseInt(avgResolutionTime.rows[0]?.completed_count || 0, 10);
@@ -776,15 +800,40 @@ exports.getSystemAdmins = async (req, res) => {
 
 exports.getRoleAudit = async (req, res) => {
   try {
-    const result = await query(
-      `SELECT ra.*, u.full_name as employee_name, u.employee_id,
-        c.full_name as changed_by_name
-       FROM role_audit ra
-       JOIN users u ON u.id = ra.employee_id
-       JOIN users c ON c.id = ra.changed_by
-       ORDER BY ra.created_at DESC LIMIT 100`
-    );
-    res.json(result.rows);
+    const hasPageParam = req.query.page !== undefined || req.query.limit !== undefined;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || (hasPageParam ? 20 : 100)));
+    const offset = (page - 1) * limit;
+
+    const [result, countResult] = await Promise.all([
+      query(
+        `SELECT ra.*, u.full_name as employee_name, u.employee_id,
+          c.full_name as changed_by_name
+         FROM role_audit ra
+         JOIN users u ON u.id = ra.employee_id
+         JOIN users c ON c.id = ra.changed_by
+         ORDER BY ra.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      query(
+        `SELECT COUNT(*) FROM role_audit ra
+         JOIN users u ON u.id = ra.employee_id
+         JOIN users c ON c.id = ra.changed_by`
+      )
+    ]);
+
+    if (!hasPageParam) {
+      return res.json(result.rows);
+    }
+
+    const total = parseInt(countResult.rows[0]?.count || '0', 10);
+    return res.json({
+      logs: result.rows,
+      total,
+      page,
+      totalPages: Math.max(1, Math.ceil(total / limit))
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch role audit' });
   }
@@ -1333,13 +1382,17 @@ exports.searchEmployeeProfile = async (req, res) => {
     let recentIncidents = [];
     let totalIncidents = 0;
     if (user.id && user.is_registered) {
+      const incPage = Math.max(1, parseInt(req.query.incidents_page, 10) || 1);
+      const incLimit = Math.max(1, Math.min(100, parseInt(req.query.incidents_limit, 10) || 50));
+      const incOffset = (incPage - 1) * incLimit;
+
       const incidentsResult = await query(
         `SELECT id, reference_id, incident_date, incident_category, incident_type, severity, status, created_at 
          FROM incidents 
          WHERE reporter_id = $1 
          ORDER BY created_at DESC 
-         LIMIT 50`,
-        [user.id]
+         LIMIT $2 OFFSET $3`,
+        [user.id, incLimit, incOffset]
       );
       recentIncidents = incidentsResult.rows;
 
@@ -1429,7 +1482,7 @@ exports.getCommunicationLogs = async (req, res) => {
 
 exports.broadcastNotification = async (req, res) => {
   try {
-    const { title, message } = req.body;
+    const { title, message, targetRole, targetDepartment } = req.body;
     if (!title || !message) {
       return res.status(400).json({ error: 'Title and message are required.' });
     }
@@ -1442,45 +1495,115 @@ exports.broadcastNotification = async (req, res) => {
       attachmentName = req.file.originalname;
     }
 
+    const cleanRole = targetRole && String(targetRole).trim() !== 'all' ? String(targetRole).trim() : '';
+    const cleanDept = targetDepartment && String(targetDepartment).trim() !== 'all' ? String(targetDepartment).trim() : '';
+
+    const params = [title, message, attachmentUrl, attachmentName];
+    let whereSql = 'is_active = TRUE';
+
+    if (cleanRole) {
+      if (cleanRole === 'imc') {
+        whereSql += ` AND (role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE)`;
+      } else if (cleanRole === 'head_management') {
+        whereSql += ` AND (role = 'head_management' OR is_management_member = TRUE)`;
+      } else if (cleanRole === 'system_admin') {
+        whereSql += ` AND (role = 'system_admin' OR is_system_admin = TRUE)`;
+      } else if (cleanRole === 'hod') {
+        whereSql += ` AND (
+          role = 'hod'
+          OR EXISTS (SELECT 1 FROM category_feedback_assignees cfa WHERE cfa.user_id = users.id AND cfa.is_active = TRUE)
+          OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.user_id = users.id AND dr.is_active = TRUE)
+        )`;
+      } else {
+        params.push(cleanRole);
+        whereSql += ` AND role = $${params.length}`;
+      }
+    }
+
+    if (cleanDept) {
+      params.push(cleanDept);
+      whereSql += ` AND LOWER(TRIM(COALESCE(department, ''))) = LOWER(TRIM($${params.length}))`;
+    }
+
     const result = await query(
       `INSERT INTO notifications (user_id, title, message, type, attachment_url, attachment_name)
-       SELECT id, $1, $2, 'broadcast', $3, $4 FROM users WHERE is_active = TRUE`,
-      [title, message, attachmentUrl, attachmentName]
+       SELECT id, $1, $2, 'broadcast', $3, $4 FROM users WHERE ${whereSql}
+       RETURNING user_id`,
+      params
     );
 
+    const ROLE_LABELS = {
+      employee: 'Employees',
+      hod: 'Category / Dept Reviewers',
+      imc: 'IMC Committee',
+      head_management: 'Executive Management',
+      system_admin: 'System Admins'
+    };
+    const audienceParts = [];
+    if (cleanRole) audienceParts.push(`Role: ${ROLE_LABELS[cleanRole] || cleanRole}`);
+    if (cleanDept) audienceParts.push(`Dept: ${cleanDept}`);
+    const recipientContactLabel = audienceParts.length > 0 ? audienceParts.join(' · ') : 'All Active Users';
+
     // Also log to communication_logs so it shows up in past broadcasts
-    await query(
-      `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, content, status, details)
-       VALUES ($1, 'All Active Users', 'BROADCAST', $2, $3, 'SENT', $4)`,
-      [
-        req.user.id,
-        title,
-        message,
-        JSON.stringify({ attachmentName, attachmentUrl, count: result.rowCount })
-      ]
-    );
+    try {
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, content, status, details)
+         VALUES ($1, $2, 'BROADCAST', $3, $4, 'SENT', $5)`,
+        [
+          req.user.id,
+          recipientContactLabel,
+          title,
+          message,
+          JSON.stringify({
+            attachmentName,
+            attachmentUrl,
+            count: result.rowCount,
+            targetRole: cleanRole || 'all',
+            targetDepartment: cleanDept || 'all',
+            recipientLabel: recipientContactLabel
+          })
+        ]
+      );
+    } catch (_) {
+      await query(
+        `INSERT INTO communication_logs (user_id, recipient_contact, type, subject, content, status)
+         VALUES ($1, $2, 'BROADCAST', $3, $4, 'SENT')`,
+        [req.user.id, recipientContactLabel, title, message]
+      ).catch(() => {});
+    }
 
     try {
       const { io } = require('../index');
       if (io) {
-        io.emit('new_notification', {
+        const socketPayload = {
           title,
           message,
           type: 'broadcast',
           attachment_url: attachmentUrl,
           attachment_name: attachmentName,
           created_at: new Date()
-        });
+        };
+        if (cleanRole || cleanDept) {
+          for (const row of result.rows) {
+            io.to(`user_${row.user_id}`).emit('new_notification', socketPayload);
+          }
+        } else {
+          io.emit('new_notification', socketPayload);
+        }
       }
     } catch (socketErr) {
       console.warn('[Socket] Failed to emit broadcast notification:', socketErr.message);
     }
 
     await auditLog(req.user.id, 'BROADCAST_NOTIFICATION_SENT', null, {
-      title, attachmentName, count: result.rowCount
+      title,
+      attachmentName,
+      count: result.rowCount,
+      targetRole: cleanRole || 'all',
+      targetDepartment: cleanDept || 'all'
     }, req.ip);
 
-    res.json({ success: true, count: result.rowCount });
+    res.json({ success: true, count: result.rowCount, recipientLabel: recipientContactLabel });
   } catch (error) {
     console.error('Error broadcasting notification:', error);
     res.status(500).json({ error: 'Failed to broadcast notification.' });
@@ -1509,7 +1632,7 @@ exports.downloadBroadcastAttachment = async (req, res) => {
 
     // Verify the requested key actually belongs to a recorded broadcast notification
     const broadcastCheck = await query(
-      `SELECT 1 FROM notifications
+      `SELECT attachment_name FROM notifications
        WHERE type = 'broadcast' AND attachment_url = $1
        LIMIT 1`,
       [key]
@@ -1523,14 +1646,28 @@ exports.downloadBroadcastAttachment = async (req, res) => {
       return res.status(503).json({ error: 'Cloudflare R2 storage is not configured.' });
     }
 
+    const ext = key.split('.').pop()?.toLowerCase() || '';
+    const mimeByExt = {
+      pdf: 'application/pdf',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      gif: 'image/gif'
+    };
+    const inferredMimeType = mimeByExt[ext];
+    const dispositionType = req.query.download === 'true' ? 'attachment' : 'inline';
+    const originalName = broadcastCheck.rows[0]?.attachment_name || key.split('/').pop();
+
     const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
     const { GetObjectCommand } = require('@aws-sdk/client-s3');
     const signedUrl = await getSignedUrl(s3Client, new GetObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME,
       Key: key,
-      ResponseContentDisposition: 'attachment',
-    }), { expiresIn: 60 });
-    return res.json({ url: signedUrl });
+      ResponseContentDisposition: `${dispositionType}; filename="${encodeURIComponent(originalName)}"`,
+      ...(inferredMimeType ? { ResponseContentType: inferredMimeType } : {}),
+    }), { expiresIn: 300 });
+    return res.json({ url: signedUrl, mimeType: inferredMimeType || null, filename: originalName });
   } catch (error) {
     console.error('Failed to get broadcast attachment url:', error);
     res.status(500).json({ error: 'Failed to generate download link' });

@@ -37,6 +37,7 @@ function formatAuditActionLabel(action) {
 export default function AdminAuditPage() {
   const [activeTab, setActiveTab] = useState('system'); // 'system' | 'role_audit'
   const [page, setPage] = useState(1);
+  const [roleAuditPage, setRoleAuditPage] = useState(1);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [action, setAction] = useState('');
@@ -58,14 +59,18 @@ export default function AdminAuditPage() {
   });
 
   const {
-    data: roleAuditData = [],
+    data: roleAuditRes,
     isLoading: isLoadingRoleAudit,
     isError: isRoleAuditError,
   } = useQuery({
-    queryKey: ['role-audit'],
-    queryFn: () => adminApi.getRoleAudit().then((r) => r.data || []),
+    queryKey: ['role-audit', roleAuditPage],
+    queryFn: () => adminApi.getRoleAudit({ page: roleAuditPage, limit: 20 }).then((r) => r.data),
     enabled: activeTab === 'role_audit',
   });
+
+  const roleAuditData = Array.isArray(roleAuditRes) ? roleAuditRes : (roleAuditRes?.logs || []);
+  const roleAuditTotal = Array.isArray(roleAuditRes) ? roleAuditRes.length : (roleAuditRes?.total ?? roleAuditData.length);
+  const roleAuditTotalPages = Array.isArray(roleAuditRes) ? 1 : (roleAuditRes?.totalPages || 1);
 
   const handleExport = async () => {
     try {
@@ -298,7 +303,7 @@ export default function AdminAuditPage() {
               </p>
             </div>
             <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-200">
-              {roleAuditData.length} Governance Records
+              {roleAuditTotal} Governance Records
             </span>
           </div>
 
@@ -315,47 +320,52 @@ export default function AdminAuditPage() {
               No governance or role modification records found in the audit ledger.
             </div>
           ) : (
-            <div className="space-y-3">
-              {roleAuditData.map((a) => {
-                const prevLabel = ROLE_CONFIG[a.previous_role]?.label || a.previous_role || 'Employee';
-                const nextLabel = ROLE_CONFIG[a.new_role]?.label || a.new_role;
-                return (
-                  <div
-                    key={a.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs p-4 bg-gradient-to-r from-slate-50/80 to-white rounded-2xl border border-slate-200/80 shadow-2xs hover:shadow-sm transition-all"
-                  >
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center">
-                        {a.employee_name?.charAt(0) || 'U'}
+            <>
+              <div className="space-y-3">
+                {roleAuditData.map((a) => {
+                  const prevLabel = ROLE_CONFIG[a.previous_role]?.label || a.previous_role || 'Employee';
+                  const nextLabel = ROLE_CONFIG[a.new_role]?.label || a.new_role;
+                  return (
+                    <div
+                      key={a.id}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs p-4 bg-gradient-to-r from-slate-50/80 to-white rounded-2xl border border-slate-200/80 shadow-2xs hover:shadow-sm transition-all"
+                    >
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center">
+                          {a.employee_name?.charAt(0) || 'U'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-slate-900 text-sm">{a.employee_name}</span>
+                            <span className="text-slate-500 font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                              ID: {a.employee_id}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="px-2.5 py-0.5 rounded-md bg-slate-200/80 text-slate-700 text-[10px] font-bold border border-slate-300">
+                              {prevLabel}
+                            </span>
+                            <span className="text-slate-400 font-bold">→</span>
+                            <span className="px-2.5 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-black shadow-2xs">
+                              {nextLabel}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-extrabold text-slate-900 text-sm">{a.employee_name}</span>
-                          <span className="text-slate-500 font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                            ID: {a.employee_id}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="px-2.5 py-0.5 rounded-md bg-slate-200/80 text-slate-700 text-[10px] font-bold border border-slate-300">
-                            {prevLabel}
-                          </span>
-                          <span className="text-slate-400 font-bold">→</span>
-                          <span className="px-2.5 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-black shadow-2xs">
-                            {nextLabel}
-                          </span>
-                        </div>
+                      <div className="flex flex-col sm:items-end text-[11px] text-slate-500 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
+                        <span>
+                          Authorized by <strong className="text-slate-800 font-bold">{a.changed_by_name || 'System Admin'}</strong>
+                        </span>
+                        <span className="font-mono text-slate-400 text-[10px] mt-0.5">{formatDateTime(a.created_at)}</span>
                       </div>
                     </div>
-                    <div className="flex flex-col sm:items-end text-[11px] text-slate-500 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
-                      <span>
-                        Authorized by <strong className="text-slate-800 font-bold">{a.changed_by_name || 'System Admin'}</strong>
-                      </span>
-                      <span className="font-mono text-slate-400 text-[10px] mt-0.5">{formatDateTime(a.created_at)}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+              <div className="pt-4 mt-4 border-t border-slate-100">
+                <Pagination page={roleAuditPage} totalPages={roleAuditTotalPages} onPageChange={setRoleAuditPage} />
+              </div>
+            </>
           )}
         </div>
       )}

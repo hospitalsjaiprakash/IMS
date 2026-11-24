@@ -6,7 +6,7 @@ import {
   MapPin, Lightbulb
 } from 'lucide-react';
 import { Modal, Spinner, Alert, ConfirmDialog } from '../ui';
-import { trainersApi, attachmentsApi } from '../../api';
+import { trainersApi, attachmentsApi, lettersApi } from '../../api';
 import { formatDate, getApiErrorMessage } from '../../utils/helpers';
 import { formatCcDisplay } from './CcEmployeePicker';
 import toast from 'react-hot-toast';
@@ -27,6 +27,7 @@ export default function TrainingProgressCard({
   const [reworkReason, setReworkReason] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [downloadingLetterId, setDownloadingLetterId] = useState(null);
   const [viewAppointmentLetterModal, setViewAppointmentLetterModal] = useState(false);
   const [selectedLetterAssignment, setSelectedLetterAssignment] = useState(null);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
@@ -133,6 +134,40 @@ export default function TrainingProgressCard({
       }
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Failed to download training evidence.'));
+    }
+  };
+
+  const handleDownloadAppointmentPdf = async (assignment) => {
+    if (!assignment?.appointment_letter_id || !incident?.id) return;
+    setDownloadingLetterId(assignment.appointment_letter_id);
+    try {
+      const response = await lettersApi.downloadPdf(incident.id, assignment.appointment_letter_id);
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+      const safeRef = (assignment.letter_reference_number || 'Trainer_Appointment_Letter').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${safeRef}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+    } catch (err) {
+      let message = 'Failed to download official appointment PDF.';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed?.error) message = parsed.error;
+        } catch {
+          // keep fallback
+        }
+      } else {
+        message = getApiErrorMessage(err, message);
+      }
+      toast.error(message);
+    } finally {
+      setDownloadingLetterId(null);
     }
   };
 
@@ -379,7 +414,7 @@ export default function TrainingProgressCard({
 
             {/* Official Appointment Letter Row */}
             {(t.letter_reference_number || t.appointment_letter_id) && (
-              <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-lg p-2.5 flex items-center justify-between gap-3 flex-wrap">
+              <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-lg p-2.5 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[11px] font-bold text-indigo-900 bg-white px-2 py-0.5 rounded border border-indigo-200">
                     {t.letter_reference_number || 'JPHRC/TRN'}
@@ -388,16 +423,29 @@ export default function TrainingProgressCard({
                     <CheckCircle2 size={10} /> Dispatched to Trainer
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedLetterAssignment(t);
-                    setViewAppointmentLetterModal(true);
-                  }}
-                  className="btn-secondary btn-sm text-[11px] flex items-center gap-1 hover:border-indigo-400 hover:text-indigo-700 shadow-xs ml-auto"
-                >
-                  <Eye size={12} /> View / Print Appointment Letter
-                </button>
+                <div className="flex items-center gap-2 ml-auto flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedLetterAssignment(t);
+                      setViewAppointmentLetterModal(true);
+                    }}
+                    className="btn-secondary btn-sm text-[11px] flex items-center gap-1 hover:border-indigo-400 hover:text-indigo-700 shadow-xs"
+                  >
+                    <Eye size={12} /> View / Print Appointment Letter
+                  </button>
+                  {t.appointment_letter_id && (
+                    <button
+                      type="button"
+                      disabled={downloadingLetterId === t.appointment_letter_id}
+                      onClick={() => handleDownloadAppointmentPdf(t)}
+                      className="btn-secondary btn-sm text-[11px] flex items-center gap-1 hover:border-indigo-400 hover:text-indigo-700 shadow-xs"
+                    >
+                      {downloadingLetterId === t.appointment_letter_id ? <Spinner size={12} /> : <Download size={12} />}
+                      Download Official PDF
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -454,21 +502,45 @@ export default function TrainingProgressCard({
                   </div>
                 )}
 
-                {(t.report_attachment_id || t.trainer_attachment_id) && (
-                  <div className="pt-2 flex items-center justify-between border-t border-slate-100 text-[11px]">
-                    <span className="text-slate-600 flex items-center gap-1 font-medium">
-                      <FileText size={13} className="text-indigo-600" />
-                      Attendance Sheet & Evidence: {t.report_file_name || t.report_original_filename || 'Evaluation Attachment'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadAttachment(t.report_attachment_id || t.trainer_attachment_id)}
-                      className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
-                    >
-                      <Download size={12} /> Download Evidence
-                    </button>
-                  </div>
-                )}
+                {(() => {
+                  const evidenceFiles = Array.isArray(t.report_attachments) && t.report_attachments.length > 0
+                    ? t.report_attachments
+                    : ((t.report_attachment_id || t.trainer_attachment_id)
+                      ? [{
+                          id: t.report_attachment_id || t.trainer_attachment_id,
+                          original_filename: t.report_original_filename || t.report_file_name || 'Evaluation Attachment',
+                          file_size: t.report_file_size,
+                        }]
+                      : []);
+                  if (evidenceFiles.length === 0) return null;
+                  return (
+                    <div className="pt-2 border-t border-slate-100 text-[11px] space-y-1.5">
+                      <span className="text-slate-600 flex items-center gap-1 font-semibold">
+                        <FileText size={13} className="text-indigo-600" />
+                        Attendance Sheet &amp; Evidence ({evidenceFiles.length})
+                      </span>
+                      <div className="space-y-1">
+                        {evidenceFiles.map((att, fileIdx) => (
+                          <div
+                            key={att.id || fileIdx}
+                            className="flex items-center justify-between gap-2 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200/70"
+                          >
+                            <span className="text-slate-700 font-medium truncate">
+                              {att.original_filename || `Evidence File ${fileIdx + 1}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadAttachment(att.id)}
+                              className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 shrink-0"
+                            >
+                              <Download size={12} /> Download Evidence
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -563,14 +635,27 @@ export default function TrainingProgressCard({
             title="Official Trainer Appointment Letter"
             size="xl"
             footer={
-              <div className="flex items-center justify-between w-full">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="btn-secondary text-xs flex items-center gap-1.5"
-                >
-                  <Printer size={13} /> Print Official Letter
-                </button>
+              <div className="flex items-center justify-between w-full gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="btn-secondary text-xs flex items-center gap-1.5"
+                  >
+                    <Printer size={13} /> Print Official Letter
+                  </button>
+                  {letterTarget.appointment_letter_id && (
+                    <button
+                      type="button"
+                      disabled={downloadingLetterId === letterTarget.appointment_letter_id}
+                      onClick={() => handleDownloadAppointmentPdf(letterTarget)}
+                      className="btn-primary text-xs flex items-center gap-1.5"
+                    >
+                      {downloadingLetterId === letterTarget.appointment_letter_id ? <Spinner size={12} className="text-white" /> : <Download size={13} />}
+                      Download Official PDF
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setViewAppointmentLetterModal(false)}

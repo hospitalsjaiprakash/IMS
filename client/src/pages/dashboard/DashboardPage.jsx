@@ -21,6 +21,8 @@ export default function DashboardPage() {
   const [activeView, setActiveView] = useState(isReviewer ? 'reviewer' : 'personal');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const { data: assignedScope = { departments: [], categories: [] } } = useQuery({
     queryKey: ['my-assigned-departments'],
@@ -40,6 +42,8 @@ export default function DashboardPage() {
     ...(activeView === 'reviewer' && selectedCategoryFilter === 'all' && selectedDepartmentFilter !== 'all'
       ? { departmentId: selectedDepartmentFilter }
       : {}),
+    ...(dateFrom ? { dateFrom } : {}),
+    ...(dateTo ? { dateTo } : {}),
   };
 
   const {
@@ -62,6 +66,8 @@ export default function DashboardPage() {
       ...(activeView === 'reviewer' && selectedCategoryFilter === 'all' && selectedDepartmentFilter !== 'all'
         ? { departmentId: selectedDepartmentFilter }
         : {}),
+      ...(dateFrom ? { dateFrom } : {}),
+      ...(dateTo ? { dateTo } : {}),
     }).then(r => r.data.incidents || []),
   });
 
@@ -112,7 +118,39 @@ export default function DashboardPage() {
             Welcome back, {user?.fullName} · {user?.department || 'Quality Management'}
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-transparent text-xs font-medium outline-none"
+              aria-label="Filter from date"
+            />
+          </div>
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-transparent text-xs font-medium outline-none"
+              aria-label="Filter to date"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                setDateFrom('');
+                setDateTo('');
+              }}
+              className="text-xs font-bold text-blue-600 hover:underline px-1.5"
+            >
+              Reset
+            </button>
+          )}
           {showReviewerView && assignedCategories.length > 1 && (
             <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
               <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 whitespace-nowrap">

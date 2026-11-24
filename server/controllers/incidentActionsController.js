@@ -5,11 +5,11 @@ const { sendEmail, templates } = require('../utils/emailService');
 const { recordEvent } = require('../utils/incidentEvents');
 const { isPrivilegedRole, getUserAssignedCategoriesForIncident, getUserManagedDepartmentsForIncident } = require('../utils/accessControl');
 
-// ── UPDATE INCIDENT (employee, while submitted) ────────────────────────────
+// ── UPDATE INCIDENT (reporter, before any review feedback begins) ────────────
 exports.updateIncident = async (req, res) => {
   try {
     const { id } = req.params;
-    const { description, severity, occurredTo, incidentDate, incidentTime } = req.body;
+    const { description, occurredTo, incidentDate, incidentTime } = req.body;
 
     const result = await query(
       'SELECT * FROM incidents WHERE id = $1 AND reporter_id = $2',
@@ -18,8 +18,23 @@ exports.updateIncident = async (req, res) => {
     if (!result.rows.length) return res.status(404).json({ error: 'Not found or access denied' });
 
     const incident = result.rows[0];
-    if (incident.status !== 'submitted') {
-      return res.status(400).json({ error: 'Incident can only be edited while in submitted status.' });
+    if (!['submitted', 'with_hod'].includes(incident.status)) {
+      return res.status(400).json({ error: 'Incident can only be edited before review begins.' });
+    }
+
+    const fbCheck = await query('SELECT 1 FROM feedbacks WHERE incident_id = $1 LIMIT 1', [id]);
+    if (fbCheck.rows.length > 0) {
+      return res.status(400).json({ error: 'Incident cannot be edited after review feedback has been submitted.' });
+    }
+
+    if (description !== undefined) {
+      const trimmedDesc = String(description).trim();
+      if (!trimmedDesc) {
+        return res.status(400).json({ error: 'Description is required.' });
+      }
+      if (trimmedDesc.length > 2000) {
+        return res.status(400).json({ error: 'Description cannot exceed 2000 characters.' });
+      }
     }
 
     if (incidentDate) {
@@ -43,24 +58,24 @@ exports.updateIncident = async (req, res) => {
     await query(
       `UPDATE incidents SET
         description = COALESCE($1, description),
-        severity = COALESCE($2, severity),
-        occurred_to = COALESCE($3, occurred_to),
-        incident_date = COALESCE($4, incident_date),
-        incident_time = COALESCE($5, incident_time),
+        occurred_to = COALESCE($2, occurred_to),
+        incident_date = COALESCE($3, incident_date),
+        incident_time = COALESCE($4, incident_time),
         updated_at = NOW()
-       WHERE id = $6`,
-      [description, severity, occurredTo, incidentDate, incidentTime, id]
+       WHERE id = $5`,
+      [description !== undefined ? String(description).trim() : null, occurredTo ?? null, incidentDate || null, incidentTime || null, id]
     );
 
-    await auditLog(req.user.id, 'INCIDENT_EDITED', id, { fields: Object.keys(req.body) }, req.ip);
+    const updatedFields = ['description', 'occurredTo', 'incidentDate', 'incidentTime'].filter((k) => req.body[k] !== undefined);
+    await auditLog(req.user.id, 'INCIDENT_EDITED', id, { fields: updatedFields }, req.ip);
 
     await recordEvent(query, {
       incidentId: id,
       eventType: 'INCIDENT_EDITED',
       actor: req.user,
       title: 'Incident Details Edited',
-      summary: `Updated by reporter: ${Object.keys(req.body).join(', ')}`,
-      payload: { fields: Object.keys(req.body) }
+      summary: `Updated by reporter: ${updatedFields.join(', ')}`,
+      payload: { fields: updatedFields }
     });
 
     res.json({ success: true });

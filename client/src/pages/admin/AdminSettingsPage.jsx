@@ -5,6 +5,7 @@ import { Alert, Spinner } from '../../components/ui';
 import { Settings, Save, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getApiErrorMessage } from '../../utils/helpers';
+import { useAuthStore } from '../../store/authStore';
 
 const CONFIG_FIELDS = [
   {
@@ -98,6 +99,7 @@ const CONFIG_FIELDS = [
 
 export default function AdminSettingsPage() {
   const qc = useQueryClient();
+  const { refreshUser } = useAuthStore();
   const [draftConfig, setDraftConfig] = useState({});
 
   const { data: config, isLoading, isError, refetch } = useQuery({
@@ -123,6 +125,7 @@ export default function AdminSettingsPage() {
       toast.success('System configuration saved successfully.');
       setDraftConfig({});
       qc.invalidateQueries({ queryKey: ['admin-config'] });
+      if (typeof refreshUser === 'function') refreshUser();
     },
     onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to save configuration')),
   });

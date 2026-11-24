@@ -6,6 +6,7 @@ const { auditLog, bumpUserTokenVersion } = require('../middleware/auth');
 const { sendEmail } = require('../utils/emailService');
 const { extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
 const { sendOtp, verifyOtp } = require('../utils/otpService');
+const { getRuntimeSystemConfig } = require('../utils/systemConfigCache');
 
 // Constant-time dummy bcrypt cost-12 hash used when login receives unknown/unregistered accounts
 const DUMMY_BCRYPT_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 12);
@@ -656,7 +657,10 @@ exports.login = async (req, res) => {
       }
     }
 
-    const assignedCategories = await getUserAssignedCategories(user.id);
+    const [assignedCategories, runtimeConfig] = await Promise.all([
+      getUserAssignedCategories(user.id),
+      getRuntimeSystemConfig()
+    ]);
     const isCategoryReviewer = assignedCategories.length > 0;
 
     res.json({
@@ -677,7 +681,8 @@ exports.login = async (req, res) => {
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
-        isSystemAdmin: user.is_system_admin
+        isSystemAdmin: user.is_system_admin,
+        maintenanceMode: Boolean(runtimeConfig.maintenance_mode)
       }
     });
   } catch (error) {
@@ -735,7 +740,10 @@ exports.getMe = async (req, res) => {
         await query('UPDATE users SET phone = $1 WHERE id = $2', [user.phone, user.id]).catch(() => {});
       }
     }
-    const assignedCategories = await getUserAssignedCategories(user.id);
+    const [assignedCategories, runtimeConfig] = await Promise.all([
+      getUserAssignedCategories(user.id),
+      getRuntimeSystemConfig()
+    ]);
     const isCategoryReviewer = assignedCategories.length > 0;
 
     res.json({
@@ -754,7 +762,8 @@ exports.getMe = async (req, res) => {
       isImcLead: user.is_imc_lead,
       isImcMember: user.is_imc_member,
       isManagementMember: user.is_management_member,
-      isSystemAdmin: user.is_system_admin
+      isSystemAdmin: user.is_system_admin,
+      maintenanceMode: Boolean(runtimeConfig.maintenance_mode)
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -1010,7 +1019,10 @@ exports.switchRole = async (req, res) => {
 
     await auditLog(user.id, 'ROLE_SWITCH', null, { targetRole: finalTargetRole }, req.ip);
 
-    const assignedCategories = await getUserAssignedCategories(user.id);
+    const [assignedCategories, runtimeConfig] = await Promise.all([
+      getUserAssignedCategories(user.id),
+      getRuntimeSystemConfig()
+    ]);
     const isCategoryReviewer = assignedCategories.length > 0;
 
     res.json({
@@ -1032,7 +1044,8 @@ exports.switchRole = async (req, res) => {
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
         isManagementMember: user.is_management_member,
-        isSystemAdmin: user.is_system_admin
+        isSystemAdmin: user.is_system_admin,
+        maintenanceMode: Boolean(runtimeConfig.maintenance_mode)
       }
     });
   } catch (error) {
