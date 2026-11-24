@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { adminApi, attachmentsApi } from '../../api';
+import { adminApi, attachmentsApi, metaApi } from '../../api';
 import { Spinner, Modal, Alert, Pagination, AttachmentViewerModal, EmptyState } from '../../components/ui';
 import { Send, Megaphone, Search, Paperclip, Mail, Bell, AlertCircle, Info, X } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -26,7 +26,14 @@ export default function AdminCommunicationsPage() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
-  const [broadcastForm, setBroadcastForm] = useState({ title: '', message: '', attachment: null });
+  const [broadcastForm, setBroadcastForm] = useState({
+    title: '',
+    message: '',
+    targetRole: 'all',
+    targetDepartment: 'all',
+    attachment: null,
+  });
+  const fileInputRef = useRef(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerFile, setViewerFile] = useState(null);
 
@@ -80,12 +87,19 @@ export default function AdminCommunicationsPage() {
     enabled: activeTab === 'logs',
   });
 
+  const { data: departmentsList = [] } = useQuery({
+    queryKey: ['departments', 'broadcast-options'],
+    queryFn: () => metaApi.departments().then((r) => r.data || []),
+    enabled: showBroadcastModal,
+  });
+
   const broadcastMutation = useMutation({
     mutationFn: (formData) => adminApi.broadcastNotification(formData),
     onSuccess: (res) => {
       toast.success(`Broadcast sent successfully to ${res?.data?.count || 0} active users.`);
       setShowBroadcastModal(false);
-      setBroadcastForm({ title: '', message: '', attachment: null });
+      setBroadcastForm({ title: '', message: '', targetRole: 'all', targetDepartment: 'all', attachment: null });
+      if (fileInputRef.current) fileInputRef.current.value = '';
       refetchBroadcasts();
       refetchLogs();
     },
@@ -126,7 +140,8 @@ export default function AdminCommunicationsPage() {
         <button
           type="button"
           onClick={() => {
-            setBroadcastForm({ title: '', message: '', attachment: null });
+            setBroadcastForm({ title: '', message: '', targetRole: 'all', targetDepartment: 'all', attachment: null });
+            if (fileInputRef.current) fileInputRef.current.value = '';
             setShowBroadcastModal(true);
           }}
           className="px-5 py-2.5 rounded-xl font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white transition-all flex items-center gap-2 shadow-md shadow-indigo-500/20 whitespace-nowrap"
@@ -219,6 +234,11 @@ export default function AdminCommunicationsPage() {
                           <span className="text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full font-medium border border-indigo-100">
                             {log.status}
                           </span>
+                          {log.recipient_contact && (
+                            <span className="text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full font-semibold border border-slate-200">
+                              Target: {log.recipient_contact}
+                            </span>
+                          )}
                           {log.details?.attachmentName && (
                             <button
                               type="button"
@@ -428,6 +448,8 @@ export default function AdminCommunicationsPage() {
                 const fd = new FormData();
                 fd.append('title', broadcastForm.title.trim());
                 fd.append('message', broadcastForm.message.trim());
+                fd.append('targetRole', broadcastForm.targetRole || 'all');
+                fd.append('targetDepartment', broadcastForm.targetDepartment || 'all');
                 if (broadcastForm.attachment) {
                   fd.append('attachment', broadcastForm.attachment);
                 }
@@ -444,8 +466,40 @@ export default function AdminCommunicationsPage() {
         <div className="space-y-4">
           <Alert
             type="info"
-            message="This message will be sent immediately as an in-app notification to all active users in the system."
+            message="This message will be sent immediately as an in-app notification to active users matching your selected target filters."
           />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="field-label font-bold text-xs">Target Role</label>
+              <select
+                value={broadcastForm.targetRole}
+                onChange={(e) => setBroadcastForm((f) => ({ ...f, targetRole: e.target.value }))}
+                className="select bg-slate-50 text-xs font-medium w-full"
+              >
+                <option value="all">All Active Roles</option>
+                <option value="employee">Employees</option>
+                <option value="hod">Category / Dept Reviewers</option>
+                <option value="imc">IMC Committee</option>
+                <option value="head_management">Executive Management</option>
+                <option value="system_admin">System Administrators</option>
+              </select>
+            </div>
+            <div>
+              <label className="field-label font-bold text-xs">Target Department</label>
+              <select
+                value={broadcastForm.targetDepartment}
+                onChange={(e) => setBroadcastForm((f) => ({ ...f, targetDepartment: e.target.value }))}
+                className="select bg-slate-50 text-xs font-medium w-full"
+              >
+                <option value="all">All Departments</option>
+                {departmentsList.map((d) => (
+                  <option key={d.id || d.name} value={d.name}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div>
             <label className="field-label field-required font-bold">Title</label>
             <input
@@ -468,6 +522,7 @@ export default function AdminCommunicationsPage() {
           <div>
             <label className="field-label font-bold">Attachment (Optional PDF/Image)</label>
             <input
+              ref={fileInputRef}
               type="file"
               accept=".pdf,.png,.jpg,.jpeg"
               className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 transition-all cursor-pointer"
@@ -477,6 +532,25 @@ export default function AdminCommunicationsPage() {
                 }
               }}
             />
+            {broadcastForm.attachment && (
+              <div className="mt-2 flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-900">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Paperclip size={13} className="text-indigo-600 flex-shrink-0" />
+                  <span className="font-semibold truncate">{broadcastForm.attachment.name}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBroadcastForm((f) => ({ ...f, attachment: null }));
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 text-[11px] font-semibold transition-colors flex-shrink-0"
+                  aria-label="Remove attachment"
+                >
+                  <X size={12} /> Remove
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </Modal>

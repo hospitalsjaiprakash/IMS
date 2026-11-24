@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
@@ -14,6 +15,13 @@ import { formatDate } from '../../utils/helpers';
 export default function SystemAdminDashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const dateParams = {
+    ...(dateFrom ? { dateFrom } : {}),
+    ...(dateTo ? { dateTo } : {}),
+  };
 
   const {
     data: stats,
@@ -21,8 +29,8 @@ export default function SystemAdminDashboard() {
     isError: isStatsError,
     refetch: refetchStats,
   } = useQuery({
-    queryKey: ['dashboard-stats', 'admin'],
-    queryFn: () => incidentsApi.getStats().then(r => r.data),
+    queryKey: ['dashboard-stats', 'admin', dateParams],
+    queryFn: () => incidentsApi.getStats(dateParams).then(r => r.data),
   });
 
   const { data: recentData } = useQuery({
@@ -57,10 +65,42 @@ export default function SystemAdminDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="page-title">System Administration</h1>
           <p className="page-subtitle">Welcome back, {user?.fullName?.split(' ')[0]} · {user?.department || 'Digital Department'}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-transparent text-xs font-medium outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-transparent text-xs font-medium outline-none"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                setDateFrom('');
+                setDateTo('');
+              }}
+              className="text-xs font-bold text-blue-600 hover:underline px-1.5"
+            >
+              Reset
+            </button>
+          )}
         </div>
       </div>
 

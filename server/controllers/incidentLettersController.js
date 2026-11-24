@@ -336,9 +336,19 @@ exports.saveLetterDraft = async (req, res) => {
 
     let finalEmpName = recipientName;
     let finalEmpNo = recipientEmpNo;
-    let finalEmpDept = recipientDepartment;
-    let finalEmpDesig = recipientDesignation;
-    let finalEmpEmail = recipientEmail;
+    const hasDeptInBody = Object.prototype.hasOwnProperty.call(req.body, 'recipientDepartment');
+    const hasDesigInBody = Object.prototype.hasOwnProperty.call(req.body, 'recipientDesignation');
+    const hasEmailInBody = Object.prototype.hasOwnProperty.call(req.body, 'recipientEmail');
+
+    let finalEmpDept = hasDeptInBody
+      ? (recipientDepartment && String(recipientDepartment).trim() ? String(recipientDepartment).trim() : null)
+      : recipientDepartment;
+    let finalEmpDesig = hasDesigInBody
+      ? (recipientDesignation && String(recipientDesignation).trim() ? String(recipientDesignation).trim() : null)
+      : recipientDesignation;
+    let finalEmpEmail = hasEmailInBody
+      ? (recipientEmail && String(recipientEmail).trim() ? String(recipientEmail).trim() : null)
+      : recipientEmail;
 
     const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
 
@@ -353,9 +363,9 @@ exports.saveLetterDraft = async (req, res) => {
         if (uRes.rows.length) {
           if (!finalEmpName || finalEmpName === 'Staff Member') finalEmpName = uRes.rows[0].full_name;
           if (!finalEmpNo || isUuid(finalEmpNo)) finalEmpNo = uRes.rows[0].employee_id;
-          if (!finalEmpDept) finalEmpDept = uRes.rows[0].department;
-          if (!finalEmpDesig) finalEmpDesig = uRes.rows[0].designation;
-          if (!finalEmpEmail) finalEmpEmail = uRes.rows[0].email;
+          if (!hasDeptInBody && !finalEmpDept) finalEmpDept = uRes.rows[0].department;
+          if (!hasDesigInBody && !finalEmpDesig) finalEmpDesig = uRes.rows[0].designation;
+          if (!hasEmailInBody && !finalEmpEmail) finalEmpEmail = uRes.rows[0].email;
         } else {
           const mRes = await query(
             'SELECT id, employee_id, name, email, department, designation FROM master_employees WHERE id::text = $1 OR employee_id = $1',
@@ -364,9 +374,9 @@ exports.saveLetterDraft = async (req, res) => {
           if (mRes.rows.length) {
             if (!finalEmpName || finalEmpName === 'Staff Member') finalEmpName = mRes.rows[0].name;
             if (!finalEmpNo || isUuid(finalEmpNo)) finalEmpNo = mRes.rows[0].employee_id;
-            if (!finalEmpDept) finalEmpDept = mRes.rows[0].department;
-            if (!finalEmpDesig) finalEmpDesig = mRes.rows[0].designation;
-            if (!finalEmpEmail) finalEmpEmail = mRes.rows[0].email;
+            if (!hasDeptInBody && !finalEmpDept) finalEmpDept = mRes.rows[0].department;
+            if (!hasDesigInBody && !finalEmpDesig) finalEmpDesig = mRes.rows[0].designation;
+            if (!hasEmailInBody && !finalEmpEmail) finalEmpEmail = mRes.rows[0].email;
           }
         }
       }
@@ -376,6 +386,15 @@ exports.saveLetterDraft = async (req, res) => {
       finalEmpName = 'Staff Member';
     }
 
+    const defaultSalutation = finalEmpName.toLowerCase().startsWith('dr.')
+      ? 'Dear Doctor,'
+      : finalEmpName !== 'Staff Member'
+        ? `Dear ${finalEmpName.split(' ')[0] || finalEmpName},`
+        : 'Dear Staff,';
+    const finalSalutation = (salutation && String(salutation).trim())
+      ? String(salutation).trim()
+      : defaultSalutation;
+
     const qrCodeUrl = await generateIncidentQrCode(id);
     const pAmt = (penaltyAmount !== undefined && penaltyAmount !== null && penaltyAmount !== '')
       ? Number(penaltyAmount)
@@ -384,7 +403,7 @@ exports.saveLetterDraft = async (req, res) => {
 
     let savedLetter = null;
     if (letterId) {
-      // Update existing draft
+      // Update existing draft (allow clearing department, designation, or email to NULL when explicitly passed)
       const updateRes = await query(
         `UPDATE incident_letters
          SET template_type = $1, reference_number = $2, letter_date = $3,
@@ -392,9 +411,9 @@ exports.saveLetterDraft = async (req, res) => {
              penalty_amount_words = $8, cc_recipients = $9, qr_code_url = $10,
              recipient_name = COALESCE($11, recipient_name),
              recipient_emp_no = COALESCE($12, recipient_emp_no),
-             recipient_department = COALESCE($13, recipient_department),
-             recipient_designation = COALESCE($14, recipient_designation),
-             recipient_email = COALESCE($15, recipient_email),
+             recipient_department = CASE WHEN $18::boolean THEN $13 ELSE COALESCE($13, recipient_department) END,
+             recipient_designation = CASE WHEN $19::boolean THEN $14 ELSE COALESCE($14, recipient_designation) END,
+             recipient_email = CASE WHEN $20::boolean THEN $15 ELSE COALESCE($15, recipient_email) END,
              status = 'drafted', updated_at = NOW()
          WHERE id = $16 AND incident_id = $17
          RETURNING *`,
@@ -403,7 +422,7 @@ exports.saveLetterDraft = async (req, res) => {
           finalRefNumber,
           letterDate || new Date(),
           subject || 'Official Communication Notice',
-          salutation || 'Dear Staff,',
+          finalSalutation,
           finalBodyText,
           pAmt,
           finalPenaltyWords,
@@ -415,7 +434,10 @@ exports.saveLetterDraft = async (req, res) => {
           finalEmpDesig || null,
           finalEmpEmail || null,
           letterId,
-          id
+          id,
+          hasDeptInBody,
+          hasDesigInBody,
+          hasEmailInBody
         ]
       );
       savedLetter = updateRes.rows[0];
@@ -443,7 +465,7 @@ exports.saveLetterDraft = async (req, res) => {
           finalRefNumber,
           letterDate || new Date(),
           subject || 'Official Communication Notice',
-          salutation || 'Dear Staff,',
+          finalSalutation,
           finalBodyText,
           pAmt,
           finalPenaltyWords,

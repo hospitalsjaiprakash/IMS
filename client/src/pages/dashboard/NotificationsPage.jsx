@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { notificationsApi } from '../../api';
+import { notificationsApi, attachmentsApi } from '../../api';
 import { useAuthStore } from '../../store/authStore';
-import { Spinner, Alert, Pagination } from '../../components/ui';
+import { Spinner, Alert, Pagination, AttachmentViewerModal } from '../../components/ui';
 import {
   Bell, Check, Clock, CheckCheck, MailOpen, Mail, FileText,
-  LayoutDashboard, FilePlus, ChevronRight, Info, RefreshCw, Users
+  LayoutDashboard, FilePlus, ChevronRight, Info, RefreshCw, Users, Paperclip
 } from 'lucide-react';
 import { timeAgo, getRoleDashboard, getApiErrorMessage } from '../../utils/helpers';
 import toast from 'react-hot-toast';
@@ -16,6 +16,8 @@ export default function NotificationsPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const [page, setPage] = useState(1);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerFile, setViewerFile] = useState(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['notifications', 'page', page],
@@ -45,12 +47,32 @@ export default function NotificationsPage() {
     onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to mark notifications as read.')),
   });
 
-  const handleNotificationClick = (notif) => {
+  const handleOpenAttachment = async (notif) => {
+    if (!notif?.attachment_url) return;
+    if (notif.attachment_url.startsWith('http')) {
+      setViewerFile({ url: notif.attachment_url, name: notif.attachment_name || 'Attachment' });
+      setViewerOpen(true);
+      return;
+    }
+    try {
+      const res = await attachmentsApi.getBroadcastDownloadUrl(notif.attachment_url);
+      if (res.data?.url) {
+        setViewerFile({ url: res.data.url, name: notif.attachment_name || 'Attachment' });
+        setViewerOpen(true);
+      }
+    } catch {
+      toast.error('Failed to open attachment');
+    }
+  };
+
+  const handleNotificationClick = async (notif) => {
     if (!notif.is_read) {
       markReadMutation.mutate(notif.id);
     }
     if (notif.incident_id) {
       navigate(`/incidents/${encodeURIComponent(notif.incident_id)}`);
+    } else if (notif.attachment_url) {
+      await handleOpenAttachment(notif);
     }
   };
 
@@ -71,7 +93,9 @@ export default function NotificationsPage() {
     { label: 'Incidents', icon: FileText, to: '/incidents', color: 'text-blue-600 bg-blue-50' },
     user?.role === 'system_admin'
       ? { label: 'Users & Mappings', icon: Users, to: '/admin/users', color: 'text-indigo-600 bg-indigo-50' }
-      : { label: 'Report Incident', icon: FilePlus, to: '/incidents/new', color: 'text-indigo-600 bg-indigo-50' },
+      : ['imc', 'head_management'].includes(user?.role)
+        ? { label: 'Employee Directory', icon: Users, to: '/employees', color: 'text-indigo-600 bg-indigo-50' }
+        : { label: 'Report Incident', icon: FilePlus, to: '/incidents/new', color: 'text-indigo-600 bg-indigo-50' },
   ];
 
   return (
@@ -118,7 +142,7 @@ export default function NotificationsPage() {
                 <div
                   key={notif.id}
                   onClick={() => handleNotificationClick(notif)}
-                  className={`p-4 flex items-start gap-4 transition-colors ${notif.incident_id ? 'cursor-pointer' : ''} ${!notif.is_read ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'}`}
+                  className={`p-4 flex items-start gap-4 transition-colors ${notif.incident_id || notif.attachment_url ? 'cursor-pointer' : ''} ${!notif.is_read ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'}`}
                 >
                   <div className="mt-1.5 flex-shrink-0">
                     {!notif.is_read ? (
@@ -136,10 +160,25 @@ export default function NotificationsPage() {
                         <p className={`text-sm mt-0.5 ${!notif.is_read ? 'text-slate-700' : 'text-slate-500'}`}>
                           {notif.message}
                         </p>
-                        <p className="text-xs text-slate-400 mt-1.5 flex items-center gap-1.5">
-                          <Clock size={12} />
-                          {timeAgo(notif.created_at)}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                            <Clock size={12} />
+                            {timeAgo(notif.created_at)}
+                          </p>
+                          {notif.attachment_url && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!notif.is_read) markReadMutation.mutate(notif.id);
+                                handleOpenAttachment(notif);
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-200 transition-colors"
+                            >
+                              <Paperclip size={11} /> {notif.attachment_name || 'Attachment'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       {!notif.is_read && (
                         <button
@@ -254,6 +293,13 @@ export default function NotificationsPage() {
           </div>
         </div>
       </div>
+
+      <AttachmentViewerModal
+        open={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+        fileUrl={viewerFile?.url}
+        fileName={viewerFile?.name}
+      />
     </div>
   );
 }

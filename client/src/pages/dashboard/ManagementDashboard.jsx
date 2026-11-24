@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
@@ -20,6 +21,13 @@ export default function ManagementDashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') === 'analytics' ? 'analytics' : 'overview';
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const dateParams = {
+    ...(dateFrom ? { dateFrom } : {}),
+    ...(dateTo ? { dateTo } : {}),
+  };
 
   const handleTabChange = (tab) => {
     setSearchParams({ tab });
@@ -32,8 +40,8 @@ export default function ManagementDashboard() {
     isError: isStatsError,
     refetch: refetchStats,
   } = useQuery({
-    queryKey: ['dashboard-stats', 'management'],
-    queryFn: () => incidentsApi.getStats().then(r => r.data),
+    queryKey: ['dashboard-stats', 'management', dateParams],
+    queryFn: () => incidentsApi.getStats(dateParams).then(r => r.data),
     staleTime: 10000,
     refetchInterval: 30000,
   });
@@ -128,24 +136,59 @@ export default function ManagementDashboard() {
           </p>
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const query = new FormData(e.target).get('q');
-            if (query) navigate(`/employees?q=${encodeURIComponent(query)}`);
-          }}
-          className="relative w-full sm:w-72 flex-shrink-0"
-        >
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <Search className="h-4 w-4 text-slate-400" />
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-xs font-bold text-slate-500">From</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="bg-transparent text-xs font-medium outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-xs font-bold text-slate-500">To</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="bg-transparent text-xs font-medium outline-none"
+              />
+            </div>
+            {(dateFrom || dateTo) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFrom('');
+                  setDateTo('');
+                }}
+                className="text-xs font-bold text-indigo-600 hover:underline px-1.5"
+              >
+                Reset
+              </button>
+            )}
           </div>
-          <input
-            name="q"
-            type="text"
-            className="input pl-9 w-full bg-white shadow-sm text-sm"
-            placeholder="Search employee…"
-          />
-        </form>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const query = new FormData(e.target).get('q');
+              if (query) navigate(`/employees?q=${encodeURIComponent(query)}`);
+            }}
+            className="relative w-full sm:w-64 flex-shrink-0"
+          >
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-4 w-4 text-slate-400" />
+            </div>
+            <input
+              name="q"
+              type="text"
+              className="input pl-9 w-full bg-white shadow-sm text-sm"
+              placeholder="Search employee…"
+            />
+          </form>
+        </div>
       </div>
 
       {/* Navigation Tabs */}

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi } from '../../api';
@@ -6,29 +7,41 @@ import {
   FileText, UserCheck, Clock, ArrowLeft, Eye, Calendar, Layers, RefreshCw
 } from 'lucide-react';
 import { formatDate, formatDuration, timeAgo } from '../../utils/helpers';
-import { Spinner, Alert, SeverityBadge, StatusBadge } from '../../components/ui';
+import { Spinner, Alert, SeverityBadge, StatusBadge, Pagination } from '../../components/ui';
 
 export default function CategoryDetailPage() {
   const { categoryName } = useParams();
   const decodedCategory = decodeURIComponent(categoryName || '');
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const [page, setPage] = useState(1);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const limit = 20;
+
+  const dateParams = {
+    ...(dateFrom ? { dateFrom } : {}),
+    ...(dateTo ? { dateTo } : {}),
+  };
 
   // 1. Fetch server-computed category analytics
   const { data: statsData } = useQuery({
-    queryKey: ['dashboard-stats', 'category-detail'],
-    queryFn: () => incidentsApi.getStats().then(r => r.data),
+    queryKey: ['dashboard-stats', 'category-detail', dateParams],
+    queryFn: () => incidentsApi.getStats(dateParams).then(r => r.data),
   });
 
-  // 2. Fetch incidents matching this category via server filter
+  // 2. Fetch incidents matching this category via server filter (paginated)
   const {
     data: listData,
     isLoading,
     isError,
     refetch,
   } = useQuery({
-    queryKey: ['incidents', { incidentCategory: decodedCategory, limit: 100 }],
-    queryFn: () => incidentsApi.list({ incidentCategory: decodedCategory, limit: 100 }).then(r => r.data),
+    queryKey: ['incidents', { incidentCategory: decodedCategory, page, limit, ...dateParams }],
+    queryFn: () =>
+      incidentsApi
+        .list({ incidentCategory: decodedCategory, page, limit, ...dateParams })
+        .then(r => r.data),
   });
 
   const getDashboardPath = () => {
@@ -109,6 +122,46 @@ export default function CategoryDetailPage() {
           <h1 className="text-xl md:text-2xl font-bold text-slate-800 tracking-tight">{decodedCategory}</h1>
           <p className="text-xs text-slate-500 font-medium">Detailed audit performance and feedback logs for incidents in this category</p>
         </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setPage(1);
+              }}
+              className="bg-transparent text-xs font-medium outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setPage(1);
+              }}
+              className="bg-transparent text-xs font-medium outline-none"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                setDateFrom('');
+                setDateTo('');
+                setPage(1);
+              }}
+              className="text-xs font-bold text-indigo-600 hover:underline px-2 py-1"
+            >
+              Reset
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Analytics KPI Cards */}
@@ -167,7 +220,7 @@ export default function CategoryDetailPage() {
             Category Incident Log
           </h2>
           <span className="text-[11px] font-semibold bg-slate-100 border border-slate-200 text-slate-600 rounded px-2.5 py-1">
-            {activeIncidents.length} Incident{activeIncidents.length !== 1 ? 's' : ''}
+            {totalReceived} Incident{totalReceived !== 1 ? 's' : ''}
           </span>
         </div>
 
@@ -258,6 +311,8 @@ export default function CategoryDetailPage() {
             })}
           </div>
         )}
+
+        <Pagination page={page} totalPages={listData?.totalPages || 1} onPageChange={setPage} />
       </div>
     </div>
   );

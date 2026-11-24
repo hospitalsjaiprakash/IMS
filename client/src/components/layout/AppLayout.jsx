@@ -34,12 +34,14 @@ const getNavItems = (user) => {
   if (role === 'head_management') {
     base.push(
       { to: '/management/dashboard?tab=analytics', icon: BarChart3, label: 'Category Analytics', matchSearch: '?tab=analytics' },
+      { to: '/admin/analytics', icon: BarChart3, label: 'System Analytics' },
       { to: '/employees', icon: Users, label: 'Employee Directory' }
     );
   }
   if (role === 'system_admin') {
     base.push(
       { to: '/admin/users', icon: Users, label: 'Users & Mappings' },
+      { to: '/employees', icon: Users, label: 'Employee Directory' },
       { to: '/admin/communications', icon: Megaphone, label: 'Communications' },
       { to: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
       { to: '/admin/audit', icon: Shield, label: 'Audit Logs' },

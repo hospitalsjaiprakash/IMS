@@ -90,6 +90,12 @@ export default function AdminAttachmentsPage() {
     return res.data.url;
   };
 
+  const getPresignedPreviewUrl = async (file) => {
+    const res = await attachmentsApi.getPreviewUrl(file.id);
+    if (!res.data?.url) throw new Error('Preview URL unavailable');
+    return res.data.url;
+  };
+
   const handleBulkDownload = async (group) => {
     try {
       setZippingRefId(group.referenceId);
@@ -119,7 +125,7 @@ export default function AdminAttachmentsPage() {
   const handleFilePreview = async (file) => {
     toast.loading('Preparing preview...', { id: 'file-load' });
     try {
-      const fetchUrl = await getPresignedUrl(file);
+      const fetchUrl = await getPresignedPreviewUrl(file);
       toast.dismiss('file-load');
       setPreviewFile({ ...file, fetchUrl });
     } catch {

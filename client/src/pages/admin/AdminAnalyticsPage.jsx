@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { adminApi } from '../../api';
 import { StatCard, Spinner, Alert } from '../../components/ui';
@@ -12,9 +13,18 @@ import { GlassTooltip } from '../../components/ui/GlassTooltip';
 const COLORS = ['#0e95ea', '#22c55e', '#f59e0b', '#d946ef', '#ef4444', '#6366f1', '#14b8a6', '#f97316', '#8b5cf6', '#ec4899'];
 
 export default function AdminAnalyticsPage() {
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['admin-analytics'],
-    queryFn: () => adminApi.getAnalytics().then(r => r.data),
+    queryKey: ['admin-analytics', dateFrom, dateTo],
+    queryFn: () =>
+      adminApi
+        .getAnalytics({
+          ...(dateFrom ? { dateFrom } : {}),
+          ...(dateTo ? { dateTo } : {}),
+        })
+        .then(r => r.data),
   });
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Spinner size={32} /></div>;
@@ -47,10 +57,45 @@ export default function AdminAnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="page-header">
+      <div className="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="page-title">System Analytics</h1>
           <p className="page-subtitle">Hospital-wide incident management metrics</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-transparent text-xs font-medium outline-none"
+              aria-label="Filter from date"
+            />
+          </div>
+          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-transparent text-xs font-medium outline-none"
+              aria-label="Filter to date"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                setDateFrom('');
+                setDateTo('');
+              }}
+              className="text-xs font-bold text-blue-600 hover:underline px-2 py-1"
+            >
+              Reset
+            </button>
+          )}
         </div>
       </div>
 

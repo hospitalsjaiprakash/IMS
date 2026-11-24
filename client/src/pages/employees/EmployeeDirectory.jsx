@@ -58,6 +58,12 @@ export default function EmployeeDirectory() {
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
   const [selectedEmpId, setSelectedEmpId] = useState('');
+  const [incidentPage, setIncidentPage] = useState(1);
+  const incidentLimit = 15;
+
+  React.useEffect(() => {
+    setIncidentPage(1);
+  }, [selectedEmpId]);
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -112,10 +118,18 @@ export default function EmployeeDirectory() {
   };
 
   const { data: detailData, isLoading: isDetailLoading, isError: isDetailError } = useQuery({
-    queryKey: ['employeeDetails', selectedEmpId],
-    queryFn: () => employeeApi.search(selectedEmpId, { include_terminated: 'true' }).then((res) => res.data),
+    queryKey: ['employeeDetails', selectedEmpId, incidentPage],
+    queryFn: () =>
+      employeeApi
+        .search(selectedEmpId, {
+          include_terminated: 'true',
+          incidents_page: incidentPage,
+          incidents_limit: incidentLimit,
+        })
+        .then((res) => res.data),
     enabled: Boolean(selectedEmpId),
     retry: false,
+    placeholderData: keepPreviousData,
   });
 
   const emp = detailData?.selectedEmployee;
@@ -228,57 +242,66 @@ export default function EmployeeDirectory() {
                 <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50">
                   <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
                     <FileText size={18} className="text-slate-400" />
-                    Reported Incidents ({emp.recentIncidents?.length || 0})
+                    Reported Incidents ({emp.totalIncidentsReported ?? emp.recentIncidents?.length ?? 0})
                   </h3>
                 </div>
 
                 {emp.recentIncidents?.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-slate-50 border-b border-slate-200">
-                        <tr>
-                          <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Ref ID</th>
-                          <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
-                          <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category &amp; Type</th>
-                          <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Severity</th>
-                          <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {emp.recentIncidents.map((inc) => (
-                          <tr key={inc.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-3 px-6 text-sm font-mono text-slate-700">
-                              <Link
-                                to={`/incidents/${encodeURIComponent(inc.id)}`}
-                                className="text-indigo-600 hover:text-indigo-800 font-medium hover:underline"
-                              >
-                                {inc.reference_id}
-                              </Link>
-                            </td>
-                            <td className="py-3 px-6 text-sm text-slate-600 whitespace-nowrap">
-                              {formatDate(inc.incident_date)}
-                            </td>
-                            <td className="py-3 px-6 text-sm text-slate-800">
-                              <div className="font-medium text-slate-700">{inc.incident_category}</div>
-                              <div className="text-xs text-slate-500 line-clamp-1" title={inc.incident_type}>
-                                {inc.incident_type}
-                              </div>
-                            </td>
-                            <td className="py-3 px-6">
-                              {inc.severity ? (
-                                <SeverityBadge severity={inc.severity} />
-                              ) : (
-                                <span className="badge badge-gray">Pending</span>
-                              )}
-                            </td>
-                            <td className="py-3 px-6">
-                              <StatusBadge status={inc.status} />
-                            </td>
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="bg-slate-50 border-b border-slate-200">
+                          <tr>
+                            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Ref ID</th>
+                            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+                            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Category &amp; Type</th>
+                            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Severity</th>
+                            <th className="py-3 px-6 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {emp.recentIncidents.map((inc) => (
+                            <tr key={inc.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="py-3 px-6 text-sm font-mono text-slate-700">
+                                <Link
+                                  to={`/incidents/${encodeURIComponent(inc.id)}`}
+                                  className="text-indigo-600 hover:text-indigo-800 font-medium hover:underline"
+                                >
+                                  {inc.reference_id}
+                                </Link>
+                              </td>
+                              <td className="py-3 px-6 text-sm text-slate-600 whitespace-nowrap">
+                                {formatDate(inc.incident_date)}
+                              </td>
+                              <td className="py-3 px-6 text-sm text-slate-800">
+                                <div className="font-medium text-slate-700">{inc.incident_category}</div>
+                                <div className="text-xs text-slate-500 line-clamp-1" title={inc.incident_type}>
+                                  {inc.incident_type}
+                                </div>
+                              </td>
+                              <td className="py-3 px-6">
+                                {inc.severity ? (
+                                  <SeverityBadge severity={inc.severity} />
+                                ) : (
+                                  <span className="badge badge-gray">Pending</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-6">
+                                <StatusBadge status={inc.status} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="p-4 border-t border-slate-100 bg-slate-50/40">
+                      <Pagination
+                        page={incidentPage}
+                        totalPages={Math.max(1, Math.ceil((emp.totalIncidentsReported || emp.recentIncidents.length) / incidentLimit))}
+                        onPageChange={setIncidentPage}
+                      />
+                    </div>
+                  </>
                 ) : (
                   <div className="p-8">
                     <EmptyState

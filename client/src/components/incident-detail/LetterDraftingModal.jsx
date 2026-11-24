@@ -34,6 +34,7 @@ export default function LetterDraftingModal({
   const [refNumber, setRefNumber] = useState('');
   const [letterDate, setLetterDate] = useState(new Date().toISOString().split('T')[0]);
   const [subject, setSubject] = useState('');
+  const [salutation, setSalutation] = useState('');
   const [bodyContent, setBodyContent] = useState('');
   const [penaltyAmount, setPenaltyAmount] = useState('');
   const [penaltyAmountWords, setPenaltyAmountWords] = useState('');
@@ -64,6 +65,7 @@ export default function LetterDraftingModal({
         setRefNumber(def.referenceNumber || def.refNumber || '');
         setLetterDate(def.letterDate || new Date().toISOString().split('T')[0]);
         setSubject(def.subject || '');
+        setSalutation(def.salutation || 'Dear Staff,');
         setBodyContent(def.bodyText || def.bodyContent || '');
 
         if (def.penaltyAmount !== undefined && def.penaltyAmount !== null && def.penaltyAmount !== '') {
@@ -117,6 +119,13 @@ export default function LetterDraftingModal({
       setRefNumber(existingLetter.ref_number || existingLetter.reference_number || '');
       setLetterDate(existingLetter.letter_date?.split('T')[0] || new Date().toISOString().split('T')[0]);
       setSubject(existingLetter.subject || '');
+      const fallbackEmpName = existingLetter.recipient_name || existingLetter.employee_name || '';
+      const computedExistingSalutation = fallbackEmpName.toLowerCase().startsWith('dr.')
+        ? 'Dear Doctor,'
+        : fallbackEmpName && fallbackEmpName !== 'Staff Member'
+          ? `Dear ${fallbackEmpName.split(' ')[0] || fallbackEmpName},`
+          : 'Dear Staff,';
+      setSalutation(existingLetter.salutation || computedExistingSalutation);
       setBodyContent(existingLetter.body_content || existingLetter.body_text || '');
       
       const pAmt = existingLetter.penalty_amount ? String(existingLetter.penalty_amount) : '';
@@ -210,10 +219,26 @@ export default function LetterDraftingModal({
     }
   };
 
+  const syncPenaltyClauseInText = (text, amtVal, wordsVal) => {
+    if (!text) return text;
+    const num = amtVal ? Number(amtVal).toLocaleString('en-IN') : '0';
+    const words = wordsVal || convertNumberToWords(amtVal) || '';
+    const penaltyPattern = /a penalty of ₹[0-9,]+(?:\/-)?\s*\([^)]*\)\s*will be deducted from your monthly salary/i;
+    if (!penaltyPattern.test(text)) return text;
+    const replacement = `a penalty of ₹${num}/- (${words}) will be deducted from your monthly salary`;
+    return text.replace(penaltyPattern, replacement);
+  };
+
   const handlePenaltyAmountChange = (newAmount) => {
     setPenaltyAmount(newAmount);
     const words = convertNumberToWords(newAmount);
     setPenaltyAmountWords(words);
+    setBodyContent((prev) => syncPenaltyClauseInText(prev, newAmount, words));
+  };
+
+  const handlePenaltyWordsChange = (newWords) => {
+    setPenaltyAmountWords(newWords);
+    setBodyContent((prev) => syncPenaltyClauseInText(prev, penaltyAmount, newWords));
   };
 
   const handleSyncPenaltyInBody = () => {
@@ -278,6 +303,7 @@ export default function LetterDraftingModal({
         refNumber,
         letterDate,
         subject,
+        salutation: salutation.trim() || undefined,
         bodyContent,
         penaltyAmount: (letterType.includes('penalty') && penaltyAmount) ? parseFloat(penaltyAmount) : null,
         penaltyAmountWords: (letterType.includes('penalty')) ? penaltyAmountWords : null,
@@ -612,7 +638,7 @@ export default function LetterDraftingModal({
                     <input
                       type="text"
                       value={penaltyAmountWords}
-                      onChange={e => setPenaltyAmountWords(e.target.value)}
+                      onChange={e => handlePenaltyWordsChange(e.target.value)}
                       className="input text-xs italic"
                       placeholder="e.g. Rupees One Thousand Five Hundred only"
                     />
@@ -636,15 +662,27 @@ export default function LetterDraftingModal({
               </div>
             )}
 
-            <div>
-              <label className="field-label field-required text-xs">Subject Line</label>
-              <input
-                type="text"
-                value={subject}
-                onChange={e => setSubject(e.target.value)}
-                className="input text-xs font-semibold"
-                placeholder="e.g. Warning Letter regarding equipment mishandling"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
+                <label className="field-label field-required text-xs">Subject Line</label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={e => setSubject(e.target.value)}
+                  className="input text-xs font-semibold"
+                  placeholder="e.g. Warning Letter regarding equipment mishandling"
+                />
+              </div>
+              <div>
+                <label className="field-label text-xs">Salutation</label>
+                <input
+                  type="text"
+                  value={salutation}
+                  onChange={e => setSalutation(e.target.value)}
+                  className="input text-xs font-medium"
+                  placeholder="e.g. Dear Doctor, / Dear Rahul,"
+                />
+              </div>
             </div>
 
             <div>
@@ -694,10 +732,10 @@ export default function LetterDraftingModal({
                 ? selectedEmployeeObj.employee_id
                 : '')
             }
-            recipientDepartment={recipientDepartment || selectedEmployeeObj.department || selectedEmployeeObj.department_name}
-            recipientDesignation={recipientDesignation || selectedEmployeeObj.designation}
+            recipientDepartment={recipientDepartment}
+            recipientDesignation={recipientDesignation}
             subject={subject}
-            salutation="Dear Staff,"
+            salutation={salutation || 'Dear Staff,'}
             bodyContent={bodyContent || 'No letter content written yet. Switch to Editor tab to write content.'}
             contextBanner={
               <>

@@ -39,6 +39,15 @@ export default function LoginPage() {
 
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [otpCooldown, setOtpCooldown] = useState(0);
+
+  useEffect(() => {
+    if (otpCooldown <= 0) return undefined;
+    const timer = setInterval(() => {
+      setOtpCooldown((prev) => (prev > 1 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [otpCooldown]);
 
   const handleLoginChange = (e) => {
     setLoginForm((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -74,9 +83,9 @@ export default function LoginPage() {
       navigate(getRoleDashboard(result.user));
     } else {
       const isTimeout =
+        Boolean(result.isNetworkError) ||
         result.error?.toLowerCase().includes('timeout') ||
-        result.error?.toLowerCase().includes('network') ||
-        result.error?.toLowerCase().includes('failed');
+        result.error?.toLowerCase().includes('network');
       setError(
         isTimeout
           ? 'Unable to reach the server right now. Please check your connection and try again.'
@@ -99,8 +108,26 @@ export default function LoginPage() {
     const result = await requestRegistrationOtp(regForm);
     if (result.success) {
       setSuccessMsg(result.message || 'Verification OTP sent to your official HRMS email address.');
+      setOtpCooldown(60);
       setMode('register_otp');
     } else if (result.code === 'OTP_COOLDOWN' && result.retryAfterSeconds) {
+      setOtpCooldown(result.retryAfterSeconds);
+      setError(`Please wait ${result.retryAfterSeconds} seconds before requesting another OTP.`);
+    } else {
+      setError(result.error);
+    }
+  };
+
+  const handleResendRegOtp = async () => {
+    if (otpCooldown > 0 || loading) return;
+    setError('');
+    setSuccessMsg('');
+    const result = await requestRegistrationOtp(regForm);
+    if (result.success) {
+      setSuccessMsg(result.message || 'A new verification OTP has been sent to your official HRMS email address.');
+      setOtpCooldown(60);
+    } else if (result.code === 'OTP_COOLDOWN' && result.retryAfterSeconds) {
+      setOtpCooldown(result.retryAfterSeconds);
       setError(`Please wait ${result.retryAfterSeconds} seconds before requesting another OTP.`);
     } else {
       setError(result.error);
@@ -140,15 +167,47 @@ export default function LoginPage() {
         res.data.message ||
           'If your details match an active registered account, a verification OTP has been sent to the registered email.'
       );
+      setOtpCooldown(60);
       setMode('forgot_otp');
     } catch (err) {
       const status = err.response?.status;
       const code = err.response?.data?.code;
       const retryAfter = err.response?.data?.retryAfterSeconds;
       if (status === 429 && code === 'OTP_COOLDOWN' && retryAfter) {
+        setOtpCooldown(retryAfter);
         setError(`Please wait ${retryAfter} seconds before requesting another OTP.`);
       } else {
         setError(getApiErrorMessage(err, 'Unable to process password reset request right now. Please try again.'));
+      }
+    } finally {
+      setLocalLoading(false);
+    }
+  };
+
+  const handleResendForgotOtp = async () => {
+    if (otpCooldown > 0 || localLoading) return;
+    setLocalLoading(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await authApi.employeeForgotPassword({
+        employeeId: forgotForm.employeeId,
+        email: forgotForm.email,
+      });
+      setSuccessMsg(
+        res.data.message ||
+          'If your details match an active registered account, a new verification OTP has been sent to the registered email.'
+      );
+      setOtpCooldown(60);
+    } catch (err) {
+      const status = err.response?.status;
+      const code = err.response?.data?.code;
+      const retryAfter = err.response?.data?.retryAfterSeconds;
+      if (status === 429 && code === 'OTP_COOLDOWN' && retryAfter) {
+        setOtpCooldown(retryAfter);
+        setError(`Please wait ${retryAfter} seconds before requesting another OTP.`);
+      } else {
+        setError(getApiErrorMessage(err, 'Unable to resend verification OTP right now. Please try again.'));
       }
     } finally {
       setLocalLoading(false);
@@ -174,6 +233,14 @@ export default function LoginPage() {
         otp: forgotForm.otp,
         newPassword: forgotForm.newPassword,
       });
+      const loginResult = await login({
+        employeeId: forgotForm.employeeId,
+        password: forgotForm.newPassword,
+      });
+      if (loginResult.success) {
+        navigate(getRoleDashboard(loginResult.user));
+        return;
+      }
       setSuccessMsg(res.data.message || 'Password reset successfully! Please log in.');
       setMode('login');
       setLoginForm({ employeeId: forgotForm.employeeId, password: '' });
@@ -458,6 +525,16 @@ export default function LoginPage() {
                   <p className="text-xs text-slate-500 mt-2 text-center">
                     Sent to <span className="font-medium text-slate-700">{regForm.email}</span>
                   </p>
+                  <div className="mt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={handleResendRegOtp}
+                      disabled={otpCooldown > 0 || loading}
+                      className="text-xs font-semibold text-green-700 hover:text-green-800 disabled:text-slate-400 disabled:cursor-not-allowed"
+                    >
+                      {otpCooldown > 0 ? `Resend Code in ${otpCooldown}s` : 'Resend Code'}
+                    </button>
+                  </div>
                 </div>
 
                 <button
@@ -516,7 +593,17 @@ export default function LoginPage() {
                   Enter the 6-digit OTP sent to your email along with your new password.
                 </p>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Enter OTP</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-semibold text-slate-700">Enter OTP</label>
+                    <button
+                      type="button"
+                      onClick={handleResendForgotOtp}
+                      disabled={otpCooldown > 0 || localLoading}
+                      className="text-xs font-semibold text-green-700 hover:text-green-800 disabled:text-slate-400 disabled:cursor-not-allowed"
+                    >
+                      {otpCooldown > 0 ? `Resend Code in ${otpCooldown}s` : 'Resend Code'}
+                    </button>
+                  </div>
                   <input
                     name="otp"
                     value={forgotForm.otp}

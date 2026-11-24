@@ -1329,7 +1329,7 @@ exports.withdrawIncident = async (req, res) => {
 exports.getDashboardStats = async (req, res) => {
   try {
     const { role, id: userId, department } = req.user;
-    const { viewMode, departmentId, category } = req.query;
+    const { viewMode, departmentId, category, dateFrom, dateTo } = req.query;
 
     let scopeFilter = '';
     const params = [];
@@ -1429,6 +1429,15 @@ exports.getDashboardStats = async (req, res) => {
       )`;
       params.push(category);
       paramIdx++;
+    }
+
+    if (dateFrom) {
+      scopeFilter += ` AND i.incident_date >= $${paramIdx++}::date`;
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      scopeFilter += ` AND i.incident_date <= $${paramIdx++}::date`;
+      params.push(dateTo);
     }
 
     const [totals, bySeverity, byType, byStatus, monthly, durationMetricsRes] = await Promise.all([
@@ -1541,8 +1550,28 @@ exports.getDashboardStats = async (req, res) => {
         givenFilters.push(catClause(givenIdx++));
         givenParams.push(category);
       }
+      const myIncFilters = [];
+      const myIncParams = [userId, userEmpCode];
+      let myIncIdx = 3;
+      if (dateFrom) {
+        extraRevFilters.push(`i.incident_date >= $${revIdx++}::date`);
+        revParams.push(dateFrom);
+        givenFilters.push(`i.incident_date >= $${givenIdx++}::date`);
+        givenParams.push(dateFrom);
+        myIncFilters.push(`i.incident_date >= $${myIncIdx++}::date`);
+        myIncParams.push(dateFrom);
+      }
+      if (dateTo) {
+        extraRevFilters.push(`i.incident_date <= $${revIdx++}::date`);
+        revParams.push(dateTo);
+        givenFilters.push(`i.incident_date <= $${givenIdx++}::date`);
+        givenParams.push(dateTo);
+        myIncFilters.push(`i.incident_date <= $${myIncIdx++}::date`);
+        myIncParams.push(dateTo);
+      }
       const extraRevSql = extraRevFilters.length ? `AND ${extraRevFilters.join(' AND ')}` : '';
       const givenSql = givenFilters.length ? `AND ${givenFilters.join(' AND ')}` : '';
+      const myIncDateSql = myIncFilters.length ? `AND ${myIncFilters.join(' AND ')}` : '';
 
       const [myIncidentsRes, assignedScopeRes, feedbackGivenRes, feedbackPendingRes, redirectRejectedRes] = await Promise.all([
         query(`
@@ -1552,8 +1581,8 @@ exports.getDashboardStats = async (req, res) => {
             COUNT(*) FILTER (WHERE i.status IN ('resolved','closed')) as resolved,
             COUNT(*) FILTER (WHERE i.status = 'withdrawn') as withdrawn,
             COUNT(*) FILTER (WHERE i.status != 'withdrawn' AND DATE_TRUNC('month', i.created_at) = DATE_TRUNC('month', NOW())) as this_month
-          FROM incidents i WHERE ${personalParticipationSql(1, 2)}
-        `, [userId, userEmpCode]),
+          FROM incidents i WHERE ${personalParticipationSql(1, 2)} ${myIncDateSql}
+        `, myIncParams),
         query(`
           SELECT
             COUNT(*) FILTER (WHERE i.status != 'withdrawn') as received,
@@ -1620,27 +1649,39 @@ exports.getDashboardStats = async (req, res) => {
     let categoryAnalytics = [];
 
     if (['system_admin', 'head_management', 'imc', 'coo', 'asst_coo'].includes(role) || isPrivilegedRole(req.user)) {
+      const privDateClauses = [];
+      const privDateParams = [];
+      if (dateFrom) {
+        privDateParams.push(dateFrom);
+        privDateClauses.push(`i.incident_date >= $${privDateParams.length}::date`);
+      }
+      if (dateTo) {
+        privDateParams.push(dateTo);
+        privDateClauses.push(`i.incident_date <= $${privDateParams.length}::date`);
+      }
+      const privDateSql = privDateClauses.length ? `AND ${privDateClauses.join(' AND ')}` : '';
+
       const [pipelineRes, catAnalyticsRes] = await Promise.all([
         query(`
           SELECT
-            (SELECT COUNT(DISTINCT f.incident_id) FROM feedbacks f JOIN incidents i ON i.id = f.incident_id WHERE f.role = 'hod' AND i.status != 'withdrawn') as hod_given,
-            (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn', 'closed') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')) as hod_pending,
-            (SELECT COUNT(DISTINCT f.incident_id) FROM feedbacks f JOIN incidents i ON i.id = f.incident_id WHERE f.role = 'imc' AND i.status != 'withdrawn') as imc_given,
-            (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn', 'closed') AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc')) as imc_pending,
-            (SELECT COUNT(DISTINCT f.incident_id) FROM feedbacks f JOIN incidents i ON i.id = f.incident_id WHERE f.role = 'head_management' AND i.status != 'withdrawn') as mgmt_given,
-            (SELECT COUNT(*) FROM incidents i WHERE i.status IN ('with_head_management', 'pending_management_letter_approval')) as mgmt_pending,
-            (SELECT COUNT(*) FROM incidents i WHERE i.status = 'pending_management_letter_approval') as pending_letters,
-            (SELECT COUNT(*) FROM incidents i WHERE i.status = 'with_head_management') as pending_decisions,
-            (SELECT COUNT(*) FROM incidents i WHERE i.status IN ('pending_training', 'pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review')) as training_pending
-        `),
+            (SELECT COUNT(DISTINCT f.incident_id) FROM feedbacks f JOIN incidents i ON i.id = f.incident_id WHERE f.role = 'hod' AND i.status != 'withdrawn' ${privDateSql}) as hod_given,
+            (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn', 'closed') ${privDateSql} AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'hod')) as hod_pending,
+            (SELECT COUNT(DISTINCT f.incident_id) FROM feedbacks f JOIN incidents i ON i.id = f.incident_id WHERE f.role = 'imc' AND i.status != 'withdrawn' ${privDateSql}) as imc_given,
+            (SELECT COUNT(*) FROM incidents i WHERE i.status NOT IN ('resolved', 'withdrawn', 'closed') ${privDateSql} AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.role = 'imc')) as imc_pending,
+            (SELECT COUNT(DISTINCT f.incident_id) FROM feedbacks f JOIN incidents i ON i.id = f.incident_id WHERE f.role = 'head_management' AND i.status != 'withdrawn' ${privDateSql}) as mgmt_given,
+            (SELECT COUNT(*) FROM incidents i WHERE i.status IN ('with_head_management', 'pending_management_letter_approval') ${privDateSql}) as mgmt_pending,
+            (SELECT COUNT(*) FROM incidents i WHERE i.status = 'pending_management_letter_approval' ${privDateSql}) as pending_letters,
+            (SELECT COUNT(*) FROM incidents i WHERE i.status = 'with_head_management' ${privDateSql}) as pending_decisions,
+            (SELECT COUNT(*) FROM incidents i WHERE i.status IN ('pending_training', 'pending_trainer_assignment', 'training_in_progress', 'pending_imc_training_review') ${privDateSql}) as training_pending
+        `, privDateParams),
         query(`
           WITH all_cats AS (
             SELECT name FROM incident_categories WHERE is_active = TRUE
             UNION
-            SELECT DISTINCT COALESCE(NULLIF(TRIM(incident_category), ''), 'Others') AS name
-            FROM incidents
-            WHERE status != 'withdrawn'
-              AND POSITION(',' IN COALESCE(incident_category, '')) = 0
+            SELECT DISTINCT COALESCE(NULLIF(TRIM(i.incident_category), ''), 'Others') AS name
+            FROM incidents i
+            WHERE i.status != 'withdrawn' ${privDateSql}
+              AND POSITION(',' IN COALESCE(i.incident_category, '')) = 0
           ),
           inc_cat_map AS (
             SELECT DISTINCT
@@ -1655,7 +1696,7 @@ exports.getDashboardStats = async (req, res) => {
             FROM incidents i
             LEFT JOIN incident_category_links icl ON icl.incident_id = i.id
             LEFT JOIN incident_categories ic ON ic.id = icl.category_id
-            WHERE i.status != 'withdrawn'
+            WHERE i.status != 'withdrawn' ${privDateSql}
           )
           SELECT
             ac.name AS category,
@@ -1671,7 +1712,7 @@ exports.getDashboardStats = async (req, res) => {
           LEFT JOIN inc_cat_map icm ON LOWER(TRIM(icm.category_name)) = LOWER(TRIM(ac.name))
           GROUP BY ac.name
           ORDER BY COUNT(DISTINCT icm.incident_id) DESC, ac.name ASC
-        `)
+        `, privDateParams)
       ]);
 
       const pr = pipelineRes.rows[0];
