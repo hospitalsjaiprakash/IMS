@@ -1,9 +1,37 @@
+const fs = require('fs');
 const path = require('path');
 const { Pool, types } = require('pg');
 const isTestEnv = process.env.NODE_ENV === 'test';
-require('dotenv').config({ path: path.resolve(__dirname, '../.env'), override: true });
+const envPath = path.resolve(__dirname, '../.env');
+const testEnvPath = path.resolve(__dirname, '../.env.test');
+const hasTestEnvFile = fs.existsSync(testEnvPath);
+const callerExplicitDbName = process.env.DB_NAME;
+
+// Always load server/.env with override: true so unrelated host shell DB vars never leak in
+require('dotenv').config({ path: envPath, override: true });
 if (isTestEnv) {
+  if (hasTestEnvFile) {
+    require('dotenv').config({ path: testEnvPath, override: true });
+  }
   process.env.NODE_ENV = 'test';
+}
+
+const PRODUCTION_DB_NAME = 'jaiprakash_ims';
+const DEFAULT_TEST_DB_NAME = 'jaiprakash_ims_test';
+
+function extractDatabaseName(cfg) {
+  if (cfg.database) {
+    return String(cfg.database).trim();
+  }
+  if (cfg.connectionString) {
+    try {
+      const parsed = new URL(cfg.connectionString);
+      return decodeURIComponent(parsed.pathname.replace(/^\/+/, '')).trim();
+    } catch {
+      return '';
+    }
+  }
+  return '';
 }
 
 // Fix pg driver treating "timestamp without time zone" as local time
@@ -25,10 +53,18 @@ const poolConfig = {
 
 // Priority: If DB_HOST & DB_USER are explicitly defined in .env, use them.
 // Otherwise fallback to DATABASE_URL (for services like Render / Supabase)
-if (process.env.DB_HOST && process.env.DB_USER) {
+if (isTestEnv && process.env.TEST_DATABASE_URL) {
+  poolConfig.connectionString = process.env.TEST_DATABASE_URL;
+} else if (process.env.DB_HOST && process.env.DB_USER) {
   poolConfig.host = process.env.DB_HOST;
   poolConfig.port = parseInt(process.env.DB_PORT || '5432', 10);
-  poolConfig.database = process.env.DB_NAME || 'jaiprakash_ims';
+  if (isTestEnv) {
+    poolConfig.database =
+      process.env.TEST_DB_NAME ||
+      (hasTestEnvFile ? process.env.DB_NAME : DEFAULT_TEST_DB_NAME);
+  } else {
+    poolConfig.database = process.env.DB_NAME || PRODUCTION_DB_NAME;
+  }
   poolConfig.user = process.env.DB_USER;
   poolConfig.password = process.env.DB_PASSWORD;
 
@@ -36,17 +72,34 @@ if (process.env.DB_HOST && process.env.DB_USER) {
     poolConfig.ssl = { rejectUnauthorized: false };
   }
 } else if (process.env.DATABASE_URL) {
-  poolConfig.connectionString = process.env.DATABASE_URL;
+  poolConfig.connectionString = isTestEnv
+    ? (hasTestEnvFile ? process.env.DATABASE_URL : '')
+    : process.env.DATABASE_URL;
   // Remote connections requiring SSL
-  if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL.includes('localhost') && !process.env.DATABASE_URL.includes('127.0.0.1')) {
+  if (process.env.NODE_ENV === 'production' && !poolConfig.connectionString.includes('localhost') && !poolConfig.connectionString.includes('127.0.0.1')) {
     poolConfig.ssl = { rejectUnauthorized: false };
   }
 } else {
   poolConfig.host = '127.0.0.1';
   poolConfig.port = 5432;
-  poolConfig.database = 'jaiprakash_ims';
+  poolConfig.database = isTestEnv ? (process.env.TEST_DB_NAME || DEFAULT_TEST_DB_NAME) : PRODUCTION_DB_NAME;
   poolConfig.user = 'ims_app_user';
   poolConfig.password = process.env.DB_PASSWORD;
+}
+
+// Hard safety guard: never allow automated tests to connect to the production database
+if (isTestEnv) {
+  if (callerExplicitDbName && callerExplicitDbName.trim().toLowerCase() === PRODUCTION_DB_NAME) {
+    throw new Error(
+      `SAFETY GUARD ABORT: NODE_ENV=test cannot connect to production database "${PRODUCTION_DB_NAME}" (explicit DB_NAME="${callerExplicitDbName}"). Configure TEST_DB_NAME, TEST_DATABASE_URL, or server/.env.test.`
+    );
+  }
+  const resolvedDbName = extractDatabaseName(poolConfig).toLowerCase();
+  if (!resolvedDbName || resolvedDbName === PRODUCTION_DB_NAME) {
+    throw new Error(
+      `SAFETY GUARD ABORT: NODE_ENV=test cannot connect to production database "${PRODUCTION_DB_NAME}" (resolved: "${resolvedDbName || 'empty'}"). Configure TEST_DB_NAME, TEST_DATABASE_URL, or server/.env.test.`
+    );
+  }
 }
 
 const pool = new Pool(poolConfig);
