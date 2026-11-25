@@ -60,15 +60,15 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
   let catAssigned;
 
   before(async () => {
-    // Snapshot system_config keys we will touch
+    // Snapshot system_config keys we will touch (value + updated_by)
     const cfgRes = await query(
-      `SELECT key, value FROM system_config WHERE key IN (
+      `SELECT key, value, updated_by FROM system_config WHERE key IN (
         'maintenance_mode', 'otp_validity_minutes', 'imc_feedback_days',
         'mgmt_feedback_days', 'auto_reminder_days', 'hod_reminder_1_days', 'hod_reminder_2_days'
       )`
     );
     for (const r of cfgRes.rows) {
-      originalSystemConfig[r.key] = r.value;
+      originalSystemConfig[r.key] = { value: r.value, updated_by: r.updated_by };
     }
 
     const locRes = await query(`SELECT id FROM main_locations ORDER BY id ASC LIMIT 1`);
@@ -147,14 +147,18 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
 
   after(async () => {
     try {
-      // Restore original system_config values
+      // Restore original system_config values & updated_by references
       const keys = [
         'maintenance_mode', 'otp_validity_minutes', 'imc_feedback_days',
         'mgmt_feedback_days', 'auto_reminder_days', 'hod_reminder_1_days', 'hod_reminder_2_days'
       ];
       for (const k of keys) {
         if (Object.prototype.hasOwnProperty.call(originalSystemConfig, k)) {
-          await query(`UPDATE system_config SET value = $1 WHERE key = $2`, [originalSystemConfig[k], k]);
+          const prev = originalSystemConfig[k];
+          await query(
+            `UPDATE system_config SET value = $1, updated_by = $2 WHERE key = $3`,
+            [prev.value, prev.updated_by ?? null, k]
+          );
         } else {
           await query(`DELETE FROM system_config WHERE key = $1`, [k]);
         }
@@ -182,6 +186,15 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
       }
 
       if (createdUserIds.length > 0) {
+        await query(`UPDATE system_config SET updated_by = NULL WHERE updated_by = ANY($1::uuid[])`, [createdUserIds]);
+        await query(
+          `DELETE FROM role_audit WHERE employee_id = ANY($1::uuid[]) OR changed_by = ANY($1::uuid[])`,
+          [createdUserIds]
+        );
+        await query(
+          `DELETE FROM communication_logs WHERE user_id = ANY($1::uuid[]) OR recipient_contact LIKE $2`,
+          [createdUserIds, `%${tag.toLowerCase()}%@test.jphrc.local`]
+        );
         await query(`DELETE FROM notifications WHERE user_id = ANY($1::uuid[])`, [createdUserIds]);
         await query(`DELETE FROM audit_logs WHERE user_id = ANY($1::uuid[])`, [createdUserIds]);
         await query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [createdUserIds]);
@@ -193,6 +206,7 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
       }
     } catch (cleanupErr) {
       console.error('Batch 2 cleanup error:', cleanupErr.message);
+      throw cleanupErr;
     }
   });
 

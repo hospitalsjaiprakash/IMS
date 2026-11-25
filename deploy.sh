@@ -88,10 +88,14 @@ if [ -d "/home/ims/public_html" ] && [ "$APP_DIR/client/dist" != "/home/ims/publ
   chown -R ims:ims /home/ims/public_html/assets /home/ims/public_html/letterhead /home/ims/public_html/index.html 2>/dev/null || true
 fi
 
-# 6. Run automated test suite before reload
-log "Executing automated server tests..."
+# 6. Run automated test suite only when an isolated test database is explicitly configured
 cd "$APP_DIR/server"
-npm test
+if [ -f "$APP_DIR/server/.env.test" ] || { [ -n "${TEST_DB_NAME:-}" ] && [ "${TEST_DB_NAME}" != "jaiprakash_ims" ]; } || [ -n "${TEST_DATABASE_URL:-}" ]; then
+  log "Executing automated server tests against isolated test database..."
+  npm test
+else
+  log "Skipping automated server tests during production deploy (no isolated test database configured)."
+fi
 
 # 7. Zero-downtime rolling reload via PM2
 log "Reloading PM2 cluster with updated environment..."
