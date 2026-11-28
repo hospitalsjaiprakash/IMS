@@ -103,21 +103,14 @@ export default function AdminUsersPage() {
     setAssignForm({
       employeeId: String(user.employee_id || ''),
       targetRole: initialRole,
-      departmentId: '',
     });
     setShowAssignModal(true);
   };
 
   const openAssignModalForRole = (targetRole) => {
-    setAssignForm({ employeeId: '', targetRole, departmentId: '' });
+    setAssignForm({ employeeId: '', targetRole });
     setShowAssignModal(true);
   };
-
-  const editingSelectedEmp = masterEmployees.find(
-    (e) => String(e.employee_id) === String(assignForm.employeeId)
-  );
-  const showLegacyHodOption =
-    assignForm.targetRole === 'hod' || editingSelectedEmp?.role === 'hod';
 
   if (selectedProfileUser) {
     const scopeNames = userProfileData?.managedDepartments || [];
@@ -447,11 +440,7 @@ export default function AdminUsersPage() {
             <button
               type="button"
               onClick={() => assignMutation.mutate(assignForm)}
-              disabled={
-                !assignForm.employeeId.trim() ||
-                assignMutation.isPending ||
-                (assignForm.targetRole === 'hod' && !assignForm.departmentId)
-              }
+              disabled={!assignForm.employeeId.trim() || assignMutation.isPending}
               className="btn-primary"
             >
               {assignMutation.isPending ? <Spinner size={15} className="text-white" /> : <ShieldCheck size={15} />}
@@ -473,18 +462,17 @@ export default function AdminUsersPage() {
           <div>
             <label className="field-label field-required font-bold">Portal Access Role</label>
             <select
-              value={['imc', 'imc_convenor'].includes(assignForm.targetRole) ? 'imc' : assignForm.targetRole}
+              value={['imc', 'imc_convenor'].includes(assignForm.targetRole) ? 'imc' : (assignForm.targetRole === 'hod' ? 'employee' : assignForm.targetRole)}
               onChange={(e) => setAssignForm((f) => ({ ...f, targetRole: e.target.value }))}
               className="select w-full font-semibold mt-1"
             >
               <option value="system_admin">System Administrator</option>
               <option value="imc">IMC Committee</option>
               <option value="head_management">Executive Management</option>
-              {showLegacyHodOption && <option value="hod">Legacy Department Reviewer (HOD)</option>}
               <option value="employee">Regular Employee</option>
             </select>
             <p className="text-[11px] text-slate-500 mt-1">
-              To assign Incident Category feedback reviewers without changing their role, use the Category Mapping tab.
+              To assign Incident Category Reviewers, use the Category Mapping tab.
             </p>
           </div>
 
@@ -498,24 +486,6 @@ export default function AdminUsersPage() {
               >
                 <option value="imc">IMC Member Only</option>
                 <option value="imc_convenor">IMC Lead / Convenor (Can Escalate Priority)</option>
-              </select>
-            </div>
-          )}
-
-          {assignForm.targetRole === 'hod' && (
-            <div>
-              <label className="field-label field-required font-bold">Legacy Department Assignment</label>
-              <select
-                value={assignForm.departmentId}
-                onChange={(e) => setAssignForm((f) => ({ ...f, departmentId: e.target.value }))}
-                className="select w-full font-semibold"
-              >
-                <option value="">-- Choose Department --</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
               </select>
             </div>
           )}

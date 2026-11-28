@@ -104,7 +104,12 @@ exports.getAllEmployees = async (req, res) => {
         u.is_imc_member,
         u.is_imc_lead,
         u.is_system_admin,
-        u.is_management_member
+        u.is_management_member,
+        EXISTS (
+          SELECT 1 FROM category_feedback_assignees cfa
+          JOIN incident_categories ic ON ic.id = cfa.category_id
+          WHERE cfa.user_id = u.id AND cfa.is_active = TRUE AND ic.is_active = TRUE
+        ) as is_reviewer
       FROM master_employees m
       LEFT JOIN users u ON m.employee_id = u.employee_id
       LEFT JOIN master_employees mgr ON m.manager_id IS NOT NULL AND mgr.office_portal_id = m.manager_id::text

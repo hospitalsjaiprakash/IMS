@@ -886,7 +886,7 @@ async function syncAllMasterLists() {
 }
 
 /**
- * Notify System Admins and IMC Leads if a locked-out employee is currently an assigned Department HOD / Reviewer.
+ * Notify System Admins and IMC Leads if a locked-out employee is currently an assigned Category Reviewer.
  * Wrapped in a SAVEPOINT so any notification failure never aborts the parent sync transaction.
  */
 async function notifyIfDepartmentReviewerVacated(client, empCode, fullName, reason) {
@@ -898,32 +898,17 @@ async function notifyIfDepartmentReviewerVacated(client, empCode, fullName, reas
     if (!userRes.rows.length) return;
     const userId = userRes.rows[0].id;
 
-    const [assignedDeptsRes, assignedCatsRes] = await Promise.all([
-      client.query(
-        `SELECT DISTINCT d.name
-         FROM departments d
-         LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.is_active = TRUE
-         WHERE d.hod_user_id = $1 OR d.assigned_user_id = $1 OR dr.user_id = $1
-         ORDER BY d.name ASC`,
-        [userId]
-      ),
-      client.query(
-        `SELECT DISTINCT ic.name
-         FROM category_feedback_assignees cfa
-         JOIN incident_categories ic ON ic.id = cfa.category_id
-         WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
-         ORDER BY ic.name ASC`,
-        [userId]
-      )
-    ]);
+    const assignedCatsRes = await client.query(
+      `SELECT DISTINCT ic.name
+       FROM category_feedback_assignees cfa
+       JOIN incident_categories ic ON ic.id = cfa.category_id
+       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
+       ORDER BY ic.name ASC`,
+      [userId]
+    );
 
-    if (!assignedDeptsRes.rows.length && !assignedCatsRes.rows.length) return;
-    const scopeNames = [
-      ...new Set([
-        ...assignedCatsRes.rows.map((r) => r.name),
-        ...assignedDeptsRes.rows.map((r) => r.name)
-      ])
-    ].join(', ');
+    if (!assignedCatsRes.rows.length) return;
+    const scopeNames = assignedCatsRes.rows.map((r) => r.name).join(', ');
 
     const recipients = await client.query(
       `SELECT id FROM users
@@ -931,8 +916,8 @@ async function notifyIfDepartmentReviewerVacated(client, empCode, fullName, reas
          AND (role = 'system_admin' OR is_system_admin = TRUE OR is_imc_lead = TRUE)`
     );
 
-    const title = `HRMS Alert: Department Reviewer Deactivated (${empCode})`;
-    const message = `${fullName} (${empCode}), assigned as feedback reviewer for ${scopeNames}, has been locked out due to HRMS status change (${reason}). Please assign a replacement reviewer in Category / Dept Mapping.`;
+    const title = `HRMS Alert: Category Reviewer Deactivated (${empCode})`;
+    const message = `${fullName} (${empCode}), assigned as Reviewer for ${scopeNames}, has been locked out due to HRMS status change (${reason}). Please assign a replacement Reviewer in Category Mapping.`;
 
     for (const r of recipients.rows) {
       await client.query(

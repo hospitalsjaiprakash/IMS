@@ -189,8 +189,8 @@ export const useAuthStore = create((set) => ({
 export const isAdmin = (user) => user?.role === 'system_admin';
 export const isImc = (user) => user?.role === 'imc';
 export const isImcLead = (user) => user?.role === 'imc' && Boolean(user?.isImcLead || user?.is_imc_lead);
-export const isHod = (user) => user?.role === 'hod';
-export const isFeedbackReviewer = (user) => user?.role === 'hod' || Boolean(user?.isFeedbackReviewer);
+export const isReviewer = (user) => Boolean(user?.isReviewer || user?.isFeedbackReviewer);
+export const isFeedbackReviewer = isReviewer;
 export const isMd = (user) => user?.role === 'head_management';
 export const isAsstCoo = (user) => user?.role === 'asst_coo';
 export const isCoo = (user) => user?.role === 'coo';

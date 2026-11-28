@@ -109,32 +109,7 @@ exports.getImcMembers = async (req, res) => {
   }
 };
 
-const getEmployeeBaseRole = async (user) => {
-  if (!user) return 'employee';
-  const desig = (user.designation || '').toUpperCase();
-  if (
-    desig === 'HOD' ||
-    desig.includes('HEAD OF DEPARTMENT') ||
-    desig.includes('HEAD OF DEPT') ||
-    desig.startsWith('HEAD OF ') ||
-    desig.includes('(HOD)')
-  ) {
-    return 'hod';
-  }
-  try {
-    const deptCheck = await query(
-      `SELECT 1 FROM departments WHERE assigned_user_id = $1 OR hod_user_id = $1
-       UNION ALL
-       SELECT 1 FROM department_reviewers WHERE user_id = $1 AND is_active = TRUE
-       LIMIT 1`,
-      [user.id]
-    );
-    if (deptCheck.rows.length > 0) return 'hod';
-  } catch (err) {
-    // ignore
-  }
-  return 'employee';
-};
+const getEmployeeBaseRole = async () => 'employee';
 
 const revokeCommitteeAccess = async (req, res, targetId, roleType) => {
   try {
@@ -310,7 +285,7 @@ exports.assignUserRole = async (req, res) => {
       return res.status(400).json({ error: 'Employee ID and Role are required.' });
     }
 
-    const VALID_ASSIGNABLE_ROLES = ['employee', 'hod', 'imc', 'imc_convenor', 'head_management', 'system_admin'];
+    const VALID_ASSIGNABLE_ROLES = ['employee', 'imc', 'imc_convenor', 'head_management', 'system_admin'];
     if (!VALID_ASSIGNABLE_ROLES.includes(targetRole)) {
       return res.status(400).json({ error: 'Invalid target role.' });
     }
@@ -364,20 +339,15 @@ exports.assignUserRole = async (req, res) => {
 
     // Immediately invalidate existing JWTs when privileged access is actually downgraded/revoked
     const isRoleDowngrade =
-      (user.is_system_admin && ['employee', 'hod'].includes(targetRole)) ||
+      (user.is_system_admin && targetRole === 'employee') ||
       (user.is_imc_lead && targetRole === 'imc') ||
-      (['employee', 'hod'].includes(targetRole) && ['system_admin', 'imc', 'head_management'].includes(prevRole));
+      (targetRole === 'employee' && ['system_admin', 'imc', 'head_management'].includes(prevRole));
     if (isRoleDowngrade) {
       await bumpUserTokenVersion(user.id);
     }
 
     // Also sync role in master_employees table
     await query(`UPDATE master_employees SET role = $1 WHERE employee_id = $2`, [actualRole, user.employee_id]);
-
-    if (targetRole === 'hod' && departmentId) {
-      await query(`UPDATE departments SET hod_user_id = $1 WHERE id = $2`, [user.id, departmentId]);
-      await query(`UPDATE users SET department = (SELECT name FROM departments WHERE id = $1) WHERE id = $2`, [departmentId, user.id]);
-    }
 
     await query(
       `INSERT INTO role_audit (employee_id, previous_role, new_role, changed_by)
@@ -620,6 +590,12 @@ exports.getAllUsers = async (req, res) => {
     if (role) {
       if (role === 'imc') {
         where += ` AND (role = 'imc' OR is_imc_member = TRUE)`;
+      } else if (role === 'reviewer' || role === 'hod') {
+        where += ` AND EXISTS (
+          SELECT 1 FROM category_feedback_assignees cfa
+          JOIN incident_categories ic ON ic.id = cfa.category_id
+          WHERE cfa.user_id = users.id AND cfa.is_active = TRUE AND ic.is_active = TRUE
+        )`;
       } else {
         where += ` AND role = $${idx++}`;
         params.push(role);
@@ -627,7 +603,13 @@ exports.getAllUsers = async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, employee_id, full_name, email, phone, department, designation, role, is_imc_lead, is_imc_member, is_management_member, is_system_admin, last_sync, is_active
+      `SELECT id, employee_id, full_name, email, phone, department, designation, role,
+              is_imc_lead, is_imc_member, is_management_member, is_system_admin, last_sync, is_active,
+              EXISTS (
+                SELECT 1 FROM category_feedback_assignees cfa
+                JOIN incident_categories ic ON ic.id = cfa.category_id
+                WHERE cfa.user_id = users.id AND cfa.is_active = TRUE AND ic.is_active = TRUE
+              ) AS is_reviewer
        FROM users WHERE ${where} ORDER BY full_name LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, limit, offset]
     );
@@ -726,47 +708,29 @@ exports.getUserProfile = async (req, res) => {
       [id]
     );
 
-    // Fetch category-mapped and department-mapped incidents for reviewer / leader
+    // Fetch category-mapped incidents strictly for assigned Reviewers
     let departmentIncidents = [];
-    let managedDepartments = [];
     let assignedCategories = [];
 
     const assignedCatRes = await query(
       `SELECT ic.id, ic.name
        FROM category_feedback_assignees cfa
        JOIN incident_categories ic ON ic.id = cfa.category_id
-       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE
+       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
        ORDER BY ic.name ASC`,
       [id]
     );
     assignedCategories = assignedCatRes.rows.map(r => r.name);
 
-    const managedDeptRes = await query(
-      `SELECT DISTINCT d.name
-       FROM departments d
-       LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = TRUE
-       WHERE d.assigned_user_id = $1 OR d.hod_user_id = $1 OR d.incharge_user_id = $1 OR d.asst_coo_user_id = $1 OR dr.id IS NOT NULL`,
-      [id]
-    );
-    managedDepartments = managedDeptRes.rows.map(r => r.name);
-
-    if (assignedCategories.length > 0 || managedDepartments.length > 0 || user.role === 'hod' || user.role === 'head_management' || user.is_management_member) {
+    if (assignedCategories.length > 0) {
       const deptRes = await query(
         `SELECT DISTINCT i.id, i.reference_id, i.incident_date, i.status, i.severity, i.incident_type,
-                COALESCE(ic.name, d.name, i.incident_category) as dept_name, i.created_at
+                ic.name as dept_name, i.created_at
          FROM incidents i
-         LEFT JOIN incident_category_links icl ON icl.incident_id = i.id
-         LEFT JOIN incident_categories ic ON ic.id = icl.category_id
-         LEFT JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id AND cfa.user_id = $1 AND cfa.is_active = TRUE
-         LEFT JOIN incident_departments idp ON idp.incident_id = i.id
-         LEFT JOIN departments d ON d.id = idp.department_id
-         LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = TRUE
-         WHERE cfa.id IS NOT NULL
-            OR d.assigned_user_id = $1
-            OR d.hod_user_id = $1
-            OR d.incharge_user_id = $1
-            OR d.asst_coo_user_id = $1
-            OR dr.id IS NOT NULL
+         JOIN incident_category_links icl ON icl.incident_id = i.id
+         JOIN incident_categories ic ON ic.id = icl.category_id
+         JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id AND cfa.user_id = $1 AND cfa.is_active = TRUE
+         WHERE ic.is_active = TRUE
          ORDER BY i.created_at DESC`,
         [id]
       );
@@ -777,7 +741,7 @@ exports.getUserProfile = async (req, res) => {
       reportedIncidents: reportedRes.rows,
       responsibleIncidents: responsibleRes.rows,
       departmentIncidents,
-      managedDepartments: [...new Set([...assignedCategories, ...managedDepartments])],
+      managedDepartments: assignedCategories,
       assignedCategories
     });
   } catch (error) {
@@ -871,15 +835,50 @@ exports.removeManagementRole = async (req, res) => {
 // =============================================
 // INCIDENT CATEGORY -> CONCERNED STAFF MAPPING
 // =============================================
+const normalizeCategoryTypes = (rawTypes = []) => {
+  const inputList = Array.isArray(rawTypes) ? rawTypes : [];
+  const seen = new Set();
+  const ordered = [];
+  for (const raw of inputList) {
+    const clean = String(raw || '').trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (key === 'others' || seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(clean);
+  }
+  ordered.push('Others');
+  return ordered;
+};
+
 exports.getCategoryMappings = async (req, res) => {
   try {
+    const includeArchived = ['true', '1', 'yes'].includes(String(req.query.includeArchived || '').toLowerCase());
+    const whereClause = includeArchived ? '' : 'WHERE ic.is_active = TRUE';
+
     const result = await query(`
       SELECT
         ic.id,
         ic.name,
         ic.is_active,
+        ic.created_at,
         COALESCE(
-          json_agg(
+          (SELECT ARRAY_AGG(ict.name ORDER BY ict.sort_order ASC, ict.name ASC)
+           FROM incident_category_types ict WHERE ict.category_id = ic.id),
+          ARRAY['Others']::varchar[]
+        ) AS incident_types,
+        (
+          SELECT COUNT(DISTINCT inc_ref.inc_id)::int
+          FROM (
+            SELECT icl.incident_id AS inc_id FROM incident_category_links icl WHERE icl.category_id = ic.id
+            UNION
+            SELECT f.incident_id AS inc_id FROM feedbacks f WHERE f.category_id = ic.id
+            UNION
+            SELECT i.id AS inc_id FROM incidents i WHERE LOWER(TRIM(COALESCE(i.incident_category, ''))) = LOWER(TRIM(ic.name))
+          ) inc_ref
+        ) AS incident_count,
+        COALESCE(
+          (SELECT json_agg(
             json_build_object(
               'mapping_id', cfa.id,
               'user_id', u.id,
@@ -891,15 +890,15 @@ exports.getCategoryMappings = async (req, res) => {
               'phone', u.phone,
               'is_active', u.is_active
             ) ORDER BY cfa.created_at ASC
-          ) FILTER (WHERE cfa.id IS NOT NULL AND cfa.is_active = TRUE),
+          )
+          FROM category_feedback_assignees cfa
+          JOIN users u ON u.id = cfa.user_id
+          WHERE cfa.category_id = ic.id AND cfa.is_active = TRUE),
           '[]'::json
-        ) as assignees
+        ) AS assignees
       FROM incident_categories ic
-      LEFT JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
-      LEFT JOIN users u ON u.id = cfa.user_id
-      WHERE ic.is_active = TRUE
-      GROUP BY ic.id, ic.name, ic.is_active
-      ORDER BY ic.name ASC
+      ${whereClause}
+      ORDER BY ic.is_active DESC, ic.name ASC
     `);
 
     const rows = result.rows.map(row => {
@@ -921,6 +920,268 @@ exports.getCategoryMappings = async (req, res) => {
   } catch (error) {
     console.error('Error fetching category mappings:', error);
     res.status(500).json({ error: 'Failed to fetch incident category mappings.' });
+  }
+};
+
+exports.createCategory = async (req, res) => {
+  const client = await getClient();
+  try {
+    const cleanName = String(req.body?.name || '').trim();
+    if (!cleanName || cleanName.length > 120) {
+      return res.status(400).json({ error: 'Category name is required and must be at most 120 characters.' });
+    }
+
+    const existing = await query(
+      `SELECT id, name, is_active FROM incident_categories WHERE LOWER(TRIM(name)) = LOWER($1) LIMIT 1`,
+      [cleanName]
+    );
+    if (existing.rows.length > 0) {
+      const match = existing.rows[0];
+      if (!match.is_active) {
+        return res.status(409).json({
+          error: `An archived category named "${match.name}" already exists. Filter by Archived to restore it instead.`
+        });
+      }
+      return res.status(409).json({ error: `Category "${match.name}" already exists.` });
+    }
+
+    const types = normalizeCategoryTypes(req.body?.incidentTypes || req.body?.incident_types);
+
+    await client.query('BEGIN');
+    const catRes = await client.query(
+      `INSERT INTO incident_categories (name, is_active) VALUES ($1, TRUE) RETURNING id, name, is_active`,
+      [cleanName]
+    );
+    const category = catRes.rows[0];
+
+    for (let i = 0; i < types.length; i++) {
+      const sortOrder = types[i] === 'Others' ? 999 : i + 1;
+      await client.query(
+        `INSERT INTO incident_category_types (category_id, name, sort_order) VALUES ($1, $2, $3)
+         ON CONFLICT (category_id, name) DO NOTHING`,
+        [category.id, types[i], sortOrder]
+      );
+    }
+    await client.query('COMMIT');
+
+    await auditLog(req.user.id, 'CATEGORY_CREATED', null, {
+      categoryId: category.id,
+      name: category.name,
+      incidentTypes: types
+    }, req.ip);
+
+    res.status(201).json({
+      success: true,
+      category: { ...category, incident_types: types, incident_count: 0, assignees: [] },
+      message: `Category "${category.name}" created with ${types.length} incident type(s).`
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error in createCategory:', error);
+    res.status(500).json({ error: 'Failed to create incident category.' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.updateCategory = async (req, res) => {
+  const client = await getClient();
+  try {
+    const categoryId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      return res.status(400).json({ error: 'Invalid category ID.' });
+    }
+
+    const existingRes = await query(`SELECT id, name, is_active FROM incident_categories WHERE id = $1`, [categoryId]);
+    if (!existingRes.rows.length) {
+      return res.status(404).json({ error: 'Incident category not found.' });
+    }
+    const oldCategory = existingRes.rows[0];
+
+    const cleanName = req.body?.name !== undefined ? String(req.body.name || '').trim() : oldCategory.name;
+    if (!cleanName || cleanName.length > 120) {
+      return res.status(400).json({ error: 'Category name is required and must be at most 120 characters.' });
+    }
+
+    const duplicateRes = await query(
+      `SELECT id, name FROM incident_categories WHERE LOWER(TRIM(name)) = LOWER($1) AND id != $2 LIMIT 1`,
+      [cleanName, categoryId]
+    );
+    if (duplicateRes.rows.length > 0) {
+      return res.status(409).json({ error: `Another category named "${duplicateRes.rows[0].name}" already exists.` });
+    }
+
+    const hasTypesInput = Array.isArray(req.body?.incidentTypes) || Array.isArray(req.body?.incident_types);
+    const types = hasTypesInput
+      ? normalizeCategoryTypes(req.body.incidentTypes || req.body.incident_types)
+      : null;
+
+    await client.query('BEGIN');
+
+    if (cleanName !== oldCategory.name) {
+      await client.query(`UPDATE incident_categories SET name = $1 WHERE id = $2`, [cleanName, categoryId]);
+
+      // Sync stored summary category string across linked historical incidents
+      await client.query(
+        `UPDATE incidents i
+         SET incident_category = sub.cat_str, updated_at = NOW()
+         FROM (
+           SELECT icl.incident_id, STRING_AGG(ic.name, ', ' ORDER BY ic.name ASC) AS cat_str
+           FROM incident_category_links icl
+           JOIN incident_categories ic ON ic.id = icl.category_id
+           WHERE icl.incident_id IN (SELECT incident_id FROM incident_category_links WHERE category_id = $1)
+           GROUP BY icl.incident_id
+         ) sub
+         WHERE i.id = sub.incident_id`,
+        [categoryId]
+      );
+
+      // Also sync any legacy unlinked rows matching exact old category name
+      await client.query(
+        `UPDATE incidents SET incident_category = $1, updated_at = NOW()
+         WHERE LOWER(TRIM(COALESCE(incident_category, ''))) = LOWER(TRIM($2))
+           AND NOT EXISTS (SELECT 1 FROM incident_category_links icl WHERE icl.incident_id = incidents.id)`,
+        [cleanName, oldCategory.name]
+      );
+    }
+
+    if (types) {
+      await client.query(`DELETE FROM incident_category_types WHERE category_id = $1`, [categoryId]);
+      for (let i = 0; i < types.length; i++) {
+        const sortOrder = types[i] === 'Others' ? 999 : i + 1;
+        await client.query(
+          `INSERT INTO incident_category_types (category_id, name, sort_order) VALUES ($1, $2, $3)`,
+          [categoryId, types[i], sortOrder]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    await auditLog(req.user.id, 'CATEGORY_UPDATED', null, {
+      categoryId,
+      oldName: oldCategory.name,
+      newName: cleanName,
+      ...(types ? { incidentTypes: types } : {})
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: cleanName !== oldCategory.name
+        ? `Category renamed to "${cleanName}" and synced across historical incidents.`
+        : `Updated "${cleanName}" successfully.`
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error in updateCategory:', error);
+    res.status(500).json({ error: 'Failed to update incident category.' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.deleteOrArchiveCategory = async (req, res) => {
+  const client = await getClient();
+  try {
+    const categoryId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      return res.status(400).json({ error: 'Invalid category ID.' });
+    }
+
+    const existingRes = await query(`SELECT id, name, is_active FROM incident_categories WHERE id = $1`, [categoryId]);
+    if (!existingRes.rows.length) {
+      return res.status(404).json({ error: 'Incident category not found.' });
+    }
+    const category = existingRes.rows[0];
+
+    const countRes = await query(
+      `SELECT COUNT(DISTINCT inc_ref.inc_id)::int AS cnt
+       FROM (
+         SELECT icl.incident_id AS inc_id FROM incident_category_links icl WHERE icl.category_id = $1
+         UNION
+         SELECT f.incident_id AS inc_id FROM feedbacks f WHERE f.category_id = $1
+         UNION
+         SELECT i.id AS inc_id FROM incidents i WHERE LOWER(TRIM(COALESCE(i.incident_category, ''))) = LOWER(TRIM($2))
+       ) inc_ref`,
+      [categoryId, category.name]
+    );
+    const incidentCount = countRes.rows[0]?.cnt || 0;
+
+    await client.query('BEGIN');
+
+    if (incidentCount === 0) {
+      await client.query(`DELETE FROM incident_categories WHERE id = $1`, [categoryId]);
+      await client.query('COMMIT');
+
+      await auditLog(req.user.id, 'CATEGORY_DELETED', null, {
+        categoryId,
+        name: category.name
+      }, req.ip);
+
+      return res.json({
+        success: true,
+        action: 'deleted',
+        incidentCount: 0,
+        message: `Category "${category.name}" had zero linked incidents and was permanently deleted.`
+      });
+    }
+
+    await client.query(`UPDATE incident_categories SET is_active = FALSE WHERE id = $1`, [categoryId]);
+    await client.query(
+      `UPDATE category_feedback_assignees SET is_active = FALSE, updated_at = NOW() WHERE category_id = $1 AND is_active = TRUE`,
+      [categoryId]
+    );
+    await client.query('COMMIT');
+
+    await auditLog(req.user.id, 'CATEGORY_ARCHIVED', null, {
+      categoryId,
+      name: category.name,
+      incidentCount
+    }, req.ip);
+
+    res.json({
+      success: true,
+      action: 'archived',
+      incidentCount,
+      message: `Category "${category.name}" is linked to ${incidentCount} incident(s), so it was archived and its reviewers were unassigned (historical data preserved).`
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error in deleteOrArchiveCategory:', error);
+    res.status(500).json({ error: 'Failed to remove incident category.' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.restoreCategory = async (req, res) => {
+  try {
+    const categoryId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      return res.status(400).json({ error: 'Invalid category ID.' });
+    }
+
+    const resUpdate = await query(
+      `UPDATE incident_categories SET is_active = TRUE WHERE id = $1 RETURNING id, name`,
+      [categoryId]
+    );
+    if (!resUpdate.rows.length) {
+      return res.status(404).json({ error: 'Incident category not found.' });
+    }
+
+    const cat = resUpdate.rows[0];
+    await auditLog(req.user.id, 'CATEGORY_RESTORED', null, {
+      categoryId: cat.id,
+      name: cat.name
+    }, req.ip);
+
+    res.json({
+      success: true,
+      message: `Category "${cat.name}" restored to active status.`
+    });
+  } catch (error) {
+    console.error('Error in restoreCategory:', error);
+    res.status(500).json({ error: 'Failed to restore incident category.' });
   }
 };
 
@@ -1076,11 +1337,6 @@ exports.mapDepartmentLeader = async (req, res) => {
     const deptName = deptRes.rows[0].name;
 
     await client.query('BEGIN');
-
-    // Role elevation for legacy department leader endpoint
-    if (user.role === 'employee') {
-      await client.query(`UPDATE users SET role = 'hod', updated_at = NOW() WHERE id = $1`, [user.id]);
-    }
 
     await client.query(
       `UPDATE departments
@@ -1508,11 +1764,11 @@ exports.broadcastNotification = async (req, res) => {
         whereSql += ` AND (role = 'head_management' OR is_management_member = TRUE)`;
       } else if (cleanRole === 'system_admin') {
         whereSql += ` AND (role = 'system_admin' OR is_system_admin = TRUE)`;
-      } else if (cleanRole === 'hod') {
-        whereSql += ` AND (
-          role = 'hod'
-          OR EXISTS (SELECT 1 FROM category_feedback_assignees cfa WHERE cfa.user_id = users.id AND cfa.is_active = TRUE)
-          OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.user_id = users.id AND dr.is_active = TRUE)
+      } else if (cleanRole === 'reviewer' || cleanRole === 'hod') {
+        whereSql += ` AND EXISTS (
+          SELECT 1 FROM category_feedback_assignees cfa
+          JOIN incident_categories ic ON ic.id = cfa.category_id
+          WHERE cfa.user_id = users.id AND cfa.is_active = TRUE AND ic.is_active = TRUE
         )`;
       } else {
         params.push(cleanRole);
@@ -1534,7 +1790,8 @@ exports.broadcastNotification = async (req, res) => {
 
     const ROLE_LABELS = {
       employee: 'Employees',
-      hod: 'Category / Dept Reviewers',
+      reviewer: 'Reviewers',
+      hod: 'Reviewers',
       imc: 'IMC Committee',
       head_management: 'Executive Management',
       system_admin: 'System Admins'
@@ -1746,11 +2003,6 @@ exports.assignDepartmentReviewer = async (req, res) => {
     const user = await getOrCreateUserFromMaster(employeeId, 'employee');
     if (!user) {
       return res.status(404).json({ error: 'Employee not found in hospital directory.' });
-    }
-
-    // Role promotion: if user is currently basic employee, elevate role to reviewer (hod)
-    if (user.role === 'employee') {
-      await query(`UPDATE users SET role = 'hod', updated_at = NOW() WHERE id = $1`, [user.id]);
     }
 
     const assigned = [];

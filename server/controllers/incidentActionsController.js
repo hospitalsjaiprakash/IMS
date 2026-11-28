@@ -168,33 +168,17 @@ exports.requestRedirect = async (req, res) => {
       return res.status(400).json({ error: 'Incident is not currently in initial review status.' });
     }
 
-    // Object-level authorization: assigned category reviewer OR legacy department reviewer/HOD OR privileged role
+    // Object-level authorization: strictly assigned category reviewer OR System Admin
     const assignedCategories = await getUserAssignedCategoriesForIncident(req.user, id);
-    const incidentDeptRes = await client.query(`
-      SELECT d.id, d.name
-      FROM incident_departments idp
-      JOIN departments d ON d.id = idp.department_id
-      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true
-      WHERE idp.incident_id = $1
-        AND (
-          d.assigned_user_id = $2
-          OR d.hod_user_id = $2
-          OR d.incharge_user_id = $2
-          OR d.asst_coo_user_id = $2
-          OR dr.id IS NOT NULL
-        )
-      LIMIT 1
-    `, [id, req.user.id]);
-
     const isSystemAdmin = Boolean(req.user.role === 'system_admin' || req.user.is_system_admin);
-    if (!isSystemAdmin && assignedCategories.length === 0 && incidentDeptRes.rows.length === 0) {
+    if (!isSystemAdmin && assignedCategories.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Access denied: You are not an assigned reviewer for this incident.' });
+      return res.status(403).json({ error: 'Access denied: You are not an assigned Reviewer for this incident.' });
     }
 
     const sourceLabel = assignedCategories.length > 0
       ? assignedCategories.map(c => c.name).join(', ')
-      : (incidentDeptRes.rows[0]?.name || incident.incident_category || req.user.department || 'Assigned Reviewer');
+      : (incident.incident_category || 'Assigned Reviewer');
 
     const cleanReason = reason.trim();
 
@@ -651,32 +635,10 @@ exports.verifyEmployeeTraining = async (req, res) => {
     }
     const emp = empCheck.rows[0];
 
-    // Verify HOD / reviewer access (fail closed)
+    // Verify Reviewer access via active category assignments (fail closed)
     if (!isPrivilegedRole(req.user)) {
-      let authorized = false;
-      if (emp.department_id) {
-        const deptRes = await client.query(`
-          SELECT d.*, dr.id as reviewer_mapping_id FROM departments d
-          LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true
-          WHERE d.id = $1
-        `, [emp.department_id, req.user.id]);
-        if (deptRes.rows.length) {
-          const d = deptRes.rows[0];
-          authorized = Boolean(
-            d.assigned_user_id === req.user.id ||
-            d.hod_user_id === req.user.id ||
-            d.incharge_user_id === req.user.id ||
-            d.asst_coo_user_id === req.user.id ||
-            d.reviewer_mapping_id
-          );
-        }
-      } else {
-        const managedCats = await getUserAssignedCategoriesForIncident(req.user, id);
-        const managedDepts = await getUserManagedDepartmentsForIncident(req.user, id);
-        authorized = managedCats.length > 0 || managedDepts.size > 0;
-      }
-
-      if (!authorized) {
+      const managedCats = await getUserAssignedCategoriesForIncident(req.user, id);
+      if (managedCats.length === 0) {
         await client.query('ROLLBACK');
         return res.status(403).json({ error: 'You are not the designated reviewer for this employee or incident.' });
       }
@@ -812,9 +774,19 @@ exports.editFeedback = async (req, res) => {
 
     const fb = fbResult.rows[0];
 
-    // Rule: No one can edit the review/feedback given by any other person, except the person itself.
-    if (fb.author_id !== req.user.id) {
-      return res.status(403).json({ error: 'You can only edit your own feedback.' });
+    // Rule: For upper stages (investigator, imc, head_management), only original author can edit.
+    // For category feedback (role = 'hod'), either original author OR an active assigned Reviewer of that category can edit before IMC/Management review.
+    let canEditThisFeedback = fb.author_id === req.user.id;
+    if (!canEditThisFeedback && fb.role === 'hod') {
+      const assignedCatIds = (await getUserAssignedCategoriesForIncident(req.user, id)).map(c => c.id);
+      if (fb.category_id && assignedCatIds.includes(fb.category_id)) {
+        canEditThisFeedback = true;
+      } else if (!fb.category_id && assignedCatIds.length > 0) {
+        canEditThisFeedback = true;
+      }
+    }
+    if (!canEditThisFeedback) {
+      return res.status(403).json({ error: 'You can only edit your own feedback or feedback for your currently assigned review category.' });
     }
 
     // Check incident status
@@ -829,19 +801,27 @@ exports.editFeedback = async (req, res) => {
     // Rule 1: Department/category feedback cannot be modified once IMC or Management has submitted feedback / decision
     if (fb.role === 'hod') {
       const upperCheck = await query(
-        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role IN ('imc', 'head_management') AND created_at >= $2",
-        [id, fb.created_at]
+        `SELECT 1 FROM feedbacks f_up
+         JOIN feedbacks f_curr ON f_curr.id = $2
+         WHERE f_up.incident_id = $1
+           AND f_up.role IN ('imc', 'head_management')
+           AND f_up.created_at >= f_curr.created_at`,
+        [id, fb.id]
       );
       if (upperCheck.rows.length > 0) {
-        return res.status(403).json({ error: 'Department feedback cannot be modified after upper-level review (IMC/Management) has been submitted.' });
+        return res.status(403).json({ error: 'Reviewer feedback cannot be modified after upper-level review (IMC/Management) has been submitted.' });
       }
     }
 
     // Rule 2: Investigator report cannot be modified once IMC review has been conducted or Management acted
     if (fb.role === 'investigator') {
       const upperCheck = await query(
-        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role IN ('imc', 'head_management') AND created_at >= $2",
-        [id, fb.created_at]
+        `SELECT 1 FROM feedbacks f_up
+         JOIN feedbacks f_curr ON f_curr.id = $2
+         WHERE f_up.incident_id = $1
+           AND f_up.role IN ('imc', 'head_management')
+           AND f_up.created_at >= f_curr.created_at`,
+        [id, fb.id]
       );
       if (upperCheck.rows.length > 0) {
         return res.status(403).json({ error: 'Investigation report cannot be modified after upper-level review has been conducted.' });
@@ -852,8 +832,12 @@ exports.editFeedback = async (req, res) => {
     // (Until management gives feedback, e.g. even if forwarded to management, IMC can edit)
     if (fb.role === 'imc') {
       const upperCheck = await query(
-        "SELECT 1 FROM feedbacks WHERE incident_id = $1 AND role = 'head_management' AND created_at >= $2",
-        [id, fb.created_at]
+        `SELECT 1 FROM feedbacks f_up
+         JOIN feedbacks f_curr ON f_curr.id = $2
+         WHERE f_up.incident_id = $1
+           AND f_up.role = 'head_management'
+           AND f_up.created_at >= f_curr.created_at`,
+        [id, fb.id]
       );
       if (upperCheck.rows.length > 0) {
         return res.status(403).json({ error: 'IMC feedback cannot be modified after Management has given their decision.' });
@@ -874,17 +858,27 @@ exports.editFeedback = async (req, res) => {
       [feedbackText, fb.id]
     );
 
-    const roleLabel = fb.role === 'hod' ? 'Department' : fb.role === 'head_management' ? 'Management' : fb.role.toUpperCase();
+    const roleLabel = fb.role === 'hod' ? 'Reviewer' : fb.role === 'head_management' ? 'Management' : fb.role.toUpperCase();
     await recordEvent(query, {
       incidentId: id,
       eventType: 'FEEDBACK_EDITED',
       actor: req.user,
       title: 'Feedback Edited',
       summary: `${roleLabel} feedback updated`,
-      payload: { feedback_id: fb.id, role: fb.role, previous_text: fb.feedback_text, new_text: feedbackText }
+      payload: {
+        feedback_id: fb.id,
+        role: fb.role,
+        previous_text: fb.feedback_text,
+        new_text: feedbackText,
+        ...(fb.author_id !== req.user.id ? { original_author_id: fb.author_id } : {})
+      }
     });
 
-    await auditLog(req.user.id, 'FEEDBACK_EDITED', id, { feedbackId: fb.id, role: fb.role }, req.ip);
+    await auditLog(req.user.id, 'FEEDBACK_EDITED', id, {
+      feedbackId: fb.id,
+      role: fb.role,
+      ...(fb.author_id !== req.user.id ? { originalAuthorId: fb.author_id } : {})
+    }, req.ip);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to edit feedback.' });
@@ -902,29 +896,18 @@ exports.remindHod = async (req, res) => {
     if (!incResult.rows.length) return res.status(404).json({ error: 'Incident not found' });
     const incident = incResult.rows[0];
 
-    // Find active assigned reviewers (via incident_category_links or legacy incident_departments) who haven't submitted feedback yet
+    // Find active assigned category reviewers who haven't submitted feedback yet
     const pendingReviewersRes = await query(
       `SELECT DISTINCT u.id, u.email, u.full_name
        FROM incident_category_links icl
+       JOIN incident_categories ic ON ic.id = icl.category_id
        JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id AND cfa.is_active = TRUE
        JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
        WHERE icl.incident_id = $1
+         AND ic.is_active = TRUE
          AND NOT EXISTS (
            SELECT 1 FROM feedbacks f
-           WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.category_id = icl.category_id OR f.author_id = u.id)
-         )
-       UNION
-       SELECT DISTINCT u.id, u.email, u.full_name
-       FROM incident_departments idp
-       JOIN departments d ON d.id = idp.department_id
-       JOIN users u ON (
-         u.id = COALESCE(d.assigned_user_id, d.hod_user_id)
-         OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = u.id AND dr.is_active = TRUE)
-       ) AND u.is_active = TRUE
-       WHERE idp.incident_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM feedbacks f
-           WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.author_id = u.id OR f.department_id = d.id)
+           WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.category_id = icl.category_id OR f.category_id IS NULL)
          )`,
       [id]
     );

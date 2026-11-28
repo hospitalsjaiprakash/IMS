@@ -7,6 +7,7 @@ const { sendEmail } = require('../utils/emailService');
 const { extractCalendarDate, getTodayDateString } = require('../services/officePortalService');
 const { sendOtp, verifyOtp } = require('../utils/otpService');
 const { getRuntimeSystemConfig } = require('../utils/systemConfigCache');
+const { getReviewerScope } = require('../utils/accessControl');
 
 // Constant-time dummy bcrypt cost-12 hash used when login receives unknown/unregistered accounts
 const DUMMY_BCRYPT_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 12);
@@ -143,64 +144,7 @@ const checkMasterLifecycleAccess = async (employeeId) => {
   }
 };
 
-// ─── Helper: Check if user is HOD based on role or designation ──────────────
-const isUserHod = (user) => {
-  if (isGenericSystemAccount(user?.employee_id)) return false;
-  if (user?.role === 'hod') return true;
-  const desig = (user?.designation || '').toUpperCase();
-  return desig === 'HOD' || desig.includes('HEAD OF DEPARTMENT') || desig.includes('HEAD OF DEPT') || desig.startsWith('HEAD OF ') || desig.includes('(HOD)');
-};
-
-// ─── Helper: Fetch assigned incident categories for any user ────────────────
-const getUserAssignedCategories = async (userId) => {
-  if (!userId) return [];
-  try {
-    const res = await query(
-      `SELECT ic.id, ic.name
-       FROM category_feedback_assignees cfa
-       JOIN incident_categories ic ON ic.id = cfa.category_id
-       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
-       ORDER BY ic.name ASC`,
-      [userId]
-    );
-    return res.rows;
-  } catch (err) {
-    return [];
-  }
-};
-
-// ─── Helper: Check if user has Department Reviewer / HOD access in DB ───────
-const checkUserHodAccess = async (user) => {
-  if (!user || isGenericSystemAccount(user.employee_id)) return false;
-  if (isUserHod(user)) return true;
-  try {
-    const deptCheck = await query(
-      `SELECT 1 FROM departments WHERE assigned_user_id = $1 OR hod_user_id = $1
-       UNION ALL
-       SELECT 1 FROM department_reviewers WHERE user_id = $1 AND is_active = TRUE
-       LIMIT 1`,
-      [user.id]
-    );
-    return deptCheck.rows.length > 0;
-  } catch (err) {
-    return false;
-  }
-};
-
-const syncHodDepartment = async (user) => {
-  try {
-    if (user && isUserHod(user) && user.department) {
-      await query(
-        `UPDATE departments SET hod_user_id = $1
-         WHERE (LOWER(name) = LOWER($2) OR LOWER(name) LIKE LOWER($2) || '%' OR LOWER($2) LIKE LOWER(name) || '%')
-         AND (hod_user_id IS NULL OR hod_user_id != $1)`,
-        [user.id, user.department.trim()]
-      );
-    }
-  } catch (err) {
-    console.error('Failed to sync HOD department:', err.message);
-  }
-};
+// Reviewer eligibility is driven strictly by active category_feedback_assignees rows (never HR designation).
 
 // ─── Welcome Email Template (HTML-escaped) ───────────────────────────────────
 const welcomeEmailTemplate = (user) => {
@@ -491,7 +435,6 @@ exports.register = async (req, res) => {
       );
 
       const user = updatedUser.rows[0];
-      await syncHodDepartment(user);
 
       if (user.email) {
         sendEmail(user.email, welcomeEmailTemplate(user)).catch(() => {});
@@ -509,12 +452,8 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Automatically assign 'hod' role if designation is HOD (does not override system_admin or committee roles)
-    let assignedRole = masterEmp.role || 'employee';
-    const desig = (masterEmp.designation || '').toUpperCase();
-    if (assignedRole === 'employee' && (desig === 'HOD' || desig.includes('HEAD OF DEPARTMENT') || desig.includes('HEAD OF DEPT'))) {
-      assignedRole = 'hod';
-    }
+    const rawMasterRole = masterEmp.role || 'employee';
+    const assignedRole = rawMasterRole === 'hod' ? 'employee' : rawMasterRole;
 
     const newUser = await query(
       `INSERT INTO users (employee_id, full_name, email, phone, department, designation, role, password_hash, token_version)
@@ -533,7 +472,6 @@ exports.register = async (req, res) => {
     );
 
     const user = newUser.rows[0];
-    await syncHodDepartment(user);
 
     if (user.email) {
       sendEmail(user.email, welcomeEmailTemplate(user)).catch(() => {});
@@ -619,9 +557,8 @@ exports.login = async (req, res) => {
 
     // Determine active role on login:
     // 1. Root System Admin (00000) always logs into system_admin and never has an employee view
-    // 2. Real employees assigned as Admin (is_system_admin = true) land on their Employee / HOD Dashboard first by default
-    let activeRole = user.role;
-    const hasHodAccess = await checkUserHodAccess(user);
+    // 2. Real employees assigned as Admin (is_system_admin = true) land on their Staff / Employee Dashboard first by default
+    let activeRole = user.role === 'hod' ? 'employee' : user.role;
 
     if (isRootAdminAccount(user.employee_id)) {
       activeRole = 'system_admin';
@@ -631,18 +568,12 @@ exports.login = async (req, res) => {
       user.role = 'system_admin';
       user.is_system_admin = true;
     } else if (!isGenericSystemAccount(user.employee_id)) {
-      if (activeRole === 'system_admin') {
-        activeRole = hasHodAccess ? 'hod' : 'employee';
-        await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
-        user.role = activeRole;
-      } else if (activeRole === 'employee' && hasHodAccess) {
-        activeRole = 'hod';
+      if (activeRole === 'system_admin' || user.role === 'hod') {
+        activeRole = 'employee';
         await query('UPDATE users SET role = $1 WHERE id = $2', [activeRole, user.id]);
         user.role = activeRole;
       }
     }
-
-    await syncHodDepartment(user);
 
     const token = signAuthToken(user, activeRole);
 
@@ -657,11 +588,10 @@ exports.login = async (req, res) => {
       }
     }
 
-    const [assignedCategories, runtimeConfig] = await Promise.all([
-      getUserAssignedCategories(user.id),
+    const [{ isReviewer, assignedCategories }, runtimeConfig] = await Promise.all([
+      getReviewerScope(user.id),
       getRuntimeSystemConfig()
     ]);
-    const isCategoryReviewer = assignedCategories.length > 0;
 
     res.json({
       token,
@@ -674,9 +604,8 @@ exports.login = async (req, res) => {
         department: user.department,
         designation: user.designation,
         role: activeRole,
-        isHod: hasHodAccess,
-        isCategoryReviewer,
-        isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+        isReviewer,
+        isFeedbackReviewer: isReviewer,
         assignedCategories,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
@@ -719,7 +648,6 @@ exports.getMe = async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = result.rows[0];
-    const hasHodAccess = await checkUserHodAccess(user);
 
     if (isRootAdminAccount(user.employee_id)) {
       if (user.role !== 'system_admin' || !user.is_system_admin) {
@@ -727,12 +655,11 @@ exports.getMe = async (req, res) => {
       }
       user.role = 'system_admin';
       user.is_system_admin = true;
-    } else if (!isGenericSystemAccount(user.employee_id) && user.role === 'employee' && hasHodAccess) {
-      user.role = 'hod';
-      await query('UPDATE users SET role = $1 WHERE id = $2', [user.role, user.id]);
+    } else if (!isGenericSystemAccount(user.employee_id) && user.role === 'hod') {
+      user.role = 'employee';
+      await query('UPDATE users SET role = $1 WHERE id = $2', ['employee', user.id]);
     }
 
-    await syncHodDepartment(user);
     if (!user.phone) {
       const portalRes = await query('SELECT phone FROM master_employees WHERE employee_id = $1', [user.employee_id]).catch(() => ({ rows: [] }));
       if (portalRes.rows[0]?.phone) {
@@ -740,11 +667,10 @@ exports.getMe = async (req, res) => {
         await query('UPDATE users SET phone = $1 WHERE id = $2', [user.phone, user.id]).catch(() => {});
       }
     }
-    const [assignedCategories, runtimeConfig] = await Promise.all([
-      getUserAssignedCategories(user.id),
+    const [{ isReviewer, assignedCategories }, runtimeConfig] = await Promise.all([
+      getReviewerScope(user.id),
       getRuntimeSystemConfig()
     ]);
-    const isCategoryReviewer = assignedCategories.length > 0;
 
     res.json({
       id: user.id,
@@ -755,9 +681,8 @@ exports.getMe = async (req, res) => {
       department: user.department,
       designation: user.designation,
       role: user.role,
-      isHod: hasHodAccess,
-      isCategoryReviewer,
-      isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+      isReviewer,
+      isFeedbackReviewer: isReviewer,
       assignedCategories,
       isImcLead: user.is_imc_lead,
       isImcMember: user.is_imc_member,
@@ -965,7 +890,7 @@ exports.switchRole = async (req, res) => {
       return res.status(400).json({ error: 'Target role is required' });
     }
 
-    const validRoles = ['employee', 'system_admin', 'imc', 'head_management', 'hod'];
+    const validRoles = ['employee', 'system_admin', 'imc', 'head_management'];
     if (!validRoles.includes(targetRole)) {
       return res.status(400).json({ error: 'Invalid target role' });
     }
@@ -987,12 +912,10 @@ exports.switchRole = async (req, res) => {
       return res.status(403).json({ error: lifecycle.error, code: lifecycle.code });
     }
 
-    // Root / generic system accounts do not have an Employee or HOD view
-    if (isGenericSystemAccount(user.employee_id) && (targetRole === 'employee' || targetRole === 'hod')) {
+    // Root / generic system accounts do not have an Employee view
+    if (isGenericSystemAccount(user.employee_id) && targetRole === 'employee') {
       return res.status(403).json({ error: 'The root System Admin account does not have an Employee view.' });
     }
-
-    const hasHodAccess = await checkUserHodAccess(user);
 
     // Validate that the user actually holds the permissions for the target role
     if (targetRole === 'system_admin' && !user.is_system_admin) {
@@ -1004,14 +927,8 @@ exports.switchRole = async (req, res) => {
     if (targetRole === 'head_management' && !user.is_management_member) {
       return res.status(403).json({ error: 'Not authorized for Management role.' });
     }
-    if (targetRole === 'hod' && !hasHodAccess) {
-      return res.status(403).json({ error: 'Not authorized for HOD role.' });
-    }
 
-    let finalTargetRole = targetRole;
-    if (finalTargetRole === 'employee' && hasHodAccess) {
-      finalTargetRole = 'hod';
-    }
+    const finalTargetRole = targetRole;
 
     await query('UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2', [finalTargetRole, user.id]);
 
@@ -1019,11 +936,10 @@ exports.switchRole = async (req, res) => {
 
     await auditLog(user.id, 'ROLE_SWITCH', null, { targetRole: finalTargetRole }, req.ip);
 
-    const [assignedCategories, runtimeConfig] = await Promise.all([
-      getUserAssignedCategories(user.id),
+    const [{ isReviewer, assignedCategories }, runtimeConfig] = await Promise.all([
+      getReviewerScope(user.id),
       getRuntimeSystemConfig()
     ]);
-    const isCategoryReviewer = assignedCategories.length > 0;
 
     res.json({
       success: true,
@@ -1037,9 +953,8 @@ exports.switchRole = async (req, res) => {
         department: user.department,
         designation: user.designation,
         role: finalTargetRole,
-        isHod: hasHodAccess,
-        isCategoryReviewer,
-        isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+        isReviewer,
+        isFeedbackReviewer: isReviewer,
         assignedCategories,
         isImcLead: user.is_imc_lead,
         isImcMember: user.is_imc_member,
@@ -1254,8 +1169,7 @@ exports.leaveRole = async (req, res) => {
       return res.status(403).json({ error: 'The root System Admin account cannot leave its system role.' });
     }
 
-    const hasHodAccess = await checkUserHodAccess(prevUser);
-    const baseRole = hasHodAccess ? 'hod' : 'employee';
+    const baseRole = 'employee';
 
     if (targetRole === 'imc') {
       return res.status(403).json({ error: 'Self-removal from IMC is disabled. Only System Administrators have the authority to revoke or assign IMC committee membership.' });
@@ -1292,8 +1206,7 @@ exports.leaveRole = async (req, res) => {
     // Generate new token bound to bumped token_version (immediately invalidates old elevated tokens)
     const token = signAuthToken(updatedUser, updatedUser.role);
 
-    const assignedCategories = await getUserAssignedCategories(updatedUser.id);
-    const isCategoryReviewer = assignedCategories.length > 0;
+    const { isReviewer, assignedCategories } = await getReviewerScope(updatedUser.id);
 
     res.json({
       success: true,
@@ -1307,9 +1220,8 @@ exports.leaveRole = async (req, res) => {
         department: updatedUser.department,
         designation: updatedUser.designation,
         role: updatedUser.role,
-        isHod: hasHodAccess,
-        isCategoryReviewer,
-        isFeedbackReviewer: hasHodAccess || isCategoryReviewer,
+        isReviewer,
+        isFeedbackReviewer: isReviewer,
         assignedCategories,
         isImcLead: updatedUser.is_imc_lead,
         isImcMember: updatedUser.is_imc_member,

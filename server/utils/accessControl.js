@@ -40,6 +40,28 @@ async function resolveIncidentRecord(incidentId) {
 }
 
 /**
+ * Returns unified Reviewer eligibility and active assigned Incident Categories
+ * strictly from explicit active assignments in category_feedback_assignees.
+ * HR designation or legacy department HOD columns NEVER grant Reviewer access.
+ */
+async function getReviewerScope(userId) {
+  if (!userId) return { isReviewer: false, assignedCategories: [] };
+  try {
+    const res = await query(
+      `SELECT ic.id, ic.name
+       FROM category_feedback_assignees cfa
+       JOIN incident_categories ic ON ic.id = cfa.category_id
+       WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
+       ORDER BY ic.name ASC`,
+      [userId]
+    );
+    return { isReviewer: res.rows.length > 0, assignedCategories: res.rows };
+  } catch (err) {
+    return { isReviewer: false, assignedCategories: [] };
+  }
+}
+
+/**
  * Verify whether a user is authorized to access an incident and its related artifacts.
  *
  * Authorized participants:
@@ -49,8 +71,9 @@ async function resolveIncidentRecord(incidentId) {
  *  - Assigned investigators (investigators.investigator_id)
  *  - Assigned trainers (incident_trainers.trainer_id)
  *  - Responsible employees (incident_responsible_employees.employee_id)
- *  - Assigned department leaders / HODs / active department_reviewers
- *  - Recipients of approved/dispatched formal letters for the incident
+ *  - Assigned category reviewers (category_feedback_assignees.user_id)
+ *  - Authors who previously submitted feedback on the incident (retained after reassignment)
+ *  - Recipients / CCs of approved/dispatched formal letters for the incident
  */
 async function canUserAccessIncident(user, incidentId) {
   if (!user || !incidentId) return false;
@@ -73,25 +96,13 @@ async function canUserAccessIncident(user, incidentId) {
      UNION ALL
      SELECT 1 FROM incident_responsible_employees WHERE incident_id = $1 AND employee_id = $2
      UNION ALL
-     SELECT 1
-     FROM incident_category_links icl
-     JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id
-     WHERE icl.incident_id = $1 AND cfa.user_id = $2 AND cfa.is_active = TRUE
+     SELECT 1 FROM feedbacks WHERE incident_id = $1 AND author_id = $2
      UNION ALL
      SELECT 1
-     FROM incident_departments idp
-     JOIN departments d ON idp.department_id = d.id
-     WHERE idp.incident_id = $1
-       AND (
-         d.assigned_user_id = $2
-         OR d.hod_user_id = $2
-         OR d.incharge_user_id = $2
-         OR d.asst_coo_user_id = $2
-         OR EXISTS (
-           SELECT 1 FROM department_reviewers dr
-           WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = TRUE
-         )
-       )
+     FROM incident_category_links icl
+     JOIN incident_categories ic ON ic.id = icl.category_id
+     JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id
+     WHERE icl.incident_id = $1 AND cfa.user_id = $2 AND cfa.is_active = TRUE AND ic.is_active = TRUE
      UNION ALL
      SELECT 1
      FROM incident_letters l
@@ -138,6 +149,7 @@ async function getUserAssignedCategoriesForIncident(user, incidentId) {
      WHERE icl.incident_id::text = $1
        AND cfa.user_id = $2
        AND cfa.is_active = TRUE
+       AND ic.is_active = TRUE
      ORDER BY ic.name ASC`,
     [String(incidentId), user.id]
   );
@@ -146,31 +158,11 @@ async function getUserAssignedCategoriesForIncident(user, incidentId) {
 }
 
 /**
- * Returns the set of lowercased department names managed/reviewed by the user
- * (both across the incident's departments and generally via departments / department_reviewers).
+ * Legacy department-based letter visibility has been retired; preserved as no-op signature
+ * for any caller expecting a Set.
  */
-async function getUserManagedDepartmentsForIncident(user, incidentId) {
-  if (!user || !incidentId) return new Set();
-
-  const res = await query(
-    `SELECT DISTINCT LOWER(TRIM(d.name)) AS dept_name
-     FROM incident_departments idp
-     JOIN departments d ON idp.department_id = d.id
-     WHERE idp.incident_id::text = $1
-       AND (
-         d.assigned_user_id = $2
-         OR d.hod_user_id = $2
-         OR d.incharge_user_id = $2
-         OR d.asst_coo_user_id = $2
-         OR EXISTS (
-           SELECT 1 FROM department_reviewers dr
-           WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = TRUE
-         )
-       )`,
-    [String(incidentId), user.id]
-  );
-
-  return new Set(res.rows.map((r) => r.dept_name).filter(Boolean));
+async function getUserManagedDepartmentsForIncident() {
+  return new Set();
 }
 
 /**
@@ -250,6 +242,7 @@ function filterIncidentEventsForUser(user, events = []) {
 
 module.exports = {
   isPrivilegedRole,
+  getReviewerScope,
   canUserAccessIncident,
   getUserAssignedCategoriesForIncident,
   getUserManagedDepartmentsForIncident,

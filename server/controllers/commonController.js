@@ -19,15 +19,21 @@ exports.getLocations = async (req, res) => {
 };
 
 /**
- * Get active incident categories
+ * Get active incident categories along with their configured Incident Types
  */
 exports.getCategories = async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, name, is_active
-       FROM incident_categories
-       WHERE is_active = TRUE
-       ORDER BY name ASC`
+      `SELECT ic.id, ic.name, ic.is_active,
+              COALESCE(
+                ARRAY_AGG(ict.name ORDER BY ict.sort_order ASC, ict.name ASC) FILTER (WHERE ict.id IS NOT NULL),
+                ARRAY['Others']::varchar[]
+              ) AS incident_types
+       FROM incident_categories ic
+       LEFT JOIN incident_category_types ict ON ict.category_id = ic.id
+       WHERE ic.is_active = TRUE
+       GROUP BY ic.id, ic.name, ic.is_active
+       ORDER BY ic.name ASC`
     );
     res.json(result.rows);
   } catch (e) {

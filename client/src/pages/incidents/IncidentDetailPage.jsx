@@ -565,7 +565,16 @@ export default function IncidentDetailPage() {
     return false;
   };
 
-  const myEditableFeedbacks = feedbacks.filter(fb => fb.author_id === user?.id && !isFeedbackLocked(fb));
+  const assignedCatIds = Array.isArray(incident?.userAssignedCategoryIds) ? incident.userAssignedCategoryIds : [];
+  const myEditableFeedbacks = feedbacks.filter(fb => {
+    if (isFeedbackLocked(fb)) return false;
+    if (fb.author_id === user?.id) return true;
+    // Category handover: currently assigned active Reviewer of the incident's category can edit pre-IMC category feedback
+    if (fb.role === 'hod' && assignedCatIds.length > 0) {
+      return fb.category_id ? assignedCatIds.includes(fb.category_id) : true;
+    }
+    return false;
+  });
 
   const currentIncidentCategories =
     Array.isArray(incident.categories) && incident.categories.length > 0
@@ -626,11 +635,11 @@ export default function IncidentDetailPage() {
               onViewAttachment={(att) => setPreviewFile(att)}
             />
 
-            {/* Editable Author Feedback Bar */}
+            {/* Editable Reviewer / Author Feedback Bar */}
             {myEditableFeedbacks.length > 0 && (
               <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 print:hidden">
                 <div className="text-xs text-indigo-950">
-                  <strong className="font-bold">Your Submitted Feedback:</strong> You can update your feedback until the next review stage begins.
+                  <strong className="font-bold">Editable Feedback:</strong> Feedback for your assigned review category or authored by you can be updated until the next review stage begins.
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {myEditableFeedbacks.map(fb => (
@@ -641,7 +650,7 @@ export default function IncidentDetailPage() {
                       className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-semibold transition-colors shadow-2xs"
                     >
                       <Pencil size={12} />
-                      Edit {fb.role === 'hod' ? 'Department' : fb.role === 'imc' ? 'IMC' : 'Submitted'} Feedback
+                      Edit {fb.role === 'hod' ? 'Reviewer' : fb.role === 'imc' ? 'IMC' : 'Submitted'} Feedback
                     </button>
                   ))}
                 </div>

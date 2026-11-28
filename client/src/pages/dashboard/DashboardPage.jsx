@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { incidentsApi, teamsApi } from '../../api';
@@ -15,33 +15,34 @@ import { formatDate } from '../../utils/helpers';
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
-  const isReviewer = user?.role === 'hod' || Boolean(user?.isFeedbackReviewer);
+  const isReviewer = Boolean(user?.isReviewer || user?.isFeedbackReviewer);
 
   const [selectedInc, setSelectedInc] = useState(null);
   const [activeView, setActiveView] = useState(isReviewer ? 'reviewer' : 'personal');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
-  const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const { data: assignedScope = { departments: [], categories: [] } } = useQuery({
+  useEffect(() => {
+    if (!isReviewer && activeView !== 'personal') {
+      setActiveView('personal');
+      setSelectedCategoryFilter('all');
+    }
+  }, [isReviewer, activeView]);
+
+  const { data: assignedScope = { categories: [] } } = useQuery({
     queryKey: ['my-assigned-departments'],
     queryFn: () => teamsApi.getAssignedDepartments().then(r => ({
-      departments: r.data?.departments || [],
       categories: r.data?.categories || [],
     })),
     enabled: isReviewer,
   });
 
   const assignedCategories = assignedScope.categories;
-  const assignedDepartments = assignedScope.departments;
 
   const filterParams = {
-    viewMode: activeView === 'reviewer' ? 'dept_reviews' : 'my_incidents',
-    ...(activeView === 'reviewer' && selectedCategoryFilter !== 'all' ? { category: selectedCategoryFilter } : {}),
-    ...(activeView === 'reviewer' && selectedCategoryFilter === 'all' && selectedDepartmentFilter !== 'all'
-      ? { departmentId: selectedDepartmentFilter }
-      : {}),
+    viewMode: isReviewer && activeView === 'reviewer' ? 'dept_reviews' : 'my_incidents',
+    ...(isReviewer && activeView === 'reviewer' && selectedCategoryFilter !== 'all' ? { category: selectedCategoryFilter } : {}),
     ...(dateFrom ? { dateFrom } : {}),
     ...(dateTo ? { dateTo } : {}),
   };
@@ -61,11 +62,8 @@ export default function DashboardPage() {
     queryFn: () => incidentsApi.list({
       page: 1,
       limit: 5,
-      viewMode: activeView === 'reviewer' ? 'department' : 'my_incidents',
-      ...(activeView === 'reviewer' && selectedCategoryFilter !== 'all' ? { incidentCategory: selectedCategoryFilter } : {}),
-      ...(activeView === 'reviewer' && selectedCategoryFilter === 'all' && selectedDepartmentFilter !== 'all'
-        ? { departmentId: selectedDepartmentFilter }
-        : {}),
+      viewMode: isReviewer && activeView === 'reviewer' ? 'department' : 'my_incidents',
+      ...(isReviewer && activeView === 'reviewer' && selectedCategoryFilter !== 'all' ? { incidentCategory: selectedCategoryFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
       ...(dateTo ? { dateTo } : {}),
     }).then(r => r.data.incidents || []),
@@ -170,25 +168,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {showReviewerView && assignedCategories.length === 0 && assignedDepartments.length > 1 && (
-            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
-              <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 whitespace-nowrap">
-                <Layers size={14} className="text-teal-600" />
-                <span>Review Dept:</span>
-              </span>
-              <select
-                value={selectedDepartmentFilter}
-                onChange={(e) => setSelectedDepartmentFilter(e.target.value)}
-                className="text-xs font-bold text-slate-800 bg-transparent border-none focus:ring-0 cursor-pointer pr-4 py-0.5"
-              >
-                <option value="all">All Departments ({assignedDepartments.length})</option>
-                {assignedDepartments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {isReviewer && (
             <div className="flex bg-slate-100 p-1 rounded-lg w-full sm:w-auto shadow-inner border border-slate-200">
               <button
@@ -274,7 +253,7 @@ export default function DashboardPage() {
           <div className="space-y-6">
             <IncidentOverviewCards
               totals={
-                selectedCategoryFilter !== 'all' || selectedDepartmentFilter !== 'all'
+                selectedCategoryFilter !== 'all'
                   ? totals
                   : {
                       total: stats?.hodReport?.received ?? totals.total,

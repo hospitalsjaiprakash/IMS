@@ -65,7 +65,7 @@ function getRoleBadge(role) {
     case 'hod':
     case 'asst_coo':
     case 'coo':
-      return { label: 'Department Reviewer', bg: 'bg-amber-100 text-amber-800 border-amber-200' };
+      return { label: 'Reviewer', bg: 'bg-amber-100 text-amber-800 border-amber-200' };
     case 'investigator':
       return { label: 'Appointed Investigator', bg: 'bg-cyan-100 text-cyan-800 border-cyan-200' };
     case 'trainer':
