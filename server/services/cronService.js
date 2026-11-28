@@ -32,7 +32,7 @@ async function processHodEscalations() {
       { day: reminder1, level: 'rem1' }
     ].sort((a, b) => b.day - a.day); // Check highest threshold first
 
-    // 2. Fetch pending incidents via BOTH category mappings and legacy department mappings
+    // 2. Fetch pending incidents via active category reviewer mappings
     const incidentsRes = await query(`
       SELECT DISTINCT
         i.id as incident_id,
@@ -51,7 +51,7 @@ async function processHodEscalations() {
         u.full_name as reviewer_name
       FROM incidents i
       JOIN incident_category_links icl ON i.id = icl.incident_id
-      JOIN incident_categories ic ON ic.id = icl.category_id
+      JOIN incident_categories ic ON ic.id = icl.category_id AND ic.is_active = TRUE
       JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
       JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
       WHERE i.status IN ('with_hod', 'with_hod_and_imc')
@@ -60,40 +60,6 @@ async function processHodEscalations() {
           WHERE f.incident_id = i.id
             AND f.role = 'hod'
             AND (f.category_id = ic.id OR f.author_id = u.id)
-        )
-      UNION
-      SELECT DISTINCT
-        i.id as incident_id,
-        i.reference_id,
-        i.incident_type,
-        i.severity,
-        i.last_reminder_day,
-        i.reminder_last_sent,
-        FLOOR(EXTRACT(EPOCH FROM (NOW() - i.created_at)) / 86400)::int as days_elapsed,
-        CASE WHEN i.reminder_last_sent IS NULL THEN NULL
-             ELSE FLOOR(EXTRACT(EPOCH FROM (NOW() - i.reminder_last_sent)) / 86400)::int
-        END as days_since_last_reminder,
-        d.name as scope_name,
-        u.id as reviewer_id,
-        u.email as reviewer_email,
-        u.full_name as reviewer_name
-      FROM incidents i
-      JOIN incident_departments idp ON i.id = idp.incident_id
-      JOIN departments d ON idp.department_id = d.id
-      JOIN users u ON (
-        COALESCE(d.assigned_user_id, d.hod_user_id) = u.id
-        OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = u.id AND dr.is_active = TRUE)
-      ) AND u.is_active = TRUE
-      WHERE i.status IN ('with_hod', 'with_hod_and_imc')
-        AND NOT EXISTS (
-          SELECT 1 FROM feedbacks f
-          WHERE f.incident_id = i.id
-            AND f.role = 'hod'
-            AND (
-              f.department_id = d.id
-              OR f.author_id = u.id
-              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = TRUE)
-            )
         )
     `);
 
@@ -344,18 +310,10 @@ async function checkAndAutoEscalate21Days() {
       const reviewersRes = await query(`
         SELECT DISTINCT u.id, u.email, u.full_name
         FROM incident_category_links icl
+        JOIN incident_categories ic ON ic.id = icl.category_id AND ic.is_active = TRUE
         JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id AND cfa.is_active = TRUE
         JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
         WHERE icl.incident_id = $1
-        UNION
-        SELECT DISTINCT u.id, u.email, u.full_name
-        FROM incident_departments idp
-        JOIN departments d ON d.id = idp.department_id
-        JOIN users u ON (
-          COALESCE(d.assigned_user_id, d.hod_user_id) = u.id
-          OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = u.id AND dr.is_active = TRUE)
-        ) AND u.is_active = TRUE
-        WHERE idp.incident_id = $1
       `, [inc.id]);
 
       const imcRes = await query(`SELECT id, email, full_name FROM users WHERE (role = 'imc' OR is_imc_member = TRUE OR is_imc_lead = TRUE) AND is_active = TRUE`);

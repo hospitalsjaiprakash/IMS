@@ -25,7 +25,7 @@ export default function IncidentsListPage() {
   const location = useLocation();
   const colMenuRef = useRef(null);
 
-  const isReviewer = user?.role === 'hod' || Boolean(user?.isFeedbackReviewer);
+  const isReviewer = Boolean(user?.isReviewer || user?.isFeedbackReviewer);
   const canViewAllOrDept = isReviewer || ['imc', 'head_management', 'system_admin'].includes(user?.role);
   const defaultViewMode = canViewAllOrDept ? 'department' : 'my_incidents';
 
@@ -302,7 +302,7 @@ export default function IncidentsListPage() {
               <span>Export Report</span>
             </button>
           )}
-          {(user?.role === 'employee' || user?.role === 'hod') && (
+          {user?.role === 'employee' && (
             <button onClick={() => navigate('/incidents/new')} className="btn-primary">
               <FilePlus size={16} />
               <span>Report Incident</span>

@@ -277,10 +277,18 @@ export function convertNumberToWords(amount) {
 
 export const ROLE_CONFIG = {
   employee: { label: 'Employee', dashboard: '/dashboard', badgeClass: 'badge-green' },
-  hod: { label: 'Dept Reviewer', dashboard: '/dashboard', badgeClass: 'badge-yellow' },
+  hod: { label: 'Reviewer', dashboard: '/dashboard', badgeClass: 'badge-yellow' },
   imc: { label: 'IMC Committee', dashboard: '/imc/dashboard', badgeClass: 'badge-blue' },
   head_management: { label: 'Management', dashboard: '/management/dashboard', badgeClass: 'badge-purple' },
   system_admin: { label: 'System Admin', dashboard: '/admin/dashboard', badgeClass: 'badge-red' },
+};
+
+export const getDisplayRole = (user) => {
+  if (!user) return ROLE_CONFIG.employee;
+  if (user.role === 'employee' && (user.isReviewer || user.isFeedbackReviewer)) {
+    return { label: 'Reviewer', dashboard: '/dashboard', badgeClass: 'badge-yellow' };
+  }
+  return ROLE_CONFIG[user.role] || ROLE_CONFIG.employee;
 };
 
 export const getRoleDashboard = (user) => {

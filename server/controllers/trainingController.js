@@ -1,19 +1,16 @@
 const { query } = require('../config/database');
-const { isPrivilegedRole, getUserManagedDepartmentsForIncident } = require('../utils/accessControl');
+const { isPrivilegedRole } = require('../utils/accessControl');
 
 /**
- * Get training records filtered by user role/department
+ * Get training records filtered by user scope
  */
 exports.getTrainingRecords = async (req, res) => {
   try {
-    const { role, id: userId } = req.user;
+    const { id: userId } = req.user;
     let where = '1=1';
     const params = [];
 
-    if (role === 'hod') {
-      where = `u.department = (SELECT department FROM users WHERE id = $1)`;
-      params.push(userId);
-    } else if (role === 'employee') {
+    if (!isPrivilegedRole(req.user)) {
       where = `tr.employee_id = $1`;
       params.push(userId);
     }
@@ -54,14 +51,7 @@ exports.completeTrainingRecord = async (req, res) => {
     const rec = recRes.rows[0];
 
     if (!isPrivilegedRole(req.user)) {
-      const managedDepts = await getUserManagedDepartmentsForIncident(req.user, rec.incident_id);
-      const traineeDeptLower = String(rec.trainee_department || '').trim().toLowerCase();
-      const hodDeptLower = String(req.user.department || '').trim().toLowerCase();
-      const ownsDept = (traineeDeptLower && managedDepts.has(traineeDeptLower))
-        || (req.user.role === 'hod' && traineeDeptLower && hodDeptLower && traineeDeptLower === hodDeptLower);
-      if (!ownsDept) {
-        return res.status(403).json({ error: 'Access denied: You are not authorized to complete training records outside your department.' });
-      }
+      return res.status(403).json({ error: 'Access denied: Only authorized IMC or Admin users can complete training records.' });
     }
 
     await query(

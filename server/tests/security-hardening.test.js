@@ -1204,7 +1204,7 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
     );
     assert.equal(provisionedLeader.rows.length, 1);
     createdUserIds.push(provisionedLeader.rows[0].id);
-    assert.equal(provisionedLeader.rows[0].role, 'hod');
+    assert.equal(provisionedLeader.rows[0].role, 'employee');
     assert.equal(provisionedLeader.rows[0].password_hash, null, 'Provisioned department leader must have password_hash = NULL');
 
     const leaderLoginRes = await request(app)
@@ -1226,7 +1226,7 @@ describe('Comprehensive Security Hardening Verification Suite (Risks #1-#16)', (
     );
     assert.equal(provisionedReviewer.rows.length, 1);
     createdUserIds.push(provisionedReviewer.rows[0].id);
-    assert.equal(provisionedReviewer.rows[0].role, 'hod');
+    assert.equal(provisionedReviewer.rows[0].role, 'employee');
     assert.equal(provisionedReviewer.rows[0].password_hash, null, 'Provisioned department reviewer must have password_hash = NULL');
 
     const reviewerLoginRes = await request(app)

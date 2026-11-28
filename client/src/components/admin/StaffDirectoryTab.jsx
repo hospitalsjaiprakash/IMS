@@ -9,7 +9,7 @@ import { formatDate, formatDateTime, ROLE_CONFIG, getApiErrorMessage } from '../
 const ROLES = [
   { value: '', label: 'All Roles & Access' },
   { value: 'employee', label: 'Regular Employee' },
-  { value: 'hod', label: 'Dept Reviewer (Legacy)' },
+  { value: 'reviewer', label: 'Reviewer' },
   { value: 'imc', label: 'IMC Committee Member' },
   { value: 'head_management', label: 'Executive Management' },
   { value: 'system_admin', label: 'System Administrator' },
@@ -85,7 +85,7 @@ export default function StaffDirectoryTab({
         if (roleFilter === 'system_admin' && !isSysAdmin) return false;
         if (roleFilter === 'imc' && !hasImcAccess) return false;
         if (roleFilter === 'head_management' && !hasMgmtAccess) return false;
-        if (roleFilter === 'hod' && u.role !== 'hod') return false;
+        if (roleFilter === 'reviewer' && !u.is_reviewer) return false;
         if (roleFilter === 'employee' && (!u.is_registered || u.role !== 'employee' || isSysAdmin || hasImcAccess || hasMgmtAccess)) return false;
         if (roleFilter === 'unregistered' && u.is_registered) return false;
       }
@@ -300,6 +300,11 @@ export default function StaffDirectoryTab({
                           <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${ROLE_BADGE_MAP[u.role] || 'bg-slate-100 text-slate-700'}`}>
                             {roleLabel.toUpperCase()}
                           </span>
+                          {u.is_reviewer && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              + REVIEWER
+                            </span>
+                          )}
                           {u.is_imc_lead && (
                             <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-indigo-600 text-white">
                               IMC CONVENOR

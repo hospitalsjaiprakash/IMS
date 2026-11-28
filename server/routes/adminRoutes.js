@@ -53,10 +53,14 @@ router.post('/users/:id/toggle-status', authenticate, authorize('system_admin'),
 router.get('/management-members', authenticate, authorize('system_admin'), adminController.getManagementMembers);
 router.delete('/management-members/:id', authenticate, authorize('system_admin'), adminController.removeManagementRole);
 
-// Department Mapping, Category Feedback Mapping & Reviewers
+// Department Mapping, Category Feedback Mapping & Categories CRUD
 router.get('/category-mappings', authenticate, authorize('system_admin'), adminController.getCategoryMappings);
 router.post('/category-mappings', authenticate, authorize('system_admin'), adminController.mapCategoryFeedbackStaff);
 router.delete('/category-mappings/:id', authenticate, authorize('system_admin'), adminController.removeCategoryFeedbackStaff);
+router.post('/categories', authenticate, authorize('system_admin'), adminController.createCategory);
+router.put('/categories/:id', authenticate, authorize('system_admin'), adminController.updateCategory);
+router.delete('/categories/:id', authenticate, authorize('system_admin'), adminController.deleteOrArchiveCategory);
+router.post('/categories/:id/restore', authenticate, authorize('system_admin'), adminController.restoreCategory);
 router.post('/departments', authenticate, authorize('system_admin'), adminController.createDepartment);
 router.delete('/departments/:id', authenticate, authorize('system_admin'), adminController.deleteDepartment);
 router.post('/map-department-leader', authenticate, authorize('system_admin'), adminController.mapDepartmentLeader);

@@ -197,7 +197,7 @@ describe('Category-Based Feedback & Routing Workflow Tests (TC-01..TC-06)', () =
       .expect(200);
 
     assert.equal(meRes.body.role, 'employee');
-    assert.equal(meRes.body.isCategoryReviewer, true);
+    assert.equal(meRes.body.isReviewer, true);
     assert.equal(meRes.body.isFeedbackReviewer, true);
     assert.ok(
       Array.isArray(meRes.body.assignedCategories) &&

@@ -478,7 +478,7 @@ export default function AdminCommunicationsPage() {
               >
                 <option value="all">All Active Roles</option>
                 <option value="employee">Employees</option>
-                <option value="hod">Category / Dept Reviewers</option>
+                <option value="reviewer">Reviewers</option>
                 <option value="imc">IMC Committee</option>
                 <option value="head_management">Executive Management</option>
                 <option value="system_admin">System Administrators</option>

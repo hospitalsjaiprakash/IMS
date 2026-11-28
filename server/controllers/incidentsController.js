@@ -6,6 +6,7 @@ const { sendEmail, templates } = require('../utils/emailService');
 const { recordEvent } = require('../utils/incidentEvents');
 const {
   isPrivilegedRole,
+  getReviewerScope,
   canUserAccessIncident,
   getUserAssignedCategoriesForIncident,
   getUserManagedDepartmentsForIncident,
@@ -198,7 +199,7 @@ exports.createIncident = async (req, res) => {
     ].filter(Boolean);
     const canonicalTypeStr = [...new Set(resolvedTypesList)].join(', ') || String(incidentType || '').trim() || 'Others';
 
-    // Determine whether active feedback assignees exist for the selected categories (or legacy departments)
+    // Determine whether active feedback assignees exist for the selected categories
     let mappedAssignees = [];
     if (resolvedCategories.length > 0) {
       const catAssigneesRes = await client.query(
@@ -211,29 +212,12 @@ exports.createIncident = async (req, res) => {
       mappedAssignees = catAssigneesRes.rows;
     }
 
-    if (departmentIds.length > 0) {
-      const deptAssigneesRes = await client.query(
-        `SELECT DISTINCT u.id, u.email, u.full_name FROM users u
-         LEFT JOIN departments d ON (d.assigned_user_id = u.id OR (d.assigned_user_id IS NULL AND d.hod_user_id = u.id))
-         LEFT JOIN department_reviewers dr ON (dr.user_id = u.id AND dr.is_active = true)
-         WHERE (d.id = ANY($1) OR dr.department_id = ANY($1)) AND u.is_active = true`,
-        [departmentIds]
-      );
-      const seen = new Set(mappedAssignees.map(a => a.id));
-      for (const r of deptAssigneesRes.rows) {
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          mappedAssignees.push(r);
-        }
-      }
-    }
-
     // Generate reference ID
     const refId = await generateReferenceId(client);
 
-    // If active category/department reviewers are mapped, route to 'with_hod' (Initial Review);
+    // If active category reviewers are mapped, route to 'with_hod' (Initial Review);
     // if no reviewer is mapped yet, route straight to 'with_imc' so the incident never orphans.
-    const status = (mappedAssignees.length > 0 || departmentIds.length > 0) ? 'with_hod' : 'with_imc';
+    const status = mappedAssignees.length > 0 ? 'with_hod' : 'with_imc';
     const severity = 'Pending';
 
     // Insert incident
@@ -436,13 +420,18 @@ exports.getIncidents = async (req, res) => {
 
     const categoryReviewerPredicate = (idx) => `EXISTS (
       SELECT 1 FROM incident_category_links icl2
+      JOIN incident_categories ic2 ON ic2.id = icl2.category_id
       JOIN category_feedback_assignees cfa2 ON cfa2.category_id = icl2.category_id
-      WHERE icl2.incident_id = i.id AND cfa2.user_id = $${idx} AND cfa2.is_active = TRUE
+      WHERE icl2.incident_id = i.id AND cfa2.user_id = $${idx} AND cfa2.is_active = TRUE AND ic2.is_active = TRUE
     )`;
 
     const personalParticipationPredicate = (userIdx, empCodeIdx) => `(
       i.reporter_id = $${userIdx}
       OR i.redirect_requested_by_user_id = $${userIdx}
+      OR EXISTS (
+        SELECT 1 FROM feedbacks f_auth
+        WHERE f_auth.incident_id = i.id AND f_auth.author_id = $${userIdx}
+      )
       OR EXISTS (
         SELECT 1 FROM investigators inv
         WHERE inv.incident_id = i.id AND inv.investigator_id = $${userIdx}
@@ -484,92 +473,49 @@ exports.getIncidents = async (req, res) => {
       )
     )`;
 
-    // Role-based filtering
-    if (role === 'employee' && ['dept_reviews', 'department'].includes(viewMode)) {
-      whereClause += ` AND (
-        ${categoryReviewerPredicate(paramIdx)}
-        OR EXISTS (
-          SELECT 1 FROM incident_departments id2
-          JOIN departments d ON d.id = id2.department_id
-          WHERE id2.incident_id = i.id AND (
-            d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
-            OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true)
-          )
-        )
-        OR i.redirect_requested_by_user_id = $${paramIdx}
-      )`;
-      params.push(userId);
-      paramIdx++;
-    } else if (role === 'employee' && viewMode === 'my_incidents') {
-      whereClause += ` AND ${personalParticipationPredicate(paramIdx, paramIdx + 1)}`;
-      params.push(userId, String(req.user.employee_id || '').trim());
-      paramIdx += 2;
-    } else if (role === 'employee') {
-      whereClause += ` AND (
-        ${personalParticipationPredicate(paramIdx, paramIdx + 1)}
-        OR ${categoryReviewerPredicate(paramIdx)}
-        OR EXISTS (
-          SELECT 1 FROM incident_departments id2
-          JOIN departments d ON d.id = id2.department_id
-          WHERE id2.incident_id = i.id AND (
-            d.assigned_user_id = $${paramIdx} OR (d.assigned_user_id IS NULL AND d.hod_user_id = $${paramIdx})
-            OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true)
-          )
-        )
-      )`;
-      params.push(userId, String(req.user.employee_id || '').trim());
-      paramIdx += 2;
-    } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_incidents') {
-      whereClause += ` AND ${personalParticipationPredicate(paramIdx, paramIdx + 1)}`;
-      params.push(userId, String(req.user.employee_id || '').trim());
-      paramIdx += 2;
-    } else if (['hod', 'asst_coo', 'coo'].includes(role) && viewMode === 'my_team') {
-      const userDept = department || '';
-      whereClause += ` AND EXISTS (
-        SELECT 1 FROM incident_responsible_employees ire
-        JOIN users ru ON ru.id = ire.employee_id
-        LEFT JOIN departments d ON LOWER(d.name) = LOWER(ru.department) OR d.id = ire.department_id
-        WHERE ire.incident_id = i.id AND (
-          d.assigned_user_id = $${paramIdx} OR
-          d.hod_user_id = $${paramIdx} OR
-          EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true) OR
-          (LOWER(d.name) = LOWER($${paramIdx + 1}))
-        )
-      )`;
-      params.push(userId, userDept);
-      paramIdx += 2;
-    } else if (['hod', 'asst_coo', 'coo'].includes(role)) {
-      const userDept = department || '';
-      
-      if (teamMemberId) {
+    // Unified Staff & Reviewer scoping (never relies on legacy HOD designation/role)
+    if (!isPrivilegedRole(req.user)) {
+      const { isReviewer } = await getReviewerScope(userId);
+      const userEmpCode = String(req.user.employee_id || '').trim();
+      const reviewerHrDept = String(department || '').trim();
+
+      if (isReviewer && teamMemberId) {
         whereClause += ` AND EXISTS (
           SELECT 1 FROM users tm
-          LEFT JOIN departments d ON LOWER(d.name) = LOWER(tm.department)
-          WHERE tm.id = $${paramIdx} AND (
-            d.assigned_user_id = $${paramIdx+1} OR
-            d.hod_user_id = $${paramIdx+1} OR
-            EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx+1} AND dr.is_active = true) OR
-            LOWER(tm.department) = LOWER($${paramIdx+2})
-          )
+          WHERE tm.id = $${paramIdx}
+            AND $${paramIdx + 1} <> ''
+            AND LOWER(TRIM(COALESCE(tm.department, ''))) = LOWER(TRIM($${paramIdx + 1}))
         )`;
-        params.push(teamMemberId, userId, userDept);
-        paramIdx += 3;
-      } else {
+        params.push(teamMemberId, reviewerHrDept);
+        paramIdx += 2;
+      } else if (isReviewer && ['dept_reviews', 'department'].includes(viewMode)) {
         whereClause += ` AND (
           ${categoryReviewerPredicate(paramIdx)}
-          OR EXISTS (
-            SELECT 1 FROM incident_departments id2
-            JOIN departments d ON d.id = id2.department_id
-            WHERE id2.incident_id = i.id AND (
-              d.assigned_user_id = $${paramIdx} OR
-              d.hod_user_id = $${paramIdx} OR
-              EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true) OR
-              (LOWER(d.name) = LOWER($${paramIdx + 1}))
-            )
-          )
           OR i.redirect_requested_by_user_id = $${paramIdx}
         )`;
-        params.push(userId, userDept);
+        params.push(userId);
+        paramIdx++;
+      } else if (isReviewer && viewMode === 'my_team') {
+        whereClause += ` AND EXISTS (
+          SELECT 1 FROM incident_responsible_employees ire
+          JOIN users ru ON ru.id = ire.employee_id
+          WHERE ire.incident_id = i.id
+            AND $${paramIdx} <> ''
+            AND LOWER(TRIM(COALESCE(ru.department, ''))) = LOWER(TRIM($${paramIdx}))
+        )`;
+        params.push(reviewerHrDept);
+        paramIdx++;
+      } else if (isReviewer && !viewMode) {
+        whereClause += ` AND (
+          ${personalParticipationPredicate(paramIdx, paramIdx + 1)}
+          OR ${categoryReviewerPredicate(paramIdx)}
+        )`;
+        params.push(userId, userEmpCode);
+        paramIdx += 2;
+      } else {
+        // Personal View (my_incidents) or any non-reviewer Employee (including unassigned HR HODs)
+        whereClause += ` AND ${personalParticipationPredicate(paramIdx, paramIdx + 1)}`;
+        params.push(userId, userEmpCode);
         paramIdx += 2;
       }
     }
@@ -968,24 +914,9 @@ exports.getIncident = async (req, res) => {
       [incident.id]
     );
 
-    // Get legacy departments with per-department feedback status
+    // Get legacy departments (display only — reviewer scope is strictly category-driven)
     const depts = await query(
-      `SELECT d.id, d.name, d.hod_user_id, COALESCE(d.assigned_user_id, d.hod_user_id) as assigned_user_id,
-         EXISTS (
-           SELECT 1 FROM feedbacks f
-           LEFT JOIN users u ON u.id = f.author_id
-           WHERE f.incident_id = $1 
-             AND f.role = 'hod'
-             AND (
-               f.department_id = d.id 
-               OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
-               OR f.author_id = d.hod_user_id 
-               OR f.author_id = d.incharge_user_id 
-               OR f.author_id = d.asst_coo_user_id
-               OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
-               OR LOWER(u.department) = LOWER(d.name)
-             )
-         ) AS has_feedback
+      `SELECT d.id, d.name, FALSE AS has_feedback
        FROM departments d
        JOIN incident_departments id ON id.department_id = d.id
        WHERE id.incident_id = $1`,
@@ -1004,37 +935,20 @@ exports.getIncident = async (req, res) => {
     feedbackQuery += ` ORDER BY f.created_at ASC`;
     const feedbacks = await query(feedbackQuery, [incident.id]);
 
-    // Check reviewer completion across assigned categories (with active assignees) & legacy departments
+    // Check reviewer completion strictly across assigned categories with active assignees
     const activeMappedCats = cats.rows.filter(c => c.has_active_assignee);
     const pendingCats = activeMappedCats.filter(c => !c.has_feedback).map(c => c.name);
-    const pendingDepts = depts.rows.filter(d => !d.has_feedback).map(d => d.name);
-    const pendingHodDepartments = [...new Set([...pendingCats, ...pendingDepts])];
+    const pendingHodDepartments = [...new Set(pendingCats)];
     const allHodFeedbackSubmitted = pendingHodDepartments.length === 0;
     const hasImcFeedback = feedbacks.rows.some(f => f.role === 'imc');
 
-    // Check if current user has submitted feedback for ALL their assigned categories / legacy departments
+    // Check if current user has submitted feedback for ALL their assigned categories on this incident
     const userAssignedCats = await getUserAssignedCategoriesForIncident(req.user, incident.id);
     const myCatIds = new Set(userAssignedCats.map(c => c.id));
     const matchedCats = cats.rows.filter(c => myCatIds.has(c.id));
-
-    const userDept = (req.user.department || '').trim().toLowerCase();
-    const reviewerDeptsRes = await query(
-      `SELECT department_id FROM department_reviewers WHERE user_id = $1 AND is_active = true`,
-      [userId]
-    );
-    const reviewerDeptIds = new Set(reviewerDeptsRes.rows.map(r => r.department_id));
-
-    const myDept = depts.rows.find(d => 
-      d.assigned_user_id === userId ||
-      d.hod_user_id === userId || 
-      reviewerDeptIds.has(d.id) ||
-      (d.name && userDept && d.name.toLowerCase() === userDept)
-    );
-
     const pendingUserCats = matchedCats.filter(c => !c.has_feedback);
-    const hasPendingLegacyDept = Boolean(myDept && !myDept.has_feedback);
-    const hasAnyAssignedScope = matchedCats.length > 0 || Boolean(myDept);
-    const userHodDeptSubmitted = hasAnyAssignedScope && pendingUserCats.length === 0 && !hasPendingLegacyDept;
+    const hasAnyAssignedScope = matchedCats.length > 0;
+    const userHodDeptSubmitted = hasAnyAssignedScope && pendingUserCats.length === 0;
 
     // Get attachments
     const attachments = await query(
@@ -1175,30 +1089,16 @@ exports.getIncident = async (req, res) => {
       [incident.id]
     );
 
-    // Check if current user is authorized as an assigned staff reviewer for this incident
-    let isTargetHod = false;
-    const targetHodCheck = await query(
-      `SELECT 1 FROM incident_category_links icl
-       JOIN category_feedback_assignees cfa ON cfa.category_id = icl.category_id
-       WHERE icl.incident_id = $1 AND cfa.user_id = $2 AND cfa.is_active = TRUE
-       UNION ALL
-       SELECT 1 FROM incident_departments id2
-       JOIN departments d ON d.id = id2.department_id
-       WHERE id2.incident_id = $1 AND (
-         d.assigned_user_id = $2 OR (d.assigned_user_id IS NULL AND d.hod_user_id = $2)
-         OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $2 AND dr.is_active = true)
-       )`,
-       [incident.id, userId]
-    );
+    // Check if current user is authorized as an assigned reviewer for this incident
     const isRejectedRedirectRequester = Boolean(
       incident.redirect_rejected_at &&
       incident.status !== 'redirect_requested' &&
       incident.redirect_requested_by_user_id === userId
     );
-    isTargetHod = targetHodCheck.rows.length > 0 || isRejectedRedirectRequester;
+    const isTargetHod = matchedCats.length > 0 || isRejectedRedirectRequester;
 
     // Track reviewer first view
-    if ((role === 'hod' || isTargetHod) && !incident.hod_first_viewed_at) {
+    if (isTargetHod && !incident.hod_first_viewed_at) {
       await query(
         'UPDATE incidents SET hod_first_viewed_at = NOW() WHERE id = $1',
         [incident.id]
@@ -1249,6 +1149,7 @@ exports.getIncident = async (req, res) => {
         incident_categories: cats.rows.map(c => c.name),
         is_target_hod: isTargetHod,
         is_target_reviewer: isTargetHod,
+        userAssignedCategoryIds: userAssignedCats.map(c => c.id),
         all_hod_feedback_submitted: allHodFeedbackSubmitted,
         pending_hod_departments: pendingHodDepartments,
         pending_review_categories: pendingCats,
@@ -1339,13 +1240,18 @@ exports.getDashboardStats = async (req, res) => {
 
     const categoryReviewerSql = (idx) => `EXISTS (
       SELECT 1 FROM incident_category_links icl2
+      JOIN incident_categories ic2 ON ic2.id = icl2.category_id
       JOIN category_feedback_assignees cfa2 ON cfa2.category_id = icl2.category_id
-      WHERE icl2.incident_id = i.id AND cfa2.user_id = $${idx} AND cfa2.is_active = TRUE
+      WHERE icl2.incident_id = i.id AND cfa2.user_id = $${idx} AND cfa2.is_active = TRUE AND ic2.is_active = TRUE
     )`;
 
     const personalParticipationSql = (userIdx, empCodeIdx) => `(
       i.reporter_id = $${userIdx}
       OR i.redirect_requested_by_user_id = $${userIdx}
+      OR EXISTS (
+        SELECT 1 FROM feedbacks f_auth
+        WHERE f_auth.incident_id = i.id AND f_auth.author_id = $${userIdx}
+      )
       OR EXISTS (
         SELECT 1 FROM investigators inv
         WHERE inv.incident_id = i.id AND inv.investigator_id = $${userIdx}
@@ -1388,31 +1294,23 @@ exports.getDashboardStats = async (req, res) => {
     )`;
 
     const userEmpCode = String(req.user.employee_id || '').trim();
-    const legacyDeptNameForScope = role === 'hod' ? (department || '').trim() : '';
+    const { isReviewer: isReviewerUser } = isPrivilegedRole(req.user)
+      ? { isReviewer: false }
+      : await getReviewerScope(userId);
 
-    if (viewMode === 'my_incidents' || (role === 'employee' && !['dept_reviews', 'department'].includes(viewMode))) {
-      scopeFilter = `AND ${personalParticipationSql(paramIdx, paramIdx + 1)}`;
-      params.push(userId, userEmpCode);
-      paramIdx += 2;
-    } else if (role === 'hod' || (role === 'employee' && ['dept_reviews', 'department'].includes(viewMode))) {
-      scopeFilter = `AND (
-        ${categoryReviewerSql(paramIdx)}
-        OR EXISTS (
-          SELECT 1 FROM incident_departments id2
-          JOIN departments d ON d.id = id2.department_id
-          WHERE id2.incident_id = i.id AND (
-            d.assigned_user_id = $${paramIdx} OR
-            d.hod_user_id = $${paramIdx} OR
-            d.incharge_user_id = $${paramIdx} OR
-            d.asst_coo_user_id = $${paramIdx} OR
-            EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $${paramIdx} AND dr.is_active = true) OR
-            ($${paramIdx + 1} <> '' AND LOWER(d.name) = LOWER($${paramIdx + 1}))
-          )
-        )
-        OR i.redirect_requested_by_user_id = $${paramIdx}
-      )`;
-      params.push(userId, legacyDeptNameForScope);
-      paramIdx += 2;
+    if (!isPrivilegedRole(req.user)) {
+      if (isReviewerUser && ['dept_reviews', 'department'].includes(viewMode)) {
+        scopeFilter = `AND (
+          ${categoryReviewerSql(paramIdx)}
+          OR i.redirect_requested_by_user_id = $${paramIdx}
+        )`;
+        params.push(userId);
+        paramIdx += 1;
+      } else {
+        scopeFilter = `AND ${personalParticipationSql(paramIdx, paramIdx + 1)}`;
+        params.push(userId, userEmpCode);
+        paramIdx += 2;
+      }
     }
 
     if (departmentId && departmentId !== 'all') {
@@ -1494,49 +1392,28 @@ exports.getDashboardStats = async (req, res) => {
       FROM inc_times`, params)
     ]);
 
-    // Check if user is an assigned reviewer (either HOD or Category Reviewer)
-    const reviewerCheckRes = await query(
-      `SELECT 1 FROM category_feedback_assignees WHERE user_id = $1 AND is_active = TRUE
-       UNION ALL
-       SELECT 1 FROM departments WHERE assigned_user_id = $1 OR hod_user_id = $1
-       UNION ALL
-       SELECT 1 FROM department_reviewers WHERE user_id = $1 AND is_active = TRUE
-       LIMIT 1`,
-      [userId]
-    );
-    const isReviewerUser = role === 'hod' || reviewerCheckRes.rows.length > 0;
-
     let hodReport = null;
     if (isReviewerUser) {
-      const reviewerScopeSql = `(
-        EXISTS (
-          SELECT 1 FROM incident_category_links icl2
-          JOIN category_feedback_assignees cfa2 ON cfa2.category_id = icl2.category_id
-          WHERE icl2.incident_id = i.id AND cfa2.user_id = $1 AND cfa2.is_active = TRUE
-        )
-        OR EXISTS (
-          SELECT 1 FROM incident_departments id2
-          JOIN departments d ON d.id = id2.department_id
-          WHERE id2.incident_id = i.id AND (
-            d.assigned_user_id = $1 OR d.hod_user_id = $1 OR d.incharge_user_id = $1 OR d.asst_coo_user_id = $1
-            OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true)
-            OR ($2 <> '' AND LOWER(d.name) = LOWER($2))
-          )
-        )
+      const reviewerScopeSql = `EXISTS (
+        SELECT 1 FROM incident_category_links icl2
+        JOIN incident_categories ic2 ON ic2.id = icl2.category_id
+        JOIN category_feedback_assignees cfa2 ON cfa2.category_id = icl2.category_id
+        WHERE icl2.incident_id = i.id AND cfa2.user_id = $1 AND cfa2.is_active = TRUE AND ic2.is_active = TRUE
       )`;
 
       const extraRevFilters = [];
-      const revParams = [userId, legacyDeptNameForScope];
-      let revIdx = 3;
-      const givenFilters = [];
-      const givenParams = [userId];
-      let givenIdx = 2;
+      const revParams = [userId];
+      let revIdx = 2;
+      const myIncFilters = [];
+      const myIncParams = [userId, userEmpCode];
+      let myIncIdx = 3;
+      let targetCategoryMatchSql = 'TRUE';
+      const targetCatParams = [];
+
       if (departmentId && departmentId !== 'all') {
         const depInt = parseInt(departmentId, 10);
         extraRevFilters.push(`EXISTS (SELECT 1 FROM incident_departments idf WHERE idf.incident_id = i.id AND idf.department_id = $${revIdx++})`);
         revParams.push(depInt);
-        givenFilters.push(`EXISTS (SELECT 1 FROM incident_departments idf WHERE idf.incident_id = i.id AND idf.department_id = $${givenIdx++})`);
-        givenParams.push(depInt);
       }
       if (category && category !== 'all') {
         const catClause = (idx) => `(
@@ -1549,32 +1426,25 @@ exports.getDashboardStats = async (req, res) => {
         )`;
         extraRevFilters.push(catClause(revIdx++));
         revParams.push(category);
-        givenFilters.push(catClause(givenIdx++));
-        givenParams.push(category);
+        const categoryParamIdx = revParams.length;
+        targetCategoryMatchSql = `LOWER(TRIM(ic_t.name)) = LOWER(TRIM($${categoryParamIdx}))`;
       }
-      const myIncFilters = [];
-      const myIncParams = [userId, userEmpCode];
-      let myIncIdx = 3;
       if (dateFrom) {
         extraRevFilters.push(`i.incident_date >= $${revIdx++}::date`);
         revParams.push(dateFrom);
-        givenFilters.push(`i.incident_date >= $${givenIdx++}::date`);
-        givenParams.push(dateFrom);
         myIncFilters.push(`i.incident_date >= $${myIncIdx++}::date`);
         myIncParams.push(dateFrom);
       }
       if (dateTo) {
         extraRevFilters.push(`i.incident_date <= $${revIdx++}::date`);
         revParams.push(dateTo);
-        givenFilters.push(`i.incident_date <= $${givenIdx++}::date`);
-        givenParams.push(dateTo);
         myIncFilters.push(`i.incident_date <= $${myIncIdx++}::date`);
         myIncParams.push(dateTo);
       }
       const extraRevSql = extraRevFilters.length ? `AND ${extraRevFilters.join(' AND ')}` : '';
-      const givenSql = givenFilters.length ? `AND ${givenFilters.join(' AND ')}` : '';
       const myIncDateSql = myIncFilters.length ? `AND ${myIncFilters.join(' AND ')}` : '';
 
+      // Handover-ready category-level feedback counters (any review for the assigned category counts, not just own author_id)
       const [myIncidentsRes, assignedScopeRes, feedbackGivenRes, feedbackPendingRes, redirectRejectedRes] = await Promise.all([
         query(`
           SELECT
@@ -1594,21 +1464,38 @@ exports.getDashboardStats = async (req, res) => {
           FROM incidents i WHERE ${reviewerScopeSql} ${extraRevSql}
         `, revParams),
         query(`
-          SELECT COUNT(DISTINCT f.incident_id) as feedback_given
-          FROM feedbacks f
-          JOIN incidents i ON i.id = f.incident_id
-          WHERE f.author_id = $1 AND f.role = 'hod' AND i.status != 'withdrawn' ${givenSql}
-        `, givenParams),
+          SELECT COUNT(DISTINCT i.id) as feedback_given
+          FROM incidents i
+          WHERE i.status != 'withdrawn'
+            AND ${reviewerScopeSql} ${extraRevSql}
+            AND EXISTS (
+              SELECT 1 FROM incident_category_links icl_g
+              JOIN incident_categories ic_t ON ic_t.id = icl_g.category_id
+              JOIN category_feedback_assignees cfa_g ON cfa_g.category_id = icl_g.category_id AND cfa_g.user_id = $1 AND cfa_g.is_active = TRUE
+              JOIN feedbacks f ON f.incident_id = i.id AND f.role = 'hod'
+                AND (f.category_id = icl_g.category_id OR f.category_id IS NULL)
+              WHERE icl_g.incident_id = i.id AND ic_t.is_active = TRUE AND ${targetCategoryMatchSql}
+            )
+        `, [...revParams, ...targetCatParams]),
         query(`
-          SELECT COUNT(*) as pending
+          SELECT COUNT(DISTINCT i.id) as pending
           FROM incidents i
           WHERE i.status NOT IN ('resolved', 'closed', 'withdrawn')
             AND ${reviewerScopeSql} ${extraRevSql}
-            AND NOT EXISTS (
-              SELECT 1 FROM feedbacks f
-              WHERE f.incident_id = i.id AND f.role = 'hod' AND f.author_id = $1
+            AND EXISTS (
+              SELECT 1 FROM incident_category_links icl_p
+              JOIN incident_categories ic_t ON ic_t.id = icl_p.category_id
+              JOIN category_feedback_assignees cfa_p ON cfa_p.category_id = icl_p.category_id AND cfa_p.user_id = $1 AND cfa_p.is_active = TRUE
+              WHERE icl_p.incident_id = i.id
+                AND ic_t.is_active = TRUE
+                AND ${targetCategoryMatchSql}
+                AND NOT EXISTS (
+                  SELECT 1 FROM feedbacks f
+                  WHERE f.incident_id = i.id AND f.role = 'hod'
+                    AND (f.category_id = icl_p.category_id OR f.category_id IS NULL)
+                )
             )
-        `, revParams),
+        `, [...revParams, ...targetCatParams]),
         query(`
           SELECT COUNT(*) as count
           FROM incidents i
@@ -1616,7 +1503,7 @@ exports.getDashboardStats = async (req, res) => {
             AND i.status NOT IN ('resolved', 'closed', 'withdrawn')
             AND NOT EXISTS (SELECT 1 FROM feedbacks f WHERE f.incident_id = i.id AND f.author_id = $1)
             AND (i.redirect_requested_by_user_id = $1 OR ${reviewerScopeSql})
-        `, [userId, legacyDeptNameForScope])
+        `, [userId])
       ]);
 
       hodReport = {
@@ -1794,35 +1681,29 @@ exports.getDashboardStats = async (req, res) => {
 // =============================================
 // GET HOD TEAM
 // =============================================
+// =============================================
+// GET TEAM MEMBERS FOR REVIEWER (Scoped to Own HR Department)
+// =============================================
 exports.getHodTeam = async (req, res) => {
   try {
     const { id: userId, department } = req.user;
-    
-    let deptNames = [];
-    const deptCheck = await query(`
-      SELECT DISTINCT d.name FROM departments d
-      LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
-      WHERE d.hod_user_id = $1 OR d.assigned_user_id = $1 OR d.incharge_user_id = $1 OR dr.id IS NOT NULL
-    `, [userId]);
+    const { isReviewer } = await getReviewerScope(userId);
 
-    if (deptCheck.rows.length > 0) {
-      deptNames = deptCheck.rows.map(r => r.name);
-    } else if (isPrivilegedRole(req.user) || req.user.role === 'hod') {
-      if (department) deptNames = [department];
-    } else {
-      return res.status(403).json({ error: 'Access denied. Only designated department leaders or reviewers can view department team contacts.' });
+    if (!isReviewer && !isPrivilegedRole(req.user)) {
+      return res.status(403).json({ error: 'Access denied. Only assigned Reviewers can view My Team.' });
     }
 
-    if (deptNames.length === 0) {
-      return res.status(400).json({ error: 'No department found for this user.' });
+    const ownDept = String(department || '').trim();
+    if (!ownDept) {
+      return res.status(400).json({ error: 'No HR department found for this user.' });
     }
 
     const result = await query(
-      `SELECT id, employee_id, full_name, email, phone, department, designation, role 
-       FROM users 
-       WHERE LOWER(department) = ANY($1) AND is_active = true
-       ORDER BY department, full_name`,
-      [deptNames.map(d => d.toLowerCase())]
+      `SELECT id, employee_id, full_name, email, phone, department, designation, role
+       FROM users
+       WHERE LOWER(TRIM(COALESCE(department, ''))) = LOWER($1) AND is_active = TRUE
+       ORDER BY full_name ASC`,
+      [ownDept]
     );
 
     res.json(result.rows);
@@ -1833,47 +1714,25 @@ exports.getHodTeam = async (req, res) => {
 };
 
 // =============================================
-// GET ASSIGNED DEPARTMENTS FOR REVIEWER / HOD
+// GET ASSIGNED CATEGORIES FOR REVIEWER
 // =============================================
 exports.getAssignedDepartments = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const userDept = (req.user.department || '').trim();
-
-    const [result, catResult] = await Promise.all([
-      query(`
-        SELECT DISTINCT d.id, d.name,
-               CASE 
-                 WHEN dr.reviewer_role IS NOT NULL THEN dr.reviewer_role
-                 WHEN d.assigned_user_id = $1 THEN 'Assigned Feedback Staff'
-                 WHEN d.hod_user_id = $1 THEN 'Assigned Reviewer'
-                 ELSE 'Department Member'
-               END as review_role,
-               COALESCE(dr.is_active, true) as is_active
-        FROM departments d
-        LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
-        WHERE dr.user_id = $1
-           OR d.assigned_user_id = $1
-           OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1)
-           OR (LOWER(d.name) = LOWER($2) AND $2 != '')
-        ORDER BY d.name ASC
-      `, [userId, userDept]),
-      query(`
-        SELECT DISTINCT ic.id, ic.name, 'Category Feedback Staff' as review_role, cfa.is_active
-        FROM category_feedback_assignees cfa
-        JOIN incident_categories ic ON ic.id = cfa.category_id
-        WHERE cfa.user_id = $1 AND cfa.is_active = TRUE AND ic.is_active = TRUE
-        ORDER BY ic.name ASC
-      `, [userId])
-    ]);
+    const { assignedCategories } = await getReviewerScope(req.user.id);
+    const categories = assignedCategories.map((c) => ({
+      id: c.id,
+      name: c.name,
+      review_role: 'Reviewer',
+      is_active: true
+    }));
 
     res.json({
       success: true,
-      departments: result.rows,
-      categories: catResult.rows
+      departments: [],
+      categories
     });
   } catch (error) {
-    console.error('Error fetching assigned departments:', error);
+    console.error('Error fetching assigned reviewer scope:', error);
     res.status(500).json({ error: 'Failed to fetch assigned review scope' });
   }
 };

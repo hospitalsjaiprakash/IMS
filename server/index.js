@@ -1,8 +1,14 @@
 const path = require('path');
 const initialNodeEnv = process.env.NODE_ENV;
+const initialDbName = process.env.DB_NAME;
 require('dotenv').config({ path: path.resolve(__dirname, '.env'), override: true });
 if (initialNodeEnv === 'test') {
   process.env.NODE_ENV = 'test';
+  if (initialDbName !== undefined) {
+    process.env.DB_NAME = initialDbName;
+  } else {
+    delete process.env.DB_NAME;
+  }
 }
 
 if (!process.env.JWT_SECRET) {

@@ -134,39 +134,6 @@ exports.submitHodFeedback = async (req, res) => {
       categoryName = matched.name;
     }
 
-    // 2. Check legacy department assignment for current user
-    const deptResult = await client.query(
-      `SELECT DISTINCT d.id, d.name FROM departments d
-       LEFT JOIN department_reviewers dr ON dr.department_id = d.id AND dr.user_id = $1 AND dr.is_active = true
-       WHERE d.assigned_user_id = $1
-          OR (d.assigned_user_id IS NULL AND d.hod_user_id = $1)
-          OR d.incharge_user_id = $1
-          OR d.asst_coo_user_id = $1
-          OR dr.id IS NOT NULL`,
-      [req.user.id]
-    );
-
-    const userDeptIds = deptResult.rows.map(d => d.id);
-    let deptId = null;
-
-    if (req.body.department_id && userDeptIds.includes(parseInt(req.body.department_id, 10))) {
-      const explicitTarget = await client.query(
-        'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = $2',
-        [id, parseInt(req.body.department_id, 10)]
-      );
-      if (explicitTarget.rows.length) {
-        deptId = explicitTarget.rows[0].department_id;
-      }
-    } else if (userDeptIds.length > 0) {
-      const targetCheck = await client.query(
-        'SELECT department_id FROM incident_departments WHERE incident_id = $1 AND department_id = ANY($2)',
-        [id, userDeptIds]
-      );
-      if (targetCheck.rows.length) {
-        deptId = targetCheck.rows[0].department_id;
-      }
-    }
-
     // System Admin / rejected redirect-requester fallback only (unmapped IMC/Management must remain blocked unless assigned)
     const isSystemAdmin = Boolean(req.user.role === 'system_admin' || req.user.is_system_admin);
     const isRejectedRedirectRequester = Boolean(
@@ -174,7 +141,7 @@ exports.submitHodFeedback = async (req, res) => {
       incident.status !== 'redirect_requested' &&
       incident.redirect_requested_by_user_id === req.user.id
     );
-    if (!categoryId && !deptId && (isRejectedRedirectRequester || isSystemAdmin)) {
+    if (!categoryId && (isRejectedRedirectRequester || isSystemAdmin)) {
       const incCats = await client.query(
         `SELECT ic.id, ic.name FROM incident_category_links icl JOIN incident_categories ic ON ic.id = icl.category_id WHERE icl.incident_id = $1 LIMIT 1`,
         [id]
@@ -182,47 +149,30 @@ exports.submitHodFeedback = async (req, res) => {
       if (incCats.rows.length) {
         categoryId = incCats.rows[0].id;
         categoryName = incCats.rows[0].name;
-      } else {
-        const incDepts = await client.query('SELECT department_id FROM incident_departments WHERE incident_id = $1 LIMIT 1', [id]);
-        if (incDepts.rows.length) {
-          deptId = incDepts.rows[0].department_id;
-        } else if (userDeptIds.length > 0) {
-          deptId = userDeptIds[0];
-        }
       }
     }
 
-    if (!categoryId && !deptId) {
+    if (!categoryId) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'This incident is not assigned to you for review.' });
     }
 
-    // Prevent duplicate feedback for the same category or legacy department scope
-    const existingFb = categoryId
-      ? await client.query(
-          `SELECT id FROM feedbacks
-           WHERE incident_id = $1 AND role = 'hod' AND category_id = $2`,
-          [id, categoryId]
-        )
-      : await client.query(
-          `SELECT id FROM feedbacks
-           WHERE incident_id = $1 AND role = 'hod'
-             AND (
-               author_id = $2
-               OR ($3::int IS NOT NULL AND department_id = $3)
-             )`,
-          [id, req.user.id, deptId]
-        );
+    // Prevent duplicate feedback for the same category
+    const existingFb = await client.query(
+      `SELECT id FROM feedbacks
+       WHERE incident_id = $1 AND role = 'hod' AND category_id = $2`,
+      [id, categoryId]
+    );
 
     if (existingFb.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Feedback has already been submitted for your assigned category/department. You can edit your existing feedback.' });
+      return res.status(400).json({ error: 'Feedback has already been submitted for this assigned category. You can edit the existing feedback.' });
     }
 
     await client.query(
       `INSERT INTO feedbacks (incident_id, author_id, role, department_id, category_id, feedback_text, acknowledged_at)
-       VALUES ($1, $2, 'hod', $3, $4, $5, NOW())`,
-      [id, req.user.id, deptId, categoryId, feedbackText]
+       VALUES ($1, $2, 'hod', NULL, $3, $4, NOW())`,
+      [id, req.user.id, categoryId, feedbackText]
     );
 
     if (req.files && req.files.length > 0) {
@@ -235,7 +185,7 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    // Check if ALL assigned categories (with active assignees) and legacy departments have responded
+    // Check if ALL assigned categories (with active assignees) have responded
     const pendingCats = await client.query(`
       SELECT DISTINCT ic.id, ic.name
       FROM incident_category_links icl
@@ -243,6 +193,7 @@ exports.submitHodFeedback = async (req, res) => {
       JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
       JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
       WHERE icl.incident_id = $1
+        AND ic.is_active = TRUE
         AND NOT EXISTS (
           SELECT 1 FROM feedbacks f
           WHERE f.incident_id = $1
@@ -251,24 +202,7 @@ exports.submitHodFeedback = async (req, res) => {
         )
     `, [id]);
 
-    const pendingDepts = await client.query(`
-      SELECT d.id, d.name
-      FROM incident_departments id_dept
-      JOIN departments d ON d.id = id_dept.department_id
-      WHERE id_dept.incident_id = $1
-        AND NOT EXISTS (
-          SELECT 1 FROM feedbacks f
-          WHERE f.incident_id = $1
-            AND f.role = 'hod'
-            AND (
-              f.department_id = d.id
-              OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
-              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
-            )
-        )
-    `, [id]);
-
-    const allResponded = pendingCats.rows.length === 0 && pendingDepts.rows.length === 0;
+    const allResponded = pendingCats.rows.length === 0;
     const isRedirectPending = incident.status === 'redirect_requested';
 
     if (redirectToImc) {
@@ -289,18 +223,13 @@ exports.submitHodFeedback = async (req, res) => {
       );
     }
 
-    let scopeName = categoryName;
-    if (!scopeName && deptId) {
-      const dNameRes = await client.query('SELECT name FROM departments WHERE id = $1', [deptId]);
-      scopeName = dNameRes.rows[0]?.name;
-    }
-    scopeName = scopeName || req.user.department || 'Assigned Category';
+    const scopeName = categoryName || req.user.department || 'Assigned Category';
 
     const hodEvt = await recordEvent(client, {
       incidentId: id,
       eventType: 'HOD_FEEDBACK_SUBMITTED',
       actor: req.user,
-      title: `Department Feedback: ${scopeName}`,
+      title: `Reviewer Feedback: ${scopeName}`,
       summary: `Submitted by ${req.user.full_name} (${req.user.designation || 'Assigned Reviewer'})`,
       payload: {
         category_name: categoryName || scopeName,
@@ -326,7 +255,7 @@ exports.submitHodFeedback = async (req, res) => {
       for (const member of imcMembers.rows) {
         await createNotification(member.id, id,
           'Incident Ready for IMC Review',
-          `Incident ${incident.reference_id} is now in the IMC queue (all assigned category/department reviews complete).`,
+          `Incident ${incident.reference_id} is now in the IMC queue (all assigned category reviews complete).`,
           'incident_to_imc'
         );
         if (member.email) {
@@ -335,7 +264,7 @@ exports.submitHodFeedback = async (req, res) => {
       }
     }
 
-    await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc, deptId, categoryId, allResponded }, req.ip);
+    await auditLog(req.user.id, 'HOD_FEEDBACK_SUBMITTED', id, { redirectToImc, categoryId, allResponded }, req.ip);
 
     if (req.io) {
       req.io.emit('incident_updated', { id });
@@ -1836,7 +1765,7 @@ exports.assignInvestigator = async (req, res) => {
       return res.status(400).json({ error: 'Please select at least one investigator.' });
     }
 
-    // Rule: Investigation can only be initiated after feedback from ALL assigned categories/departments
+    // Rule: Investigation can only be initiated after feedback from ALL assigned categories
     const pendingScopes = await query(`
       SELECT DISTINCT ic.name
       FROM incident_category_links icl
@@ -1844,24 +1773,10 @@ exports.assignInvestigator = async (req, res) => {
       JOIN category_feedback_assignees cfa ON cfa.category_id = ic.id AND cfa.is_active = TRUE
       JOIN users u ON u.id = cfa.user_id AND u.is_active = TRUE
       WHERE icl.incident_id = $1
+        AND ic.is_active = TRUE
         AND NOT EXISTS (
           SELECT 1 FROM feedbacks f
           WHERE f.incident_id = $1 AND f.role = 'hod' AND (f.category_id = ic.id OR f.author_id = cfa.user_id)
-        )
-      UNION
-      SELECT DISTINCT d.name
-      FROM incident_departments id_dept
-      JOIN departments d ON d.id = id_dept.department_id
-      WHERE id_dept.incident_id = $1
-        AND NOT EXISTS (
-          SELECT 1 FROM feedbacks f
-          WHERE f.incident_id = $1
-            AND f.role = 'hod'
-            AND (
-              f.department_id = d.id
-              OR f.author_id = COALESCE(d.assigned_user_id, d.hod_user_id)
-              OR EXISTS (SELECT 1 FROM department_reviewers dr WHERE dr.department_id = d.id AND dr.user_id = f.author_id AND dr.is_active = true)
-            )
         )
     `, [id]);
 

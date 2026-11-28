@@ -39,7 +39,7 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
   const createdUserIds = [];
   const createdMasterEmpIds = [];
   const createdIncidentIds = [];
-  let createdCategoryId = null;
+  const createdCategoryIds = [];
   let mainLocationId = 1;
   let originalSystemConfig = {};
 
@@ -81,7 +81,14 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
       [`Cat ${tag}`]
     );
     catAssigned = catRes.rows[0];
-    createdCategoryId = catAssigned.id;
+    createdCategoryIds.push(catAssigned.id);
+
+    const hodCatRes = await query(
+      `INSERT INTO incident_categories (name, is_active) VALUES ($1, TRUE) RETURNING id, name`,
+      [`HodCat ${tag}`]
+    );
+    const hodCat = hodCatRes.rows[0];
+    createdCategoryIds.push(hodCat.id);
 
     const createUser = async ({
       suffix,
@@ -119,7 +126,7 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
     imcLeadUser = await createUser({ suffix: 'IMCLEAD', role: 'imc', isImc: true, isImcLead: true });
     mgmtUser = await createUser({ suffix: 'MGMT', role: 'head_management', isMgmt: true });
     catReviewerEmp = await createUser({ suffix: 'CATREV', role: 'employee' });
-    hodUser = await createUser({ suffix: 'HOD', role: 'hod', designation: 'HOD', department: `HODDept_${tag}` });
+    hodUser = await createUser({ suffix: 'HOD', role: 'employee', designation: 'HOD', department: `HODDept_${tag}` });
     regularEmp = await createUser({ suffix: 'REGEMP', role: 'employee' });
 
     // Create an unregistered employee in master_employees only (no users row)
@@ -131,11 +138,11 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
     );
     createdMasterEmpIds.push(unregisteredEmpId);
 
-    // Map catReviewerEmp to catAssigned
+    // Map catReviewerEmp to catAssigned and hodUser to hodCat
     await query(
       `INSERT INTO category_feedback_assignees (category_id, user_id, is_active)
-       VALUES ($1, $2, TRUE)`,
-      [catAssigned.id, catReviewerEmp.id]
+       VALUES ($1, $2, TRUE), ($3, $4, TRUE)`,
+      [catAssigned.id, catReviewerEmp.id, hodCat.id, hodUser.id]
     );
 
     adminToken = signTestJwt(adminUser);
@@ -180,9 +187,9 @@ describe('Batch 2 Workflow Fixes (#8, #9, #10, #11, #12, #13)', () => {
         await query(`DELETE FROM incidents WHERE id = ANY($1::uuid[])`, [createdIncidentIds]);
       }
 
-      if (createdCategoryId) {
-        await query(`DELETE FROM category_feedback_assignees WHERE category_id = $1`, [createdCategoryId]);
-        await query(`DELETE FROM incident_categories WHERE id = $1`, [createdCategoryId]);
+      if (createdCategoryIds.length > 0) {
+        await query(`DELETE FROM category_feedback_assignees WHERE category_id = ANY($1::int[])`, [createdCategoryIds]);
+        await query(`DELETE FROM incident_categories WHERE id = ANY($1::int[])`, [createdCategoryIds]);
       }
 
       if (createdUserIds.length > 0) {

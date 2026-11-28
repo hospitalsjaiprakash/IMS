@@ -10,21 +10,11 @@ const GENERIC_ADMIN_EMP_ID = '00000';
 const GENERIC_ADMIN_EMAIL = 'hospitalsjaiprakash@gmail.com';
 
 /**
- * Determine initial role based on designation or generic admin ID
+ * Determine initial role based solely on generic admin ID (HR designation never grants HOD/Reviewer access)
  */
-function determineRole(employeeId, designation) {
+function determineRole(employeeId) {
   if (String(employeeId).trim() === GENERIC_ADMIN_EMP_ID) {
     return 'system_admin';
-  }
-  const desig = (designation || '').toUpperCase();
-  if (
-    desig === 'HOD' ||
-    desig.includes('HEAD OF DEPARTMENT') ||
-    desig.includes('HEAD OF DEPT') ||
-    desig.startsWith('HEAD OF ') ||
-    desig.includes('(HOD)')
-  ) {
-    return 'hod';
   }
   return 'employee';
 }
@@ -131,7 +121,7 @@ async function syncEmployeesFromHrms(overrideUrl = null) {
            department = COALESCE(EXCLUDED.department, master_employees.department),
            designation = COALESCE(EXCLUDED.designation, master_employees.designation),
            role = CASE 
-             WHEN master_employees.role IN ('system_admin', 'imc', 'head_management', 'hod') THEN master_employees.role
+             WHEN master_employees.role IN ('system_admin', 'imc', 'head_management') THEN master_employees.role
              WHEN EXCLUDED.role = 'system_admin' THEN 'system_admin'
              ELSE EXCLUDED.role
            END`,

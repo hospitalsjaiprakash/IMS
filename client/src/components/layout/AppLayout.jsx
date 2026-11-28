@@ -10,18 +10,19 @@ import { useIdleLogout } from '../../hooks/useIdleLogout';
 import { useSocket } from '../../hooks/useSocket';
 import { notificationsApi, attachmentsApi } from '../../api';
 import { useQuery } from '@tanstack/react-query';
-import { timeAgo, getRoleDashboard, ROLE_CONFIG } from '../../utils/helpers';
+import { timeAgo, getRoleDashboard, getDisplayRole } from '../../utils/helpers';
 import { AttachmentViewerModal } from '../ui';
 import toast from 'react-hot-toast';
 import logoImg from '../../assets/logo.webp';
 
 const getNavItems = (user) => {
   const role = user?.role;
+  const isReviewer = Boolean(user?.isReviewer || user?.isFeedbackReviewer);
   const base = [
     { to: getRoleDashboard(user), icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/incidents', icon: FileText, label: 'Incidents' },
   ];
-  if (role === 'hod') {
+  if (role === 'employee' && isReviewer) {
     base.push({ to: '/my-team', icon: Users, label: 'My Team' });
   }
   if (role === 'imc') {
@@ -124,10 +125,11 @@ export default function AppLayout() {
 
   const renderRoleBadge = () => {
     const isConvenor = user?.role === 'imc' && Boolean(user?.isImcLead || user?.is_imc_lead);
+    const displayRole = getDisplayRole(user);
     const label = isConvenor
       ? 'IMC Lead / Convenor'
-      : ROLE_CONFIG[user?.role]?.label || user?.role || 'Employee';
-    const cls = ROLE_CONFIG[user?.role]?.badgeClass || 'badge-gray';
+      : displayRole?.label || user?.role || 'Employee';
+    const cls = displayRole?.badgeClass || 'badge-gray';
     return (
       <span className={`${cls} text-[10px] font-bold uppercase tracking-wider`}>
         {label}
@@ -244,10 +246,10 @@ export default function AppLayout() {
               <span>Switch to Management</span>
             </button>
           )}
-          {!isRootSystemAccount && user?.role !== 'employee' && user?.role !== 'hod' && (
+          {!isRootSystemAccount && user?.role !== 'employee' && (
             <button
               type="button"
-              onClick={() => openSwitchRole(user?.isHod ? 'hod' : 'employee')}
+              onClick={() => openSwitchRole('employee')}
               className="nav-item-inactive w-full text-left text-green-700 hover:bg-green-50"
             >
               <Shield size={17} className="flex-shrink-0" />

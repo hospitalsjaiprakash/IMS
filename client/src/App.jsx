@@ -37,14 +37,18 @@ const sessionStoragePersister = createSyncStoragePersister({
   key: QUERY_CACHE_KEY,
 });
 
-function ProtectedRoute({ children, roles }) {
+function ProtectedRoute({ children, roles, requireReviewer = false }) {
   const { isAuthenticated, user } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   const isRootAdmin = String(user?.employeeId || '').trim() === '00000';
   if (isRootAdmin && roles && !roles.includes('system_admin')) {
     return <Navigate to="/admin/dashboard" replace />;
   }
-  if (roles && !roles.includes(user?.role)) {
+  const normalizedRole = user?.role === 'hod' ? 'employee' : user?.role;
+  if (roles && !roles.includes(normalizedRole)) {
+    return <Navigate to={getRoleDashboard(user)} replace />;
+  }
+  if (requireReviewer && !(user?.isReviewer || user?.isFeedbackReviewer)) {
     return <Navigate to={getRoleDashboard(user)} replace />;
   }
   return children;
@@ -116,11 +120,11 @@ export default function App() {
                 >
                   <Route index element={<Navigate to="/dashboard" replace />} />
 
-                  {/* Employee & Feedback Reviewer Dashboard */}
+                  {/* Employee & Reviewer Dashboard */}
                   <Route
                     path="dashboard"
                     element={
-                      <ProtectedRoute roles={['employee', 'hod']}>
+                      <ProtectedRoute roles={['employee']}>
                         <DashboardPage />
                       </ProtectedRoute>
                     }
@@ -128,7 +132,7 @@ export default function App() {
                   <Route
                     path="my-team"
                     element={
-                      <ProtectedRoute roles={['hod']}>
+                      <ProtectedRoute roles={['employee']} requireReviewer>
                         <MyTeamPage />
                       </ProtectedRoute>
                     }
@@ -235,7 +239,7 @@ export default function App() {
                   <Route
                     path="incidents/new"
                     element={
-                      <ProtectedRoute roles={['employee', 'hod']}>
+                      <ProtectedRoute roles={['employee']}>
                         <NewIncidentPage />
                       </ProtectedRoute>
                     }

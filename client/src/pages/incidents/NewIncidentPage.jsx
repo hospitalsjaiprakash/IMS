@@ -163,6 +163,18 @@ export default function NewIncidentPage() {
     return INCIDENT_CATEGORIES;
   }, [categoriesData]);
 
+  const categoryTypesMap = useMemo(() => {
+    const map = {};
+    if (Array.isArray(categoriesData) && categoriesData.length > 0) {
+      for (const c of categoriesData) {
+        if (c && c.name && Array.isArray(c.incident_types) && c.incident_types.length > 0) {
+          map[c.name] = c.incident_types;
+        }
+      }
+    }
+    return map;
+  }, [categoriesData]);
+
   const submitMutation = useMutation({
     mutationFn: (data) => incidentsApi.create(data),
     onSuccess: (res) => {
@@ -365,7 +377,7 @@ export default function NewIncidentPage() {
                         <span className="text-blue-700 font-semibold">#{idx + 1}</span>&nbsp;{cat}
                       </label>
                       <SearchableSelect
-                        options={INCIDENT_CATEGORY_MAPPING[cat] || ['Others']}
+                        options={categoryTypesMap[cat] || INCIDENT_CATEGORY_MAPPING[cat] || ['Others']}
                         value={form.selectedTypes[cat] || ''}
                         onChange={(type) => setType(cat, type)}
                         placeholder={`Search incident type for "${cat}"…`}

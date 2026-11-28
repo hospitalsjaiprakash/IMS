@@ -160,9 +160,12 @@ export default function SettingsPage() {
     }
   };
 
+  const displayRole = user?.role === 'employee' && (user?.isReviewer || user?.isFeedbackReviewer);
   const roleDescriptions = {
-    employee: 'Report incidents, track case progress, and provide feedback for any Incident Categories mapped to you.',
-    hod: 'Report incidents, track case progress, and submit department-level feedback on assigned Incident Categories.',
+    employee: displayRole
+      ? 'Report incidents, track case progress, view My Team, and submit feedback for your assigned Incident Categories.'
+      : 'Report incidents and track progress of incidents involving you.',
+    hod: 'Report incidents, track case progress, and submit feedback on assigned Incident Categories.',
     imc: isImcConvenor
       ? 'Lead the Incident Management Committee, coordinate investigations, review redirections, and escalate incident priority.'
       : 'Review incidents across categories, assign investigators, assess severity, and manage corrective training.',
@@ -172,7 +175,7 @@ export default function SettingsPage() {
 
   const roleDisplayName = isImcConvenor
     ? 'IMC Lead / Convenor'
-    : ROLE_CONFIG[user?.role]?.label || user?.role?.replace(/_/g, ' ') || 'Staff';
+    : (displayRole ? 'Reviewer' : ROLE_CONFIG[user?.role]?.label) || user?.role?.replace(/_/g, ' ') || 'Staff';
 
   return (
     <div className="max-w-2xl space-y-6 pb-12">
